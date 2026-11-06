@@ -251,7 +251,7 @@ async function search(req: Request, d: CapDeps): Promise<Response> {
 
 const DEFAULT_MODEL: Record<string, string> = {
   embeddings: "@cf/baai/bge-m3",
-  "audio/speech": "@cf/myshell-ai/melotts",
+  "audio/speech": "@cf/deepgram/aura-2-en", // melotts stops 2026-11-15
   "audio/transcriptions": "@cf/openai/whisper-large-v3-turbo",
   "images/generations": "@cf/black-forest-labs/flux-1-schnell",
 };

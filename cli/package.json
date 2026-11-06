@@ -1,6 +1,6 @@
 {
   "name": "oc-workers",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Run your own OpenClaw assistant on your Cloudflare account. Sleeps when idle, wakes on a message.",
   "license": "Apache-2.0",
   "type": "module",

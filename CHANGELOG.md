@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Sandbox on: web search, web fetch, the browser, memory, media and the message tool work again in sandboxed sessions. OpenClaw's sandbox tool policy left them out; the render now allows them (`tools.sandbox.tools.alsoAllow`).
+- Speech model is `@cf/deepgram/aura-2-en`. `@cf/myshell-ai/melotts` stops on 2026-11-15.
+
 ## 1.0.0
 
 First release. `oc-workers` installs and runs your own OpenClaw assistant on your Cloudflare account with one command, `ochost init`.

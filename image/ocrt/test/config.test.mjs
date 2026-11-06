@@ -271,6 +271,14 @@ describe("sandbox keys (docs/12)", () => {
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.mode"), "all");
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.backend"), "ochost");
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.workspaceAccess"), "rw");
+    // gateway-side tools stay callable from a sandboxed session (OpenClaw's default sandbox allowlist lacks them)
+    assert.deepEqual(getPath(r.doc, "tools.sandbox.tools.alsoAllow"), [
+      "group:web",
+      "group:memory",
+      "group:media",
+      "group:messaging",
+      "browser",
+    ]);
     assert.deepEqual(getPath(r.doc, "plugins.load.paths"), ["/u/p1", SANDBOX_PLUGIN_DIR]);
     assert.deepEqual(getPath(r.doc, "plugins.entries.ochost-sandbox.config"), {
       gateUrl: "http://15.0.0.4",

@@ -515,7 +515,8 @@ export const CAP_URL = "http://15.0.0.3";
  */
 export const FETCH_URL = "http://127.0.0.1:18791";
 export const EMBED_MODEL = "@cf/baai/bge-m3";
-export const TTS_MODEL = "@cf/myshell-ai/melotts";
+// aura-2-en: melotts stops on 2026-11-15 (Workers AI deprecation notice 2026-11-05).
+export const TTS_MODEL = "@cf/deepgram/aura-2-en";
 export const STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
 export const IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell";
 export const DOCS_MCP_URL = "https://docs.mcp.cloudflare.com/mcp";

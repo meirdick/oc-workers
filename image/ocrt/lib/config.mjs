@@ -154,6 +154,13 @@ export const SANDBOX_GATE = "http://15.0.0.4";
 export const SANDBOX_PLUGIN_DIR = "/opt/ocrt/plugins/ochost-sandbox";
 export const SANDBOX_ROOT = "/workspace";
 const SANDBOX_BACKEND = "ochost";
+/**
+ * Tools a sandboxed session may still call on the gateway side. OpenClaw's sandbox tool policy allows only
+ * exec, files, process, github and sessions by default and denies `browser`; with mode "all" every session is
+ * sandboxed, so web search, web fetch, the browser, memory, media and the message tool vanished (demo, 2026-11-06).
+ * These run in the gateway container and reach the gate, not the sandbox, so they are safe to allow.
+ */
+export const SANDBOX_ALSO_ALLOW = ["group:web", "group:memory", "group:media", "group:messaging", "browser"];
 
 /**
  * docs/12 §5: plan.sandbox → every session sandboxed on backend `ochost` (the bundled plugin), remote root
@@ -168,6 +175,7 @@ export function sandboxKeys(base = {}) {
     { path: "agents.defaults.sandbox.scope", value: "agent" },
     { path: "agents.defaults.sandbox.workspaceAccess", value: "rw" },
     { path: "agents.defaults.sandbox.ssh.workspaceRoot", value: SANDBOX_ROOT },
+    { path: "tools.sandbox.tools.alsoAllow", value: SANDBOX_ALSO_ALLOW },
     { path: "plugins.load.paths", value: [...keep, SANDBOX_PLUGIN_DIR] },
     { path: "plugins.entries.ochost-sandbox.enabled", value: true },
     {
@@ -188,6 +196,9 @@ export function sandboxOffKeys(base = {}) {
     out.push({ path: "agents.defaults.sandbox", value: undefined });
   if (getPath(base, "plugins.entries.ochost-sandbox") !== undefined)
     out.push({ path: "plugins.entries.ochost-sandbox", value: undefined });
+  const also = getPath(base, "tools.sandbox.tools.alsoAllow");
+  if (Array.isArray(also) && JSON.stringify(also) === JSON.stringify(SANDBOX_ALSO_ALLOW))
+    out.push({ path: "tools.sandbox.tools.alsoAllow", value: undefined });
   const paths = getPath(base, "plugins.load.paths");
   if (Array.isArray(paths) && paths.includes(SANDBOX_PLUGIN_DIR))
     out.push({ path: "plugins.load.paths", value: paths.filter((p) => p !== SANDBOX_PLUGIN_DIR) });

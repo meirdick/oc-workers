@@ -19,7 +19,7 @@ The capability gate answers at `http://15.0.0.3`, port 80. The agent user (uid 1
 | Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The `firecrawl` plugin is in the image. It reaches the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first. It calls the gate only for pages that the plain fetch cannot read. |
 | Web search | Cloudflare Web Search API, through `/search` | Experimental. A plugin in the image adds the provider "Cloudflare Web Search" to Settings > Search. It needs no API key. |
 | Embeddings | `@cf/baai/bge-m3` | Works through the gate (1024 dimensions). |
-| Speech out | `@cf/myshell-ai/melotts` | Works through the gate. The reply is WAV. |
+| Speech out | `@cf/deepgram/aura-2-en` | Works through the gate. The reply is MP3. |
 | Transcription | `@cf/openai/whisper-large-v3-turbo` | Works through the gate. |
 | Image | `@cf/black-forest-labs/flux-1-schnell` | Works through the gate. |
 | Cloudflare docs | MCP server `https://docs.mcp.cloudflare.com/mcp`, no auth | Configured. |
@@ -81,6 +81,7 @@ Facts:
 
 - The sandbox gate answers at `http://15.0.0.4`, port 80. The container holds no credential for it.
 - The sandbox has no internet access. The agent cannot install packages there.
+- Web search, web fetch, the browser, memory, media and the message tool still run in the gateway container. The render allows them for sandboxed sessions (`tools.sandbox.tools.alsoAllow`), because OpenClaw's own sandbox policy leaves them out.
 - It starts at the first exec. It sleeps after 10 minutes without an exec, when the install sleeps, or when its budget is spent.
 - oc-workers backs up the sandbox `/workspace` to your R2 bucket at each sleep and every 30 minutes of use. It keeps the newest 2 backups.
 - The deploy builds the sandbox image even when the sandbox is off.
