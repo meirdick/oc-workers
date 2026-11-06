@@ -82,6 +82,14 @@ ochost logs --source alert
 
 To see alerts in the browser, open the Alerts and log tab of the owner console.
 
+## npm warns about blocked install scripts
+
+`npm install -g oc-workers` can print `install scripts blocked` for `esbuild` and `workerd`. npm 12 blocks post-install scripts it has not seen. The CLI and wrangler work without them. To clear the warning:
+
+```sh
+npm install-scripts approve esbuild workerd
+```
+
 ## Next
 
 Go to [CLI reference](/cli-reference/).

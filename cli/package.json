@@ -21,7 +21,7 @@
     "telegram"
   ],
   "bin": {
-    "ochost": "./bin/ochost.js"
+    "ochost": "bin/ochost.js"
   },
   "files": [
     "bin",
