@@ -1,0 +1,73 @@
+---
+title: Upgrades
+description: How ochost upgrade checks, upgrades and rolls back the OpenClaw image, the schema gate, and what is not built.
+sidebar:
+  order: 9
+---
+
+This page shows how to move an install to a newer OpenClaw image and how to go back. An install follows a release track. The default is `extended-stable`. It is the key `upgrade.track` in `oc-host.jsonc`. Automatic upgrade is off (`upgrade.auto: false`). You upgrade by hand.
+
+## Check for a new version
+
+```sh
+ochost upgrade check
+```
+
+`check` reads the npm dist-tag of the track and the matching image digest. It compares them with the pinned image and with the image that runs now. It prints the difference and the release notes URL. The exit code is 0 when the track is the same or older. It is 3 when the track is newer or its digest moved.
+
+## Run an upgrade
+
+You need Docker. The image tests run from a clone of the [repo](https://github.com/meirdick/oc-workers); the npm package has no tests.
+
+```sh
+ochost upgrade run
+ochost upgrade run <version>
+```
+
+`run` refuses unless `check` says newer. Then it:
+
+1. Builds the image from the new base with Docker and runs the image contract tests.
+2. Stops when the state schema changes (see [The schema gate](#the-schema-gate)).
+3. Takes a pre-upgrade archive, deploys and restarts.
+4. Watches the install: running, heartbeat, no restart ladder, new digest, channels alive.
+
+If the watch fails, `run` deploys the previous pin again and prints `rolled back to <v> (upgrade failed: <why>)`.
+
+## Roll back
+
+```sh
+ochost upgrade rollback
+```
+
+This takes a fresh archive of the current state, deploys the previous pin and restarts.
+
+## The schema gate
+
+Before it deploys, `run` runs the OpenClaw database preflight of the new version on a copy of your state. The result must be `exact`. Any other result means the version changes the state schema. The upgrade stops and nothing is deployed:
+
+```text
+Failed: <version> changes the state schema (database preflight migration-required, ...) — fix: the dark/lit cutover is not built; stay on the pinned version
+```
+
+Stay on your pinned version. A version that changes the schema cannot be installed yet.
+
+## Deploy without an upgrade
+
+`ochost deploy` redeploys the Worker and the image when the deploy hash changed. A pin in `.oc-host/image.json` stays in effect. A deploy that changes the image takes a pre-upgrade archive first and wakes the install. One run took about 5.5 minutes, 2 minutes of it for the archive.
+
+A plain `ochost deploy` with a new image does not touch a running gateway. To use the new image now, run `ochost restart`. It takes a workspace archive (up to 3 minutes), stops, and boots the newest image. If the archive fails or takes longer than 3 minutes, the restart does not run and nothing is lost. Run it again later. `ochost restart --hard` skips the archive and loses the writes since the last one. Without a restart, the install uses the new image only after a sleep and an eviction of the Runtime DO.
+
+## What is not built
+
+- A cutover to a new schema. A version that changes the schema is refused.
+- An approval step for a moved tag. A moved digest exits 3 and `run` refuses.
+- An attestation or npm content check.
+- An automatic upgrade window.
+
+## Test status
+
+`upgrade check` and the schema gate ran against a real install. The full path (contract, archive, deploy, restart, watch) and `rollback` did not, because no newer version with the same schema existed. Treat them as untested.
+
+## Next
+
+Go to [Security](/security/).

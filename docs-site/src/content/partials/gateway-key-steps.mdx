@@ -1,0 +1,5 @@
+1. Open `https://dash.cloudflare.com/?to=/:account/ai/ai-gateway`.
+2. Select your gateway (`default` unless you chose another), then **Provider Keys**.
+3. Select **Add API Key**, choose **Anthropic**, paste your key and give it the alias `default`. Only the `default` alias is used on this path.
+4. Select **Save**.
+5. Run `ochost model set anthropic/<model>`. It sends one test message and refuses the change if the gateway has no key.

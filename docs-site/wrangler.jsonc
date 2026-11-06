@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // One Worker for the project. No landing page yet: worker.js redirects / to /docs/.
+  // The docs build (dist/) is staged under .deploy/docs by scripts/stage.mjs.
+  // workers.dev only, no custom domain and no routes.
+  "name": "oc-workers",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-30",
+  "workers_dev": true,
+  "assets": {
+    "directory": "./.deploy",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/"]
+  }
+}

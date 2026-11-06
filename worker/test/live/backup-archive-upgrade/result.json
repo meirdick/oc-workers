@@ -1,0 +1,48 @@
+{
+  "drill": "backup-archive-upgrade",
+  "at": "2026-11-01T15:31:58.100Z",
+  "target": "https://oc-m4-backup.mdick85.workers.dev",
+  "pass": true,
+  "step": "upgrade",
+  "stateBefore": "running",
+  "sleptMs": null,
+  "dueBefore": {
+    "due": false,
+    "why": "gap",
+    "since": null,
+    "newestAt": 1793546862994,
+    "lastWriteAt": 1793547023347
+  },
+  "request": {
+    "id": "req-1793547030875",
+    "reason": "pre-upgrade",
+    "at": 1793547030875,
+    "state": "pending"
+  },
+  "woke": true,
+  "sameRequestOnRepeat": true,
+  "archive": {
+    "id": "20261101T153143Z-zdvlknz1",
+    "size": 231809,
+    "created": "2026-11-01T15:31:43.016Z",
+    "completeS": 9.845,
+    "key": "a/m4bk/20261101T153143Z-oc-941573c762e1.tar.gz"
+  },
+  "requestAfter": {
+    "id": "req-1793547030875",
+    "reason": "pre-upgrade",
+    "at": 1793547030875,
+    "state": "done",
+    "archiveId": "20261101T153143Z-zdvlknz1",
+    "doneAt": 1793547112861
+  },
+  "requestToCompleteS": 82.216,
+  "stateAfter": "running",
+  "checks": {
+    "accepted": true,
+    "deduped": true,
+    "completed": true,
+    "requestDone": true,
+    "insideGap": true
+  }
+}

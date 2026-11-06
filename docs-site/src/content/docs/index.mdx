@@ -1,0 +1,36 @@
+---
+title: Overview
+description: oc-workers runs your own OpenClaw on your own Cloudflare account. It sleeps when idle and wakes on a message.
+sidebar:
+  order: 0
+---
+
+oc-workers installs and runs [OpenClaw](https://github.com/openclaw/openclaw) on your own Cloudflare account. OpenClaw is an agent gateway. It talks to you through a chat channel and a web Control UI. oc-workers is a community project. It is not affiliated with Cloudflare.
+
+## What you get
+
+- **One install on your account.** An install is one Worker, some Durable Objects, one container and one R2 bucket. One owner controls it.
+- **Low cost.** The container sleeps after 5 minutes without activity. A sleeping install has no compute charge. Light use costs about $7 to $14 a month. See [Cost](/cost/).
+- **Fast install.** `ochost init` goes from an empty directory to a working Control UI in 4 to 5 minutes. It asks for no AI token. See [Quickstart](/quickstart/).
+- **Backups.** oc-workers copies state to R2 while the install runs. See [State and backups](/state-and-backups/) for what you can lose in a crash.
+- **A default model.** DeepSeek V4.1 Flash runs on Workers AI through your AI Gateway. An AI Gateway is the Cloudflare proxy in front of model APIs. It gives logs and spend limits.
+- **Agent tools.** Browser, web fetch, web search, embeddings, speech, transcription and image tools run through a gate in your Worker. See [Capabilities](/capabilities/).
+- **One CLI.** `ochost` installs, shows status, makes backups, upgrades and removes the install. See [CLI reference](/cli-reference/).
+
+## How the install behaves
+
+The install sleeps when idle. It wakes on a Telegram message, a timer or when you open the Control UI. The first reply after a sleep takes about 30 seconds. See [How it works](/how-it-works/).
+
+## Status
+
+oc-workers is at version 1.0. It has run on one account for weeks, not on many. [Limits and tradeoffs](/limits-and-tradeoffs/) lists what does not work or is not measured.
+
+## Read in this order
+
+1. [Requirements](/requirements/): what you need.
+2. [Quickstart](/quickstart/): install step by step.
+3. [Channels](/channels/): connect Telegram and other chat services.
+4. [Models](/models/), [Capabilities](/capabilities/) and [Configuration](/configuration/): tune the install.
+5. [Cost](/cost/), [State and backups](/state-and-backups/), [Upgrades](/upgrades/) and [Security](/security/): run it day to day.
+6. [Troubleshooting](/troubleshooting/) and [CLI reference](/cli-reference/): when something fails, and the full command list.
+7. [How it works](/how-it-works/), [Limits and tradeoffs](/limits-and-tradeoffs/) and [Changelog](/changelog/): background.

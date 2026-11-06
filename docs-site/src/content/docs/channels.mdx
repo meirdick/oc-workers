@@ -1,0 +1,140 @@
+---
+title: Channels
+description: Which chat channels work with oc-workers, which keep it awake, and how to add Telegram, Slack, Discord and Twilio SMS.
+sidebar:
+  order: 3
+---
+
+A channel connects OpenClaw to a chat service. The channel type decides whether the install can sleep. This page tells you which channels sleep and how to add them.
+
+:::caution[A channel decides whether the install can sleep]
+A socket channel holds an open connection (WhatsApp, Discord bot, Slack socket mode, Telegram long-polling, Signal, Matrix). It keeps the container awake all the time. That costs about $50 to $69 a month. A webhook channel (Telegram, Slack in HTTP mode, Twilio SMS) lets the install sleep between messages. That costs about $7 to $25 a month. `ochost channels add` sets the webhook mode and the wake list. `ochost status` names the channel that blocks sleep.
+:::
+
+## Support matrix
+
+Every channel that OpenClaw 2026.10.9 supports runs on oc-workers. "Sleeps" means the install can sleep between messages. "Always-on" means the channel holds a connection and the container must stay up. See [Cost](/cost/).
+
+| Channel | OpenClaw transport | On oc-workers | Notes |
+|---|---|---|---|
+| Telegram | webhook | sleeps | One bot per install. Wake list. Progress message. |
+| Slack | Events API (`mode: http`) | sleeps | Experimental. Every verified event wakes the install. |
+| Twilio SMS | webhook | sleeps | Experimental. The Worker holds delivery receipts. |
+| Discord | interactions webhook | always-on | OpenClaw 2026.10.9 has no HTTP route for interactions. The bot runs on a socket. |
+| Slack socket mode | socket | always-on | Use `mode: http` to sleep. |
+| WhatsApp | socket (Baileys) | always-on | oc-workers backs up credentials within seconds. |
+| Discord bot gateway | socket | always-on | |
+| Telegram long-polling | socket | always-on | `channels add telegram` sets webhook mode instead. |
+| Signal, Matrix, Mattermost, IRC, QQ, Twitch, Nostr | socket | always-on | |
+| Feishu, Google Chat, LINE, Microsoft Teams, Zalo webhook | webhook | not supported | Refused in `sleep.mode: auto`. Allowed always-on with `sleep.mode: off`. |
+| WebChat and A2A (Control UI) | HTTP | sleeps | The Control UI wakes the install. |
+| X (polling), Reef | partial | always-on | |
+
+Add a "sleeps" channel with `ochost channels add`. Add an "always-on" channel with OpenClaw's own tools. `ochost status` then names it as the sleep blocker.
+
+## Telegram
+
+Telegram uses a webhook. The Worker stores and acknowledges each update before the container is up. This is why the install can sleep.
+
+### Add the bot
+
+1. Get a bot token from @BotFather. See [Quickstart](/quickstart/#add-telegram).
+2. Run `ochost channels add telegram`. Paste the token. The input is hidden. Use `--token-file <file>` to give it from a file.
+3. Send a direct message to the bot.
+4. Run `ochost pairing approve telegram <code>` with the code the bot sends.
+
+```sh
+ochost channels add telegram
+ochost pairing approve telegram <code>
+ochost channels list
+ochost channels remove telegram
+```
+
+### Pairing
+
+- `--wait-pair` waits for you to send a direct message to the bot. `--pair-timeout` sets the wait. The default is 10 minutes.
+- Without `--wait-pair`, a pairing request stays open 24 hours. `ochost pairing list` shows it.
+- `ochost pairing wait` waits for a request.
+- `ochost init --telegram-owner <id>` records your Telegram user id. The bot approves your first direct message without a code. It does not do this for a group message.
+- Only one Telegram bot works. A second bot is refused with "a second Telegram bot is not supported in v1".
+
+### What wakes the install
+
+- A message from a sender you approved by pairing wakes the install.
+- A message from an unknown sender is stored and acknowledged. It does not wake the install and does not keep it awake. The Worker holds it until the next wake.
+- A group wakes the install only when its chat id is a key in `groups`. A sender in `groupAllowFrom` does not wake it from an unlisted group.
+- Your own messages (the `--telegram-owner` id) wake it from any chat.
+
+### The waking message
+
+While the install wakes, the Worker shows the typing indicator and one "Waking up" message. The message shows the wake phase and the seconds. The Worker deletes it when the reply arrives.
+
+Set `telegram.wakeProgress` in `oc-host.jsonc` to change this. Run `ochost deploy` after you change it.
+
+| Value | Result |
+|---|---|
+| `delete` (default) | The Worker deletes the message at the reply. |
+| `ready` | The Worker edits it to "Ready in N s". |
+| `off` | The Worker sends no message. |
+
+The message goes only to a chat where a person wrote to the bot or pressed its button.
+
+`channels add telegram` also sets `streaming.mode: partial`. The answer text streams into one preview message. Set `streaming.mode` to `progress` (tool lines only), `block` or `off` with `ochost config set` to change it. Reasoning is a per-session command, not a config key. Send `/reasoning stream` in the chat to see it live, or `/reasoning on` to keep it.
+
+## Slack, Discord and Twilio SMS
+
+The Worker checks the platform signature, stores the event, answers inside the platform deadline, then wakes the install. The container is not on that path. These adapters are experimental.
+
+```sh
+ochost channels add slack       # or discord, twilio (sms is the same as twilio)
+ochost channels remove slack
+```
+
+1. Set the secrets in your environment, or wait for the hidden prompt:
+   - Slack: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`.
+   - Discord: `DISCORD_BOT_TOKEN`, `DISCORD_PUBLIC_KEY`, `DISCORD_APPLICATION_ID`.
+   - Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`.
+2. Run `ochost channels add <channel>`. The values become Worker secrets, never config values.
+3. Paste the URL it prints into the platform console: `https://<worker>/_ochost/hook/slack`, `/discord` or `/twilio`.
+4. Wait for the first signed call from the platform. `--no-wait` skips the wait. `--verify-timeout 5m` sets it.
+
+Notes:
+
+- OpenClaw keeps Slack and SMS in separate plugins. The oc-workers image has both, and `channels add` turns the plugin on. An older install needs `ochost deploy` first. Without the plugin, messages wait in the inbox.
+- `channels add` tells the Worker that the secrets changed. No deploy is needed.
+- `channels remove` refuses while the channel has messages that the gateway did not take. `--force` removes the channel and drops those messages. It also prints the `wrangler secret delete` commands. It does not delete the secrets.
+
+| Channel | Answer deadline | Signature | Can sleep |
+|---|---|---|---|
+| Slack (Events API, `mode: http`) | 3 s | HMAC-SHA256, timestamp within 5 minutes | Yes |
+| Twilio SMS | 15 s | HMAC-SHA1 over the full URL | Yes. Delivery receipts are held and do not wake. |
+| Discord (interactions) | 3 s | Ed25519 | No. The Discord account runs on a socket and keeps the install awake. Stored interactions wait until OpenClaw adds the route. |
+
+Every verified Slack or Twilio event wakes the install. Only Telegram has a wake list.
+
+## Socket channels
+
+A socket cannot survive a sleep. oc-workers treats an unknown channel as a socket. A socket channel works, but it forces the install to stay always-on. At the default size this costs about $50 to $69 a month, against about $7 to $14 for a sleeping install. `ochost status` names the channel that keeps the install awake.
+
+## Messages that do not go out
+
+The Worker keeps each message until the gateway takes it. A message that the gateway keeps refusing stays in the inbox. It keeps the install awake for up to 23 hours, until it expires.
+
+- After 3 refusals in a row with "route missing" (404 or 501), you get the `inbox-blocked` alert. It names the route and the fix. A single 404 does not stop the queue.
+- While the gateway stops or restarts, the Worker holds the message (503 `gateway-stopping`) and sends it after the restart.
+- After a restart without a clean stop, the Worker sends again only the messages taken after the last reply or in the last 2 minutes. It drops messages older than 24 hours.
+- `ochost inbox list` shows the messages, their channel and the number of attempts.
+- `ochost inbox drop <id>` drops one message. `ochost inbox drop --all --channel sms` drops all messages of one channel. A dropped message is not delivered.
+- `ochost sleep now --force` drops the waiting messages when they are the only thing that stops the sleep. It prints how many it dropped.
+
+## Test without a bot
+
+`ochost init --fake-telegram` makes a test install. Telegram is a fake inside the Worker, so `channels add telegram` needs no BotFather token. A test install cannot talk to a real bot. It also turns on test hooks in the Worker. Do not put it to real use. To go back, run `ochost init --no-fake-telegram`, then `channels add telegram`.
+
+## ochost or openclaw commands
+
+Use `ochost channels add` for the channel token and `ochost pairing` for the first approval of a sender. Both must go through the Worker. The bot token is a Worker secret, the webhook URL points at the Worker, and an approved sender joins the wake list. After that, OpenClaw's own pairing page and `openclaw channels` commands work inside the gateway. A Telegram token set only in OpenClaw runs long-polling, which blocks sleep.
+
+## Next
+
+Go to [Models](/models/).

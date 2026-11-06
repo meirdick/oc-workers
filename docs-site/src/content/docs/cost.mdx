@@ -1,0 +1,65 @@
+---
+title: Cost
+description: What an install costs on Cloudflare, with the rates, the cost of one wake, and a comparison with always-on and a VM.
+sidebar:
+  order: 7
+---
+
+This page shows what an install costs and how to see the cost of yours. All figures are US dollars. They are estimates until your first invoice. They come from the project's cost model and from test runs. Check [Cloudflare Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/) for current rates.
+
+## What you pay
+
+| Item | Cost |
+|---|---|
+| Workers Paid plan | $5 a month. Containers need it. |
+| Container, 2 vCPU, 6 GiB, 20 GB, awake | About $0.06 to $0.07 an hour |
+| Container, asleep | No compute charge. Snapshot storage applies. |
+| Snapshot storage | Unknown. Cloudflare has not published a price. |
+| Model, DeepSeek V4.1 Flash on Workers AI | About $0.0004 a turn warm, $0.004 to $0.008 cold (13,000 token prompt) |
+| R2 bucket | Inside the free amounts at this size |
+
+Included allowances, such as container hours and Durable Object requests, lower the bill. The cost model ignores them, so its figures are an upper bound.
+
+## Per month
+
+| Use | Sleep mode (default) | Always-on |
+|---|---|---|
+| Light use, Telegram and Control UI | About $7 to $14 | Not needed |
+| Same, if snapshot storage is priced high | Up to about $25 | Not needed |
+| A channel that needs a socket | Not possible | About $50 to $69 |
+| For comparison, a small VM (Hetzner CX33) | About $10 to $12 | About $10 to $12 |
+
+The VM figure includes about 20% for backups (an estimate). Hetzner showed every plan as unavailable when we read its page in October 2026.
+
+The default profile in the cost model is a proactive check every 2 hours from 08 to 22, and 10 Telegram chats a day. Sleep mode costs $10.55 with the lowest snapshot price guess, $12.37 with a middle guess and $24.72 with a high guess. Always-on costs $50.25 to $68.53 in the same model, and about $58 with R2 operations and 10% idle CPU added.
+
+## Per wake
+
+| Event | Cost |
+|---|---|
+| One cron wake | About $0.0055 |
+| One Telegram chat wake | About $0.0117 |
+| One Control UI session | About $0.0219 |
+| One awake hour | About $0.0612 |
+| One sleep, snapshot storage | $0.0015 (low guess) to $0.024 (high guess) |
+
+In test runs, the measured cost of a wake was 1.05 times the model for a cron wake and 1.18 times for a chat wake.
+
+## See your own cost
+
+- Run `ochost status`. It shows the cost range for your install. A new install shows one value until it has history.
+- Open the owner console. The state card shows the projected month. The Overview tab shows the month at the last 24 hours' pace, the always-on month, the percent saved and the cost guard.
+
+## Cost guard
+
+The install does not sleep when the last 24 hours plus one more sleep and wake cycle would cost more than always-on. Set `sleep.costGuard` to `off` to turn this off. See [Configuration](/configuration/#sleep-keys).
+
+## Against a VM
+
+A VM costs about the same at the defaults. It is cheaper if you chat a lot. Above about 10 Telegram sessions a day, or 5.5 Control UI sessions a day, a bare CX33 is cheaper than oc-workers. If you must run a socket channel all the time and only price matters, a VM with backups is about 4 to 5 times cheaper.
+
+oc-workers does not win on price alone. It gives a one-command install, webhook acknowledgement at the edge while the install sleeps, backups and managed upgrades.
+
+## Next
+
+Go to [State and backups](/state-and-backups/).

@@ -1,0 +1,212 @@
+{
+  "drill": "backup-disk",
+  "at": "2026-11-02T18:36:12.235Z",
+  "target": "https://oc-m4b-verify.mdick85.workers.dev",
+  "pass": false,
+  "window": {
+    "from": "2026-11-02T18:32:00.507Z",
+    "to": "2026-11-02T18:36:12.234Z"
+  },
+  "start": {
+    "size": 20000002048,
+    "used": 1144655872,
+    "avail": 18565672960,
+    "usedPct": 7.17,
+    "reserve": true
+  },
+  "levels": [
+    {
+      "pct": 82,
+      "fill": {
+        "want": 14965672591,
+        "r": "",
+        "code": 0
+      },
+      "df": {
+        "size": 20000002048,
+        "used": 16111783936,
+        "avail": 3599921152,
+        "usedPct": 82,
+        "reserve": true
+      },
+      "write": {
+        "ok": true
+      },
+      "state": "running",
+      "gen": 6,
+      "degraded": false,
+      "ladder": 1,
+      "log": []
+    },
+    {
+      "pct": 92,
+      "fill": {
+        "want": 1999920988,
+        "r": "",
+        "code": 0
+      },
+      "df": {
+        "size": 20000002048,
+        "used": 18112139264,
+        "avail": 1599696896,
+        "usedPct": 92,
+        "reserve": true
+      },
+      "write": {
+        "ok": true
+      },
+      "state": "running",
+      "gen": 6,
+      "degraded": false,
+      "ladder": 1,
+      "log": []
+    },
+    {
+      "pct": 96,
+      "fill": {
+        "want": 799696814,
+        "r": "",
+        "code": 0
+      },
+      "df": {
+        "size": 20000002048,
+        "used": 18911981568,
+        "avail": 799870976,
+        "usedPct": 96,
+        "reserve": false
+      },
+      "write": {
+        "ok": true
+      },
+      "state": "running",
+      "gen": 6,
+      "degraded": false,
+      "ladder": 1,
+      "log": [
+        {
+          "ts": "2026-11-02T18:33:25.867Z",
+          "ev": "disk-degraded",
+          "on": true
+        },
+        {
+          "ts": "2026-11-02T18:33:26.070Z",
+          "ev": "replica-stage",
+          "from": "ok",
+          "to": "disk-full"
+        }
+      ]
+    },
+    {
+      "pct": 100,
+      "fill": {
+        "want": 798822400,
+        "r": "987136 bytes (987 kB, 964 KiB) copied, 0.106185 s, 9.3 MB/s\n0 bytes copied, 0.0256285 s, 0.0 kB/s\n",
+        "code": 0
+      },
+      "df": {
+        "size": 20000002048,
+        "used": 19711852544,
+        "avail": 0,
+        "usedPct": 100,
+        "reserve": false
+      },
+      "write": {
+        "err": "base64: write error: No space left on device\n",
+        "exit": 1
+      },
+      "state": "running",
+      "gen": 6,
+      "degraded": false,
+      "ladder": 1,
+      "log": []
+    }
+  ],
+  "freed": {
+    "df": {
+      "size": 20000002048,
+      "used": 1682669568,
+      "avail": 18029051904,
+      "usedPct": 9.85,
+      "reserve": true
+    },
+    "write": {
+      "ok": true
+    },
+    "state": "running",
+    "gen": 6,
+    "degraded": false,
+    "log": [
+      {
+        "ts": "2026-11-02T18:34:55.871Z",
+        "ev": "disk-degraded",
+        "on": false
+      },
+      {
+        "ts": "2026-11-02T18:34:55.871Z",
+        "ev": "disk-low",
+        "on": false,
+        "freeBytes": 18565103616
+      },
+      {
+        "ts": "2026-11-02T18:34:56.027Z",
+        "ev": "replica-stage",
+        "from": "disk-full",
+        "to": "ok"
+      },
+      {
+        "ts": "2026-11-02T18:34:56.297Z",
+        "ev": "litestream-exit",
+        "pid": 1647,
+        "code": 0,
+        "signal": null,
+        "cls": "planned",
+        "upMs": 30372,
+        "unclean": false
+      }
+    ]
+  },
+  "alerts": [
+    {
+      "class": "disk-full",
+      "severity": "high",
+      "detail": "free 0 B < reserve",
+      "count": 2
+    },
+    {
+      "class": "disk-high",
+      "severity": "warn",
+      "detail": "used 82% inodes 0%",
+      "count": 1
+    },
+    {
+      "class": "db-unclassified",
+      "severity": "warn",
+      "detail": "agents/main/agent/openclaw-agent.sqlite.generation-lock.sqlite, agents/main/agent/openclaw-agent.sqlite.generation-writer.sqlite, agents/main/agent/openclaw-agent.sqlite.reindex-lock.sqlite, state/openclaw-quarantine.sqlite, tmp/plugin-captures/bb7cffb3-0af5-41b9-9fd2-f1e9b06ef7cb/owner.sqlite",
+      "count": 23
+    }
+  ],
+  "rtRing": [
+    {
+      "at": "2026-11-02T18:35:11.153Z",
+      "kind": "row",
+      "d": {
+        "row": 20,
+        "ok": true
+      }
+    }
+  ],
+  "stateAtEnd": "running",
+  "checks": {
+    "reserveAtStart": true,
+    "diskHighAlert": true,
+    "diskFullAlert": true,
+    "reserveFreedAt95": true,
+    "degradedLogged": true,
+    "writeFailsWhenFull": false,
+    "noReplicaDownAlert": true,
+    "noRestart": true,
+    "writeOkAfterFree": true,
+    "recovered": true,
+    "runningAtEnd": true
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "oc-workers",
+  "version": "1.0.0",
+  "description": "Run your own OpenClaw assistant on your Cloudflare account. Sleeps when idle, wakes on a message.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "homepage": "https://oc-workers.mdick85.workers.dev/docs/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meirdick/oc-workers.git"
+  },
+  "bugs": {
+    "url": "https://github.com/meirdick/oc-workers/issues"
+  },
+  "keywords": [
+    "openclaw",
+    "cloudflare",
+    "workers",
+    "containers",
+    "assistant",
+    "telegram"
+  ],
+  "bin": {
+    "ochost": "./bin/ochost.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "templates",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --root .. cli/test",
+    "build": "node -e \"import('esbuild').then(e=>e.build({entryPoints:['src/index.ts'],outfile:'dist/ochost.mjs',bundle:true,platform:'node',format:'esm',target:'node22',packages:'external'}))\"",
+    "sync-templates": "node scripts/sync-templates.mjs",
+    "prepack": "npm run build && npm run sync-templates"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "1.0.3",
+    "wrangler": "4.156.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2"
+  }
+}

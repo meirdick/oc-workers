@@ -1,0 +1,59 @@
+---
+title: Limits and tradeoffs
+description: What oc-workers does not do, what it costs you in time and money, and how well each promise is tested.
+sidebar:
+  order: 14
+---
+
+This page says where oc-workers is weaker than the alternatives and which promises are tested.
+
+## Tradeoffs we accept
+
+| Tradeoff | Why | We revisit when |
+|---|---|---|
+| A socket channel keeps the install always-on, which costs more than a VM. | Cloudflare bills provisioned memory per second. A VM price is flat. | Cloudflare adds a cheaper idle tier, or the channel moves to webhooks. |
+| The first reply after sleep takes about 30 seconds in tests, and the stated bound is about a minute. | OpenClaw boots in 16 to 33 s plus restore. A VM never sleeps. | Restore or boot gets faster. |
+| Replies and cron runs are at-least-once across a crash. | The database loss window is 1 to 3 s. Exactly-once needs OpenClaw changes. | OpenClaw adds idempotent receipts. |
+| Cloudflare gives no uptime guarantee for containers. | A platform fact. The oc-workers target is 99.5% uptime, about 3.6 hours down in 30 days. It is not measured over 14 days. | Cloudflare publishes an SLA. |
+| The snapshot storage price is not known. | Cloudflare has not published it. The cost page shows a range. | The first invoice. |
+| One Telegram account, webhook only. | Long-poll blocks sleep. | A later version. |
+| The tool sandbox is off by default. Agent code is confined to uid 1000 in the gateway container. | Memory and cost. | You turn it on with `ochost sandbox on`. It is experimental. |
+
+## Other limits
+
+- One owner for each install. No teams.
+- The URL is `https://<name>.<subdomain>.workers.dev`. A custom domain comes only with Cloudflare Access (`ochost auth access`, experimental).
+- Telegram, Slack (HTTP mode) and Twilio SMS can sleep. The Slack and Twilio adapters are experimental. Discord keeps the install awake: OpenClaw has no HTTP route for its interactions.
+- Tested on Linux amd64 only.
+- Docker must run on the machine that runs `init` and `deploy`.
+- It keeps no model key on your machine and does not fall back to direct provider keys. Claude works only with a key you store in the AI Gateway dashboard.
+- Always-on costs about $50 to $69 a month at the default size. A socket channel needs it.
+- Web search and the tool sandbox are experimental. The sandbox has no internet access.
+- A schema-changing OpenClaw upgrade is refused. The cutover to a new schema is not built (see [Upgrades](/upgrades/)).
+
+## How well each promise is tested
+
+"Holds" means a test showed it. "Partial" means a test showed part of it. "Open" means no test yet.
+
+| Promise | Status |
+|---|---|
+| Restarts after a platform stop with no inbound traffic | **Partial.** In a 72 hour test, 0 platform-caused stops in 3.7 awake instance-days. Restart after our own faults took 224 to 1045 s. The 99.5% uptime target holds only if a restore from R2 takes about 260 s or less. |
+| Loss after a crash: database 3 s or less, credentials 30 s or less, files 60 min or less | **Fails.** The database bound failed for 1 of 49 kills. Other SQLite files failed for 5 of 49. Files are not bounded under crash loops. Credentials hold. oc-workers made fixes and we did not repeat the test. |
+| Never boots empty on an install that has state | **Partial.** No empty boot happened. Recovery after a Control DO wipe worked in one test. |
+| Sleeps between messages and acknowledges the webhook at the edge | **Partial.** In 200 cycles: 0 lost, 0 repeated, acknowledgement p50 72 ms. We planned 500 cycles. 4 of 586 acknowledged updates got no reply after a crash. |
+| First reply after sleep within 60 s plus model time | **Holds.** p50 31.6 s with a mock model, 30 runs. Not repeated with a real model at scale. |
+| Monthly cost at light use within 1.5 times a Hetzner CX33 with backups | **Open.** Needs a 14 day invoice. |
+| Always-on cost stated plainly, about 4 to 5 times a VM | **Open.** See [Cost](/cost/). |
+| One command, no console step | **Partial.** 254 s from clone to a working UI. The target was 1 manual step at init. |
+| Upgrades with rollback, 5 minutes or less downtime | **Open.** `check` and the schema gate ran. The full path did not. See [Upgrades](/upgrades/). |
+| No secret in the container that works anywhere else | **Fails.** See [Security](/security/#what-is-not-clean). |
+| Two gateways never write one replica | **Partial.** Each wake writes a new generation of the database replica, and the fence refuses writes from an old generation. The fence held in every test. We did not run a test with two running gateways. |
+| Memory stays under the limit for 14 days | **Partial.** 0 out-of-memory rows in about 14 hours of runs. No 14 day test. |
+
+## Status of the project
+
+oc-workers is at version 1.0. It has been tested on the project owner's Cloudflare account. The numbers on these pages come from those tests.
+
+## Next
+
+Read the [Changelog](/changelog/).

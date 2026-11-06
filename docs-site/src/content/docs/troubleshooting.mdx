@@ -1,0 +1,87 @@
+---
+title: Troubleshooting
+description: Errors you can see from ochost and in the browser, and what to do for each.
+sidebar:
+  order: 11
+---
+
+An `ochost` error is one line: `Failed: <you see> — fix: <do this>`. This page shows the common ones and what to do for each.
+
+## From the CLI
+
+| You see | Do this |
+|---|---|
+| `Node 22.18 or later is needed` | Install Node 22.18 or later. Check with `node -v`. Rerun. |
+| `Docker is not running` | Start Docker. Run `docker info`. Rerun. |
+| `wrangler is not logged in` | Run `npx wrangler login`. Rerun `ochost init`. |
+| `account is not on Workers Paid` | Upgrade at the link in the line. The plan is $5 a month. Rerun. |
+| `R2 is not enabled on this account` | Enable R2 in the dashboard. Rerun. |
+| `no workers.dev subdomain` | Rerun with `--subdomain <name>`. |
+| `an oc-workers install already runs as <name>` | Run `ochost init --adopt`, or pick another `--name`. |
+| `gateway <id> does not exist` | Rerun with `--gateway default`. Cloudflare makes it on first use. Or `--gateway none`. |
+| `no provider key for anthropic` (from `ochost model set anthropic/...`) | Add your Anthropic key to the gateway. Steps below. |
+| `the gate did not answer (404)` | The Worker is older than this CLI. Run `ochost deploy`. |
+| `the OpenClaw config still calls the AI Gateway with the old AI token` (from `ochost deploy`) | The install was made before the zero-token flow. Run `ochost ai-gateway setup --restart`. It points the model at the gate. |
+| `the token lacks AI Gateway: Run` (only with `--ai-token-file`) | Add that permission to the token, or drop the flag. |
+| `retry n of 3: blob unknown` | Nothing. `init` retries. |
+| `image push kept failing (3 retries)` | Rerun `ochost deploy`. Pushed layers are kept. |
+| `the install did not start in 10 min` | Run `ochost status`. Rerun `ochost init`. It is safe. |
+| `config changed elsewhere (base N, current M)` | Run `ochost config pull`. Then set again. |
+| `Telegram rejected the token` | Copy the token from @BotFather again. |
+| `a second Telegram bot is not supported in v1` | Run `ochost channels remove telegram` first. It also accepts `--yes`. |
+| `Telegram webhook not set after 3 min` | Run `ochost logs --source ocsup`. Then `ochost restart`. |
+| `no pairing request in 10 min` | Send a direct message to the bot. Then run `ochost pairing approve telegram <code>`. |
+| `<NAME> is a channel secret` or `<NAME> is a managed secret` (from `ochost secrets set`) | Use the command in the fix line. |
+| `<version> changes the state schema` | Stay on the pinned version. See [Upgrades](/upgrades/). |
+| `image contract failed for <v>` | The new image failed its contract test. The upgrade stops. Stay on your version. The test is in the `image/test` folder of the repo. |
+| `rolled back to <v> (upgrade failed: ...)` | Run `ochost logs --source rt` and `ochost upgrade check`. |
+| `no oc-host install in <dir>` | Run `ochost init`, or `ochost init --adopt`. |
+| Any other `Failed:` line | Rerun with `OCHOST_DEBUG=1`. Report the output. |
+
+### Add an Anthropic key to the gateway
+
+<Render file="gateway-key-steps" />
+
+## In the browser
+
+| You see | Do this |
+|---|---|
+| The page "Link used or expired" | A login link works once and lasts 5 minutes. Run `ochost open`. |
+| "OpenClaw is waking up. Reload in a few seconds." | Nothing. The page shows the phase and reloads when the install runs. |
+| "offline" in an idle Control UI tab | Reload the page. The tab was closed for idle. This comes from the OpenClaw UI. |
+| Error 1101 on a page while the install sleeps | See [The 1101 page](#the-1101-page). |
+| `bad origin` when you log in with Firefox | See [Firefox login](#firefox-login). |
+
+### The 1101 page
+
+An older Worker could fail with Cloudflare Error 1101 on a proxied path while the install went to sleep. The current Worker answers with the waking page instead (status 503 with `Retry-After: 5` for non-page requests). Update your clone and run `ochost deploy`.
+
+### Firefox login
+
+An older Worker refused the login form post from Firefox with 403 `bad origin`, because Firefox sent `Origin: null`. The current Worker accepts a missing or `null` Origin when `Sec-Fetch-Site` is `same-origin`. Update your clone and run `ochost deploy`. As a workaround, run `ochost open` and open the link.
+
+## Known rough edges
+
+| You see | Meaning |
+|---|---|
+| `alerts db-unclassified (warn)` in `status` on a new install | The image scan flags a temp file. Harmless. |
+| `doctor`: `state WARN running, start ladder level 1` | A normal first start can leave level 1. No action. |
+| `.oc-host/wrangler.jsonc` has absolute paths into the clone | Keep the clone where it is. After a move, rerun `ochost init`. |
+| `ochost status` shows one cost value on a new install, not a range | Normal until the install has history. |
+| Deploy fails with `Timed out while preparing the container image` or `Unauthorized` | A registry problem. Rerun `ochost deploy`. |
+
+## Logs
+
+```sh
+ochost logs --source ctl
+ochost logs --source rt
+ochost logs --source ocsup
+ochost logs --source gate
+ochost logs --source alert
+```
+
+To see alerts in the browser, open the Alerts and log tab of the owner console.
+
+## Next
+
+Go to [CLI reference](/cli-reference/).

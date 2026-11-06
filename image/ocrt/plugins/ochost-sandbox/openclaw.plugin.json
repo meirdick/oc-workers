@@ -1,0 +1,15 @@
+{
+  "id": "ochost-sandbox",
+  "name": "oc-host sandbox",
+  "description": "Sandbox backend `ochost`: exec and file tools run in the install's Cloudflare sandbox container through SandboxGate.",
+  "categories": ["security"],
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "gateUrl": { "type": "string", "minLength": 1 },
+      "workspaceRoot": { "type": "string", "minLength": 1 }
+    }
+  }
+}

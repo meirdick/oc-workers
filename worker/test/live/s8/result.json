@@ -1,0 +1,52 @@
+{
+  "drill": "s8",
+  "at": "2026-11-01T17:13:46.697Z",
+  "target": "https://oc-m4-sleep.mdick85.workers.dev",
+  "pass": true,
+  "runs": [
+    {
+      "i": 0,
+      "armed": true,
+      "ack": 200,
+      "droppedAt": 1793552895966,
+      "wakeAt": 1793552911248,
+      "ackToWakeMs": 15297,
+      "wakeReason": {
+        "gen": 33
+      },
+      "runningMs": 63716,
+      "replies": 1
+    },
+    {
+      "i": 1,
+      "armed": true,
+      "ack": 200,
+      "droppedAt": 1793553037754,
+      "wakeAt": 1793553052750,
+      "ackToWakeMs": 15017,
+      "wakeReason": {
+        "gen": 34
+      },
+      "runningMs": 46904,
+      "replies": 1
+    },
+    {
+      "i": 2,
+      "armed": true,
+      "ack": 200,
+      "droppedAt": 1793553151877,
+      "wakeAt": 1793553166876,
+      "ackToWakeMs": 15015,
+      "wakeReason": {
+        "gen": 35
+      },
+      "runningMs": 46268,
+      "replies": 1
+    }
+  ],
+  "checks": {
+    "dropped": true,
+    "wokeLe60s": true,
+    "oneReply": true
+  }
+}

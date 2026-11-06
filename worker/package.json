@@ -1,0 +1,19 @@
+{
+  "name": "@oc-host/worker",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "code-version": "node scripts/code-version.mjs",
+    "dryrun": "wrangler deploy --dry-run --outdir dist --containers-rollout=none --define \"$(node scripts/code-version.mjs --define)\"",
+    "deploy": "wrangler deploy --define \"$(node scripts/code-version.mjs --define)\""
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "1.0.3"
+  }
+}

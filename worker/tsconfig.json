@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["@cloudflare/workers-types/experimental", "node"],
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["src", "test"],
+  "exclude": ["test/results"]
+}

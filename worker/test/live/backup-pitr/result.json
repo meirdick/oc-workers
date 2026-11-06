@@ -1,0 +1,204 @@
+{
+  "drill": "backup-pitr",
+  "at": "2026-11-02T18:45:45.579Z",
+  "target": "https://oc-m4b-verify.mdick85.workers.dev",
+  "pass": false,
+  "window": {
+    "from": "2026-11-02T18:39:37.671Z",
+    "to": "2026-11-02T18:45:45.579Z"
+  },
+  "userVersionBefore": {
+    "uv": 20
+  },
+  "writer": {
+    "start": "2026-11-02T18:39:38.300Z",
+    "choose": "2026-11-02T18:40:08.301Z",
+    "poison": {
+      "at": 1793644828537,
+      "before": 20,
+      "after": 999999
+    },
+    "last": {
+      "now": 1793644851482,
+      "maxId": 1393,
+      "maxTs": 1793644848265,
+      "n": 1393
+    }
+  },
+  "sigkillAt": "2026-11-02T18:41:11.585Z",
+  "ladder": [
+    {
+      "at": "2026-11-02T18:41:12.344Z",
+      "level": 1,
+      "state": "backoff",
+      "gen": 7,
+      "plan": {
+        "rootfs": "image",
+        "snapshotId": null,
+        "sqlite": "gen",
+        "sqliteGen": 6,
+        "archiveId": "20261102T183155Z-un46vmds",
+        "workspace": "archive",
+        "runDoctor": false
+      },
+      "lastClass": "oom?"
+    },
+    {
+      "at": "2026-11-02T18:42:14.008Z",
+      "level": 1,
+      "state": "starting",
+      "gen": 8,
+      "plan": {
+        "rootfs": "image",
+        "snapshotId": null,
+        "sqlite": "gen",
+        "sqliteGen": 7,
+        "archiveId": "20261102T183155Z-un46vmds",
+        "workspace": "archive",
+        "runDoctor": false
+      },
+      "lastClass": "oom?"
+    },
+    {
+      "at": "2026-11-02T18:42:48.812Z",
+      "level": 1,
+      "state": "backoff",
+      "gen": 8,
+      "plan": {
+        "rootfs": "image",
+        "snapshotId": null,
+        "sqlite": "gen",
+        "sqliteGen": 7,
+        "archiveId": "20261102T183155Z-un46vmds",
+        "workspace": "archive",
+        "runDoctor": false
+      },
+      "lastClass": "doctor-required"
+    },
+    {
+      "at": "2026-11-02T18:43:50.293Z",
+      "level": 1,
+      "state": "starting",
+      "gen": 9,
+      "plan": {
+        "rootfs": "image",
+        "snapshotId": null,
+        "sqlite": "gen",
+        "sqliteGen": 8,
+        "archiveId": "20261102T183155Z-un46vmds",
+        "workspace": "archive",
+        "runDoctor": true
+      },
+      "lastClass": "doctor-required"
+    }
+  ],
+  "l5PendingAt": null,
+  "l5PendingAfterKillMin": null,
+  "alerts": [
+    {
+      "class": "upgrade-regression",
+      "at": "2026-11-02T18:44:12.128Z",
+      "detail": "doctor-failed"
+    }
+  ],
+  "restore": {
+    "source": "pitr:2026-11-02T18:40:08.301Z",
+    "status": 202,
+    "body": {
+      "ok": true,
+      "opId": "l5-1793645061386",
+      "phase": "chosen",
+      "source": "pitr:2026-11-02T18:40:08.301Z",
+      "gen": 7,
+      "ts": "2026-11-02T18:40:08.301Z",
+      "lossWindowMs": 253085,
+      "lossWindow": "managed SQLite writes after 2026-11-02T18:40:08.301Z (253 s before this request, and any made until the restart) are lost; workspace and other files are not rolled back",
+      "cron": "off for the restore boot",
+      "restart": {
+        "wake": {
+          "state": "backoff",
+          "action": "flag"
+        }
+      }
+    },
+    "start": {
+      "ok": true,
+      "state": "starting"
+    }
+  },
+  "afterRestore": {
+    "state": "running",
+    "gen": 10,
+    "plan": {
+      "rootfs": "image",
+      "snapshotId": null,
+      "sqlite": "gen",
+      "sqliteGen": 7,
+      "archiveId": "20261102T183155Z-un46vmds",
+      "workspace": "archive",
+      "runDoctor": true
+    },
+    "reason": "ladder",
+    "ladder": {
+      "level": 1,
+      "stateFaults": 1,
+      "nextStartAt": 1793645061718,
+      "lastClass": "doctor-failed"
+    },
+    "writer": {
+      "now": 1793645145074,
+      "maxId": 589,
+      "maxTs": 1793644807865,
+      "n": 589
+    },
+    "userVersion": {
+      "uv": 20
+    },
+    "timeout": false
+  },
+  "l5Ring": [
+    {
+      "at": "2026-11-02T18:44:21.386Z",
+      "src": "alert",
+      "kind": "l5-requested",
+      "d": {
+        "severity": "high",
+        "detail": "owner restore pitr:2026-11-02T18:40:08.301Z",
+        "due": true
+      }
+    },
+    {
+      "at": "2026-11-02T18:44:21.441Z",
+      "src": "l5",
+      "kind": "pitr-chosen",
+      "d": {
+        "opId": "l5-1793645061386",
+        "gen": 7,
+        "ts": "2026-11-02T18:40:08.301Z",
+        "lossWindowMs": 253085
+      }
+    },
+    {
+      "at": "2026-11-02T18:45:39.272Z",
+      "src": "l5",
+      "kind": "pitr-booted",
+      "d": {
+        "opId": "l5-1793645061386",
+        "gen": 10,
+        "from": 7,
+        "ts": "2026-11-02T18:40:08.301Z"
+      }
+    }
+  ],
+  "lossAfterChooseS": 0.436,
+  "checks": {
+    "poisoned": true,
+    "reachedL4": false,
+    "reachedSlow": false,
+    "l5Pending": false,
+    "restoreAccepted": true,
+    "bootedFromPitr": false,
+    "userVersionRestored": true,
+    "lossWithinWindow": true
+  }
+}

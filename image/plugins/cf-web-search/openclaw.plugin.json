@@ -1,0 +1,27 @@
+{
+  "id": "cf-web-search",
+  "name": "Cloudflare Web Search",
+  "description": "web_search through the Cloudflare Web Search API, via the oc-host capability gate.",
+  "categories": ["web"],
+  "activation": { "onStartup": false },
+  "contracts": { "webSearchProviders": ["cloudflare-web-search"] },
+  "uiHints": {
+    "webSearch.baseUrl": {
+      "label": "Capability gate URL",
+      "help": "Where the gate listens inside the container (default http://15.0.0.3)."
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "webSearch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string" }
+        }
+      }
+    }
+  }
+}

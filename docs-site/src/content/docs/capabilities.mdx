@@ -1,0 +1,95 @@
+---
+title: Capabilities
+description: The Cloudflare tools the agent can use through the capability gate, their daily budgets, and what is not built.
+sidebar:
+  order: 5
+---
+
+The agent runs in the container. It needs tools such as a browser, web pages, speech and images. oc-workers gives it these tools through one gate in your Worker. The container holds no credential for these services.
+
+## The gate
+
+The capability gate answers at `http://15.0.0.3`, port 80. The agent user (uid 1000) can reach only this gate and the sandbox gate at `15.0.0.4`. See [Sandbox](#sandbox). The container has no bearer token for them. The address exists only inside your install. A daily budget limits what the agent can spend if injected text steers it.
+
+`ochost init` writes the gate into the OpenClaw config. The gate is then the only browser, fetch, embedding and media provider the agent has.
+
+| Capability | Through the gate | Status |
+|---|---|---|
+| Browser | Cloudflare Browser Run, over CDP at `/browser/devtools` | Works. playwright-core and puppeteer-core connected and read a page title. |
+| Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The `firecrawl` plugin is in the image. It reaches the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first. It calls the gate only for pages that the plain fetch cannot read. |
+| Web search | Cloudflare Web Search API, through `/search` | Experimental. A plugin in the image adds the provider "Cloudflare Web Search" to Settings > Search. It needs no API key. |
+| Embeddings | `@cf/baai/bge-m3` | Works through the gate (1024 dimensions). |
+| Speech out | `@cf/myshell-ai/melotts` | Works through the gate. The reply is WAV. |
+| Transcription | `@cf/openai/whisper-large-v3-turbo` | Works through the gate. |
+| Image | `@cf/black-forest-labs/flux-1-schnell` | Works through the gate. |
+| Cloudflare docs | MCP server `https://docs.mcp.cloudflare.com/mcp`, no auth | Configured. |
+
+"Works through the gate" means a test call from the agent user returned a valid answer. We did not run a full agent turn for each tool.
+
+Chat uses the gate too. The model provider `cfgw` points at `http://15.0.0.3/ai/v1`, and the Worker runs the call on its Workers AI binding. This is why no AI token exists. See [Models](/models/).
+
+## Budgets
+
+Each UTC day has a budget for each verb.
+
+| Verb | Default |
+|---|---|
+| `browser` | 3600 seconds |
+| `neurons` | 100000 |
+| `requests` | 2000 |
+| `websearch` | 200 searches |
+| `exec` | 7200 seconds of sandbox commands |
+| `sandbox` | 8 hours of sandbox container time |
+
+At 80% the owner gets a warning alert. At 100% the owner gets a high alert, and the gate answers 429 with `retry-after`. The model's own count gives neuron use when it reports one. Otherwise the count is an estimate. The AI Gateway spend limit is the hard backstop. Claude calls (`anthropic/...`) count as requests, not neurons.
+
+```sh
+ochost caps                      # used, limit and percent for each verb
+ochost caps set browser 7200     # raise or lower one limit
+```
+
+Browser Run includes 10 hours a month. After that it costs $0.09 per browser hour (rate read in October 2026). Check the Cloudflare pricing page for current prices.
+
+The owner console shows each budget on the Overview tab. See [How it works](/how-it-works/#the-owner-console).
+
+## Sandbox
+
+The tool sandbox is off by default. It is experimental. When it is on, every exec and file tool call of the agent runs in a separate Cloudflare Sandbox container, not in the gateway container.
+
+1. Turn it on:
+
+   ```sh
+   ochost sandbox on        # writes "sandbox": "on" in oc-host.jsonc
+   ochost deploy
+   ochost restart
+   ```
+
+2. Check it:
+
+   ```sh
+   ochost sandbox           # state, last sleep, exec and sandbox budgets
+   ```
+
+3. Stop it when you want:
+
+   ```sh
+   ochost sandbox sleep     # back up the workspace and stop the sandbox now
+   ochost sandbox off
+   ```
+
+Facts:
+
+- The sandbox gate answers at `http://15.0.0.4`, port 80. The container holds no credential for it.
+- The sandbox has no internet access. The agent cannot install packages there.
+- It starts at the first exec. It sleeps after 10 minutes without an exec, when the install sleeps, or when its budget is spent.
+- oc-workers backs up the sandbox `/workspace` to your R2 bucket at each sleep and every 30 minutes of use. It keeps the newest 2 backups.
+- The deploy builds the sandbox image even when the sandbox is off.
+
+## Not built
+
+- File storage on R2 through the gate.
+- A mode where the agent holds a Cloudflare API token. It would be opt-in.
+
+## Next
+
+Go to [Configuration](/configuration/).

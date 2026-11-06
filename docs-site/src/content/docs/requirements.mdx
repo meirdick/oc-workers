@@ -1,0 +1,39 @@
+---
+title: Requirements
+description: What you need on your machine and your Cloudflare account before you run ochost init.
+sidebar:
+  order: 1
+---
+
+Check these items before you run `ochost init`. `init` also checks them and stops with a fix line if one is missing.
+
+## Your machine
+
+| Need | Detail |
+|---|---|
+| Node | Version 22.18 or later. Check with `node -v`. Install from [nodejs.org](https://nodejs.org/en/download). |
+| Docker | Running. wrangler builds the container image on this machine. `init` and `deploy` need it. Check with `docker info`. Install from [docs.docker.com](https://docs.docker.com/get-started/get-docker/). |
+| wrangler login | Run `npx wrangler login`. A browser opens and you select Allow. On a machine with no browser, wrangler prints a URL. Open it on another machine. |
+| OS | Linux amd64 is tested. macOS and Windows are not tested. |
+| The CLI | `npm install -g oc-workers`. The package holds the Worker and image sources it deploys. |
+
+## Your Cloudflare account
+
+| Need | Detail |
+|---|---|
+| Workers Paid | $5 a month. Containers need it. Without it, `init` stops with "account is not on Workers Paid". |
+| R2 | Enabled on the account. Interactive `init` prints a dashboard link and waits until you enable R2. Non-interactive `init` stops with "R2 is not enabled on this account". |
+| workers.dev subdomain | Interactive `init` asks for a name if the account has none. Non-interactive `init` needs `--subdomain <name>`. |
+
+## No AI token
+
+`init` needs no Cloudflare API token. Model calls run on the Worker's Workers AI binding, which acts as your account. Workers AI usage is billed to the account.
+
+Two items are optional:
+
+- **An AI Gateway.** The Worker uses `default`, which Cloudflare makes on its first request. To use another gateway, make it in the dashboard first. See [Models](/models/).
+- **A token.** Pass `--ai-token-file <file>` only if you want `init` to list or create gateways, or want direct gateway calls from your machine. The token needs AI Gateway **Read**, **Edit** and **Run**. The CLI reads it, uses it and drops it. It does not store the token or send it to the Worker.
+
+## Next
+
+Go to [Quickstart](/quickstart/).

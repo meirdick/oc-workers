@@ -1,0 +1,67 @@
+---
+title: Changelog
+description: User-visible changes to oc-workers, grouped by area.
+sidebar:
+  order: 15
+---
+
+Version 1.0.0 is the first release. This page lists what it holds, by area.
+
+## Owner console
+
+- The console has three tabs: Overview (cost, alerts summary, budgets, connected checks, backups), Alerts and log, and Setup. Tabs are links (`/?tab=`) and need no script. Buttons are only in Alerts and log and in Setup.
+- The state card stays on top. One state button shows **Wake now**, **Sleep now**, **Start** or **Retry now**, by state.
+- Setup has **Approve** for pairing requests, **Raise** for a budget near its cap, **Archive now** and **Restore drill**.
+- `ochost doctor` reads `GET /ops/doctor`, the same JSON the console shows.
+- Without a session, `/` shows the login form only.
+
+## Install and CLI
+
+- `ochost init` asks for no AI token. Model calls run on the Worker's Workers AI binding through the capability gate. `--ai-token-file` is an optional override.
+- `init` prints one line per step and a summary block. `--json` output is complete, and WARN lines carry a fix.
+- New `init --telegram-owner <id>`: your first direct message is approved without a code.
+- New `init --fake-telegram` for a test install.
+- New `ochost config render`. Older installs pick up new capability settings. `ochost deploy` runs it when the config render version is older.
+- `ochost deploy` with a new image, then `ochost restart`, boots the new image. An archive runs first.
+- `ochost destroy` deletes the sandbox app and its image tags.
+- The image push retries on `connection reset` and `broken pipe`.
+- The default model is DeepSeek V4.1 Flash on Workers AI through an AI Gateway. New `ochost model bench`.
+
+## Channels
+
+- New `ochost channels add slack|discord|twilio`. The Worker checks the signature, stores and acknowledges the event before the container is up.
+- Slack and Twilio SMS messages reach the gateway. The image has the OpenClaw Slack and SMS plugins. Run `ochost deploy` on an older install.
+- New `ochost inbox list` and `ochost inbox drop`. `channels remove --force` and `sleep now --force` drop messages that the gateway did not take.
+- The `inbox-blocked` alert comes after 3 "route missing" answers.
+- `channels add sms` and `channels remove sms` work as names for Twilio.
+- Telegram cold replies show the typing indicator and a "Waking up" message while the install wakes (`telegram.wakeProgress`). `channels add telegram` turns on streamed replies.
+- Pairing requests stay open 24 hours. Strangers and unlisted groups do not wake the install.
+- Messages that arrive while the gateway restarts wait for it. After a crash, only recent messages are sent again.
+
+## Capabilities and sandbox
+
+- The capability gate serves browser, web fetch, web search, embeddings, speech, transcription and image calls, with daily budgets. New `ochost caps`.
+- Web fetch uses the `firecrawl` plugin in the image. Web search uses the Cloudflare Web Search API.
+- New tool sandbox, off by default: `ochost sandbox on|off|sleep`. New `exec` and `sandbox` budgets.
+
+## Security and access
+
+- A login link from `ochost open` opens a Continue button. A link preview cannot spend it.
+- Login works in Firefox.
+- New `ochost auth access --domain <host>`: Cloudflare Access on a custom domain.
+- A daily `heartbeat` alert and a `deadman-silent` alert. `ochost doctor` checks the alert sink.
+- The Worker answers with the waking page, not Error 1101, when the Runtime throws while the install sleeps or stops.
+
+## Backups and upgrades
+
+- Archives run on a schedule, with verification and restore. A test restore marks each replica generation `verified`.
+- Archives are pruned after each archive and taken from a copy, not the live database.
+- Credentials are copied to R2 and restored if the Control DO is rewound.
+- Disk checkpoints survive crash loops. Sleep snapshots are smaller. OpenClaw's heartbeat no longer keeps waking an idle install.
+- New `ochost upgrade check`, `run` and `rollback`, with a schema gate.
+- After two failed Doctor boots on one image, the install raises one alert with the Doctor output tail.
+
+## Sleep and wake
+
+- The install sleeps when idle and wakes on a message or a timer.
+- New `sleep.minAwakeMinutes`.

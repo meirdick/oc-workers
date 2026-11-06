@@ -1,0 +1,67 @@
+// oc-host Worker. `ochost deploy` regenerates this file (M5). Test groups use name/bucket oc-m2-<group>.
+// durable_object scheduling: the instance size is chosen at start() (§8.4). Do not add image,
+// instance_type, max_instances, rollout or constraints: wrangler rejects them for this policy.
+// Deploy with `npm run deploy` (injects CODE_VERSION, spec 08 §2.2).
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "oc-host",
+  "account_id": "5759bb6ef591b078e5480bfd5a767856",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  "preview_urls": false,
+  "containers": [
+    {
+      "class_name": "Runtime",
+      "scheduling_policy": "durable_object",
+      "images": { "oc": { "dockerfile": "../image/Dockerfile", "build_context": "../image" } }
+    },
+    // docs/12 tool sandbox: its own image, same durable_object policy (Sandbox SDK 1.0 = a DO you write).
+    {
+      "class_name": "SandboxSession",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "sbx": { "dockerfile": "../image/sandbox/Dockerfile", "build_context": "../image/sandbox" }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "CONTROL", "class_name": "Control" },
+      { "name": "RUNTIME", "class_name": "Runtime" },
+      // M3 ingress (D4): owner sessions, cookie key, login rate limits. src/ingress/auth-do.ts
+      { "name": "AUTH", "class_name": "Auth" },
+      // docs/12: SandboxSession `sb:<inst>`, reached only through SandboxGate (15.0.0.4) and /ops/sandbox
+      { "name": "SANDBOX", "class_name": "SandboxSession" }
+    ]
+  },
+  "exports": {
+    "Control": { "type": "durable-object", "storage": "sqlite" },
+    "Runtime": { "type": "durable-object", "storage": "sqlite" },
+    "Auth": { "type": "durable-object", "storage": "sqlite" },
+    "SandboxSession": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "version_metadata": { "binding": "CF_VERSION" },
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "oc-host-<inst>" }],
+  // CapGate (D14): /browser/* on 15.0.0.3. deploy renders the same binding.
+  "browser": { "binding": "BROWSER" },
+  // Workers AI (zero-token install): every model call and CapGate /v2/search (env.AI.websearch()) run through this
+  // binding, authenticated as the account.
+  "ai": { "binding": "AI" },
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    "OC_INST": "<inst>",
+    // AI Gateway the AI binding routes through. "default" is created on its first request; "" = no gateway (no logs).
+    "OC_AI_GATEWAY": "default",
+    "OC_INSTANCE": "{\"vcpu\":2,\"memoryMib\":6144,\"diskMb\":20000}",
+    // oc-host.jsonc subset the Worker reads before the Control DO answers (§20)
+    "OC_SETTINGS": "{}",
+    // "1" only in test groups: enables /ops/fault, fakes, OC_TIMERS
+    "OC_TEST": "0"
+  }
+  // Secrets: CONTROL_TOKEN, CI_TOKEN (optional), TELEGRAM_WEBHOOK_SECRET, TELEGRAM_WEBHOOK_SECRET_PREV
+  // (during a rotation only), OC_SECRET_* SecretRefs for the gateway (LLM keys, bot token; the prefix is
+  // stripped in the container env).
+}

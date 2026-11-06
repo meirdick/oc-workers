@@ -1,0 +1,15 @@
+node_modules
+dist/
+.wrangler/
+*.log
+.env
+.dev.vars
+*.local
+.secrets.json
+*.secrets.*
+.claude/
+spike/results/raw/
+worker/local/soak/dev.log
+worker/local/soak/.wrangler-state/
+worker/local/soak/.wrangler/
+*.tgz

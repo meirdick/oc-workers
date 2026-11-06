@@ -1,0 +1,11 @@
+// Owner console fixture (fixture.ts) for `wrangler dev` only. Never deployed: no account, no routes.
+// npx wrangler dev -c worker/test/ui/wrangler.jsonc --port 8799 --local
+{
+  "name": "oc-ui-fixture",
+  "main": "fixture.ts",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "AUTH", "class_name": "Auth" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Auth"] }],
+  "vars": { "OC_INST": "oc-meir", "OC_TEST": "1", "CONTROL_TOKEN": "fixture-owner-token" }
+}

@@ -1,0 +1,121 @@
+---
+title: Quickstart
+description: Install oc-workers from an empty directory to a working Control UI with ochost init.
+sidebar:
+  order: 2
+---
+
+This page takes you from zero to a working install. The first install takes 4 to 5 minutes. Most of that time is the image push.
+
+## Before you start
+
+Check [Requirements](/requirements/). You need:
+
+- Node 22.18 or later.
+- Docker, running.
+- A Cloudflare account on Workers Paid.
+- A terminal.
+
+## Install
+
+<Steps>
+  <Step title="Get the CLI">
+    ```sh
+    npm install -g oc-workers
+    ```
+    This puts `ochost` on your PATH. It can need `sudo` if root owns your global npm folder. Check with `ochost --version`.
+  </Step>
+  <Step title="Log in to Cloudflare">
+    ```sh
+    npx wrangler login
+    ```
+    A browser opens. Select Allow. On a machine with no browser, wrangler prints a URL. Open it on another machine, then select Allow.
+  </Step>
+  <Step title="Run init">
+    ```sh
+    mkdir ~/my-oc && cd ~/my-oc
+    ochost init
+    ```
+    `init` asks for no AI token. The model runs on your account through the Worker's Workers AI binding.
+  </Step>
+  <Step title="Open the Control UI">
+    At the end, `init` prints a summary:
+
+    ```text
+    UI     https://oc-host.<your-subdomain>.workers.dev
+    Login  https://oc-host.<your-subdomain>.workers.dev/_ochost/login/…  (single use, 5 min)
+    Bot    none yet
+    Model  @cf/deepseek-ai/deepseek-v4.1-flash-1017 via gateway default
+    Mode   sleeps after 5 min idle, wakes on a message
+    Cost   about $7-14/month at light use (up to $25 if snapshot storage is priced high)
+    ```
+
+    Open the Login link. It sets the owner cookie and shows the owner console. Select **Open Control UI** for the OpenClaw Control UI.
+
+    The link works once and expires after 5 minutes. If it expired, run `ochost open` for a new one.
+  </Step>
+</Steps>
+
+## The owner console
+
+The owner console is the page at your install URL. A state card sits at the top. It shows the state, the last activity, the next wake, the projected month cost and the check count. It also has one state button: **Wake now**, **Sleep now**, **Start** or **Retry now**.
+
+Below the state card are three tabs:
+
+| Tab | What it holds |
+|---|---|
+| Overview | Cost, an alerts summary, daily budgets, connected checks and backups. |
+| Alerts and log | Open alerts, the log of wakes, sleeps, restarts and archives, and closed alerts. |
+| Setup | Things to connect, one row each with a button or a command. |
+
+See [How it works](/how-it-works/#the-owner-console).
+
+## Prompts from init
+
+Most runs show no prompt or one prompt.
+
+| Prompt | When | Do this |
+|---|---|---|
+| `Cloudflare account [1-N]` | Your login has several accounts. | Type a number. Or pass `--account-id`. |
+| `Press Enter when R2 is on` | R2 is off. | Enable R2 at the dashboard link. Press Enter. |
+| workers.dev subdomain name | The account has no workers.dev subdomain. | Type a name. |
+
+With `--non-interactive`, or with no terminal, `init` asks nothing. It stops with a fix line when it needs an answer.
+
+## The model
+
+There is no AI token to make. The Worker calls Workers AI through a binding. The container holds no Cloudflare credential. See [Models](/models/).
+
+The Worker routes model calls through the AI Gateway `default`. Cloudflare makes `default` on the first request, so `init` makes no API call for it. After the deploy, `init` sends one test message to the model.
+
+- To use a gateway you made, run `ochost init --gateway <id>`. The gateway must exist.
+- To use no gateway, run `ochost init --gateway none`. Model calls work, with no logs and no spend limit.
+
+## What init does
+
+`init` prints one line per step. It has 14 steps: preflight, account, subdomain, files, AI model, secrets, R2 bucket, deploy, health, model hop, config, start, self-test and login. The deploy step is the longest. In test runs, a fresh clone reached a connected Control UI in 4 to 5 minutes. Times vary.
+
+## If init stops
+
+A rerun is safe. Run `ochost init` again in the same directory. It skips what is current.
+
+If a stop leaves the deploy part-way done, you see a `Failed:` line with a fix and no summary. A rerun finishes the deploy. If the image push keeps failing, run `ochost deploy`. The CLI keeps pushed layers. See [Troubleshooting](/troubleshooting/).
+
+A second `ochost init` changes nothing that is current. It can wake a sleeping install. It redeploys when the deploy hash changed.
+
+## Add Telegram
+
+1. In Telegram, open a chat with @BotFather. This is Telegram's own bot for making bots.
+2. Send `/newbot` and follow the steps. BotFather gives you a bot token.
+3. Run `ochost channels add telegram`. Paste the token. The input is hidden.
+4. In Telegram, open your bot and send it a text message.
+5. The bot replies with a pairing code. Run `ochost pairing approve telegram <code>`.
+
+Webhook channels let the install sleep. Socket channels keep it awake and cost about five times more. See [Channels](/channels/).
+
+## Next
+
+- Run `ochost status` to see the sleep state, the next wake and the cost.
+- Run `ochost doctor` to run health checks. Each check has a fix.
+- Run `ochost alerts setup` to choose where alerts go. Alerts are off by default.
+- Read [Channels](/channels/) next.

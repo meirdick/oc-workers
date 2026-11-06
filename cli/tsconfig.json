@@ -1,0 +1,7 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "types": ["node"], "lib": ["es2022", "dom"], "allowImportingTsExtensions": true },
+  "include": ["src", "test", "bin"],
+  // doctor-panel.test.ts runs the Worker's Control DO test world, which needs the workers types this config lacks.
+  "exclude": ["test/doctor-panel.test.ts"]
+}

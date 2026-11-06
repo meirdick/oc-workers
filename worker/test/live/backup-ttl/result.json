@@ -1,0 +1,82 @@
+{
+  "drill": "backup-ttl",
+  "at": "2026-11-01T18:05:05.452Z",
+  "target": "https://oc-m4-backup.mdick85.workers.dev",
+  "pass": false,
+  "step": "guard",
+  "guardMin": 12,
+  "sleepRec": {
+    "idleMs": 10800000,
+    "wakeAt": 1793556268398,
+    "snapshotId": "86cd4684-5285-454d-82a7-1f6b6cf84b17",
+    "blockedOn": null
+  },
+  "plannedWakeAt": "2026-11-01T18:04:28.398Z",
+  "guardWake": {
+    "leftAsleepAt": "2026-11-01T18:04:36.914Z",
+    "afterMin": 5.6,
+    "timeout": false
+  },
+  "startRing": [
+    {
+      "at": "2026-11-01T18:05:03.646Z",
+      "src": "ocsup",
+      "kind": "startupz",
+      "d": {
+        "gen": 11,
+        "detail": {
+          "ms": 29950
+        }
+      }
+    }
+  ],
+  "marker": {
+    "ok": true,
+    "tag": "guard-1793555877512",
+    "at": 1793555877846
+  },
+  "asleepAt": "2026-11-01T17:58:43.198Z",
+  "asleepForMin": 5.9,
+  "sleepGen": 10,
+  "newestArchiveBeforeWake": {
+    "id": "20261101T175801Z-4z2jxx33",
+    "created": "2026-11-01T17:58:01.375Z"
+  },
+  "wakeMs": 28051,
+  "state": "running",
+  "gen": 11,
+  "planKind": "marker",
+  "plan": {
+    "rootfs": "snapshot",
+    "snapshotId": "86cd4684-5285-454d-82a7-1f6b6cf84b17",
+    "sqlite": "marker",
+    "sqliteGen": 10,
+    "archiveId": null,
+    "workspace": "snapshot",
+    "runDoctor": false
+  },
+  "ladder": {
+    "level": 1,
+    "stateFaults": 0,
+    "nextStartAt": 0,
+    "lastClass": null
+  },
+  "restored": {
+    "ws": true,
+    "row": {
+      "tag": "guard-1793555877512",
+      "ts": 1793555877844
+    }
+  },
+  "misses": 0,
+  "ringKinds": ["ocsup/startupz", "rt/row", "rt/fault"],
+  "checks": {
+    "running": true,
+    "wakeAtIsGuard": false,
+    "wokeByItself": false,
+    "bootFromSnapshot": true,
+    "workspaceBack": true,
+    "rowsBack": true,
+    "noWakeLoop": true
+  }
+}

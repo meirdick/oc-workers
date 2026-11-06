@@ -1,0 +1,248 @@
+{
+  "inst": "demo",
+  "now": 1793925654190,
+  "view": {
+    "inst": "demo",
+    "state": "running",
+    "stateAt": 1793925306037,
+    "lastActivityAt": 1793925650973,
+    "nextWakeAt": 1793934000000,
+    "snapshots": 169,
+    "alerts": [
+      { "class": "ctl-prune", "severity": "warn", "at": 1793924599593, "open": true },
+      { "class": "db-unclassified", "severity": "warn", "at": 1793924339799, "open": true }
+    ],
+    "now": 1793925654196,
+    "desired": "running",
+    "ladderClass": null
+  },
+  "render": { "docVersion": 1, "cliVersion": 1, "outdated": false },
+  "probes": { "asleep": false, "hopAt": 1793925600180, "webhookAt": 1793925602121 },
+  "ok": false,
+  "fails": 1,
+  "warns": 2,
+  "checks": [
+    { "name": "reach", "result": "PASS", "detail": "Control DO answered" },
+    {
+      "name": "state",
+      "result": "WARN",
+      "detail": "running, start ladder level 1",
+      "fix": "ochost logs --source rt"
+    },
+    { "name": "webhook", "result": "PASS", "detail": "set to the managed route" },
+    { "name": "webhook (Telegram)", "result": "PASS", "detail": "set, 0 pending" },
+    {
+      "name": "model hop",
+      "result": "PASS",
+      "detail": "200 in 1935 ms (@cf/deepseek-ai/deepseek-v4.1-flash-1017) through the gate"
+    },
+    { "name": "replica lag", "result": "PASS", "detail": "ok" },
+    { "name": "archive age", "result": "PASS", "detail": "newest 3m old" },
+    {
+      "name": "alerts",
+      "result": "FAIL",
+      "detail": "open: doctor-failed, upgrade-regression",
+      "fix": "ochost alerts list; ochost logs"
+    },
+    { "name": "dead-man", "result": "WARN", "detail": "no out-of-band dead-man", "fix": "ochost ci setup" }
+  ],
+  "connected": [
+    {
+      "name": "model",
+      "result": "PASS",
+      "detail": "cfgw, @cf/deepseek-ai/deepseek-v4.1-flash-1017, gateway openclaw-cf, last hop 1935 ms"
+    },
+    { "name": "web search", "result": "PASS", "detail": "on; 0 of 200 today" },
+    { "name": "browser and web fetch", "result": "PASS", "detail": "on; 0s of 3600s today; 0 of 2000 today" },
+    {
+      "name": "media",
+      "result": "PASS",
+      "detail": "speech on, transcription on, image on; 34 of 100000 today neurons"
+    },
+    { "name": "sandbox", "result": "PASS", "detail": "on, asleep; 0s of 7200s today; 0.00h of 8h today" },
+    {
+      "name": "channel telegram",
+      "result": "PASS",
+      "detail": "transport webhook, webhook set, last error none, blocks sleep no"
+    },
+    {
+      "name": "access",
+      "result": "PASS",
+      "detail": "on, domain oc.example.com, team meirdick.cloudflareaccess.com"
+    },
+    { "name": "alerts sink", "result": "WARN", "detail": "not configured", "fix": "ochost alerts setup" },
+    {
+      "name": "install",
+      "result": "PASS",
+      "detail": "CLI unknown, image sha256:c0d259a1ab61, OpenClaw unknown, no upgrade check yet",
+      "fix": "ochost upgrade check"
+    },
+    { "name": "config render", "result": "PASS", "detail": "render 1, CLI 1" }
+  ],
+  "alerts": {
+    "open": [
+      {
+        "class": "ctl-prune",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793924599593,
+        "count": 51,
+        "detail": "pruned gate_hello 8, gate_boot 4, gate_hbseq 4, gendb_level 23",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "db-unclassified",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793924339799,
+        "count": 471,
+        "detail": "state/openclaw-quarantine.sqlite, tmp/plugin-captures/5e44bb59-228d-428a-a0f4-8a7d8f948c5b/owner.sqlite",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "config-sensitive",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793923335208,
+        "count": 16,
+        "detail": "plugins",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "archive-stalled",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793922108176,
+        "count": 1,
+        "detail": "pre-upgrade archive req-1793920508621: no progress in 27 min; last step: start attempted, not opened",
+        "fix": "ochost backup list; ochost logs --source ctl"
+      },
+      {
+        "class": "cron-orphan",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793921952680,
+        "count": 6,
+        "detail": "gateway-start: 1/1 orphan cron row(s) deleted (7a9c6b4e-647b-4d0a-86e6-950b97eff2f4@/var/lib/ocrt/stage-u/cron/jobs.json)",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "doctor-failed",
+        "severity": "high",
+        "result": "FAIL",
+        "at": 1793908095583,
+        "count": 1,
+        "detail": "Doctor failed 2x on sha256:3670e0b097c1; booting without Doctor: penclaw update status\" for repair details.\nDoctor could not complete maintenance. Check the reported service state and resolve the failure.\ntemp workspace directory \"/\" has an untrusted owner uid 2346; expected uid 1000 or root uid 0; use a real private directory owned by uid 1000 with mode 0700 under trusted ancestors (or use resolveSecureTempRoot()); do not chmod a shared temp directory to 0700\n",
+        "fix": "ochost logs --source rt; ochost restart"
+      },
+      {
+        "class": "upgrade-regression",
+        "severity": "high",
+        "result": "FAIL",
+        "at": 1793907894814,
+        "count": 2,
+        "detail": "doctor-failed",
+        "fix": "ochost upgrade rollback"
+      },
+      {
+        "class": "memwatch-restart",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793895965362,
+        "count": 284,
+        "detail": "slope<30min",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "hello-flood",
+        "severity": "warn",
+        "result": "WARN",
+        "at": 1793855943954,
+        "count": 5,
+        "detail": "gen 134 replica: 201 hellos",
+        "fix": "ochost logs; ochost alerts list"
+      },
+      {
+        "class": "sleep-blocked",
+        "severity": "info",
+        "result": "PASS",
+        "at": 1793808742823,
+        "count": 6,
+        "detail": "1:archive-due:dirty",
+        "fix": "ochost logs; ochost alerts list"
+      }
+    ],
+    "doctorTail": "penclaw update status\" for repair details.\nDoctor could not complete maintenance. Check the reported service state and resolve the failure.\ntemp workspace directory \"/\" has an untrusted owner uid 2346; expected uid 1000 or root uid 0; use a real private directory owned by uid 1000 with mode 0700 under trusted ancestors (or use resolveSecureTempRoot()); do not chmod a shared temp directory to 0700\n"
+  },
+  "budgets": [
+    {
+      "verb": "browser",
+      "used": 0,
+      "limit": 3600,
+      "pct": 0,
+      "unit": "s",
+      "next": 7200,
+      "row": { "name": "browser", "result": "PASS", "detail": "0s of 3600s (0%)" }
+    },
+    {
+      "verb": "neurons",
+      "used": 33.76363706588745,
+      "limit": 100000,
+      "pct": 0.0003376363706588745,
+      "unit": "",
+      "next": 200000,
+      "row": { "name": "neurons", "result": "PASS", "detail": "34 of 100000 (0%)" }
+    },
+    {
+      "verb": "requests",
+      "used": 0,
+      "limit": 2000,
+      "pct": 0,
+      "unit": "",
+      "next": 4000,
+      "row": { "name": "requests", "result": "PASS", "detail": "0 of 2000 (0%)" }
+    },
+    {
+      "verb": "websearch",
+      "used": 0,
+      "limit": 200,
+      "pct": 0,
+      "unit": "",
+      "next": 400,
+      "row": { "name": "websearch", "result": "PASS", "detail": "0 of 200 (0%)" }
+    },
+    {
+      "verb": "exec",
+      "used": 0,
+      "limit": 7200,
+      "pct": 0,
+      "unit": "s",
+      "next": 14400,
+      "row": { "name": "exec", "result": "PASS", "detail": "0s of 7200s (0%)" }
+    },
+    {
+      "verb": "sandbox",
+      "used": 0,
+      "limit": 8,
+      "pct": 0,
+      "unit": "h",
+      "next": 16,
+      "row": { "name": "sandbox", "result": "PASS", "detail": "0.00h of 8h (0%)" }
+    }
+  ],
+  "backups": {
+    "rows": [
+      { "name": "archive", "result": "PASS", "detail": "newest 3m old; verified" },
+      {
+        "name": "snapshots",
+        "result": "WARN",
+        "detail": "169 snapshots, chain 2; about 338 registry tags (> 100); run ochost snapshot prune",
+        "fix": "ochost snapshot prune"
+      },
+      { "name": "replica lag", "result": "PASS", "detail": "ok" },
+      { "name": "next maintenance", "result": "PASS", "detail": "in 24h" }
+    ],
+    "nextMaintenanceAt": 1794011584652
+  },
+  "channels": { "wake": { "userIds": ["51234987"], "groupChatIds": [] }, "pairing": [], "heldInbox": 0 }
+}

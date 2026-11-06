@@ -1,0 +1,464 @@
+{
+  "drill": "s9",
+  "at": "2026-11-01T16:59:09.876Z",
+  "target": "https://oc-m4-sleep.mdick85.workers.dev",
+  "pass": true,
+  "action": "sigterm",
+  "phases": ["check", "prepare", "edge", "stop-gateway", "flush", "marker", "snapshot", "destroy"],
+  "checks": {
+    "everyFired": true,
+    "nextBootRunning": true,
+    "ladderL1": true,
+    "sqliteLossLe3s": true,
+    "noMarkerReuse": true,
+    "noMarkerAfterEarlyKill": true,
+    "noLostReply": true,
+    "repeatedLe1": true
+  },
+  "cases": [
+    {
+      "phase": "check",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 24,
+      "killAt": 1793551233172,
+      "opToKillMs": -67,
+      "stateAfterKill": "asleep",
+      "killToSettledMs": 31217,
+      "boot": {
+        "gen": 25,
+        "plan": "gen",
+        "sqliteGen": 24,
+        "snapshotId": "768fff8b-fe7f-44ea-8309-c824c80cb6fd",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 15040
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 60700,
+        "replyMs": 22534
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": null,
+        "after": {
+          "now": 1793551363264,
+          "maxId": 2558,
+          "maxTs": 1793551253880,
+          "n": 2558
+        },
+        "hot": true
+      },
+      "lossMs": 0,
+      "lostRows": null,
+      "elapsedMs": 209905
+    },
+    {
+      "phase": "prepare",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 25,
+      "killAt": 1793551374795,
+      "opToKillMs": 2148,
+      "stateAfterKill": "asleep",
+      "killToSettledMs": 28175,
+      "boot": {
+        "gen": 26,
+        "plan": "gen",
+        "sqliteGen": 25,
+        "snapshotId": "0987140f-6e10-42e9-b0dc-d20c58b9c7ec",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2174
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 62407,
+        "replyMs": 20465
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": null,
+        "after": {
+          "now": 1793551502294,
+          "maxId": 2887,
+          "maxTs": 1793551395366,
+          "n": 2887
+        },
+        "hot": true
+      },
+      "lossMs": 0,
+      "lostRows": null,
+      "elapsedMs": 138997
+    },
+    {
+      "phase": "edge",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 26,
+      "killAt": 1793551518519,
+      "opToKillMs": 5043,
+      "stateAfterKill": "asleep",
+      "killToSettledMs": 28352,
+      "boot": {
+        "gen": 27,
+        "plan": "gen",
+        "sqliteGen": 26,
+        "snapshotId": "e6102a49-b144-44d8-b928-3c7322c5c9e2",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 4221
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 58838,
+        "replyMs": 20886
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": null,
+        "after": {
+          "now": 1793551643284,
+          "maxId": 3311,
+          "maxTs": 1793551539107,
+          "n": 3311
+        },
+        "hot": true
+      },
+      "lossMs": 0,
+      "lostRows": null,
+      "elapsedMs": 140972
+    },
+    {
+      "phase": "stop-gateway",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 27,
+      "killAt": 1793551663253,
+      "opToKillMs": 4956,
+      "stateAfterKill": "running",
+      "killToSettledMs": 88419,
+      "boot": {
+        "gen": 28,
+        "plan": "gen",
+        "sqliteGen": 27,
+        "snapshotId": "c37bce56-a0ec-4676-9ef3-ce8c5c9135f1",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2193
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 202,
+        "replyMs": 20944
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": {
+          "now": 1793551657916,
+          "maxId": 3528,
+          "maxTs": 1793551654756,
+          "n": 3528
+        },
+        "after": {
+          "now": 1793551789676,
+          "maxId": 3528,
+          "maxTs": 1793551654756,
+          "n": 3528
+        },
+        "hot": false
+      },
+      "lossMs": 0,
+      "lostRows": 0,
+      "elapsedMs": 146853
+    },
+    {
+      "phase": "flush",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 28,
+      "killAt": 1793551831052,
+      "opToKillMs": 25803,
+      "stateAfterKill": "running",
+      "killToSettledMs": 62564,
+      "boot": {
+        "gen": 29,
+        "plan": "gen",
+        "sqliteGen": 28,
+        "snapshotId": "0566c4e8-9d51-4960-8b7b-28b145e3ae4c",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2320
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 80,
+        "replyMs": 22860
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": {
+          "now": 1793551804535,
+          "maxId": 3738,
+          "maxTs": 1793551801325,
+          "n": 3738
+        },
+        "after": {
+          "now": 1793551932800,
+          "maxId": 3738,
+          "maxTs": 1793551801325,
+          "n": 3738
+        },
+        "hot": false
+      },
+      "lossMs": 0,
+      "lostRows": 0,
+      "elapsedMs": 142688
+    },
+    {
+      "phase": "marker",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 29,
+      "killAt": 1793551975952,
+      "opToKillMs": 28701,
+      "stateAfterKill": "running",
+      "killToSettledMs": 68839,
+      "boot": {
+        "gen": 30,
+        "plan": "gen",
+        "sqliteGen": 29,
+        "snapshotId": "32825935-138b-4e8d-8687-654aba531208",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2294
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 126,
+        "replyMs": 18841
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": {
+          "now": 1793551947029,
+          "maxId": 3945,
+          "maxTs": 1793551943822,
+          "n": 3945
+        },
+        "after": {
+          "now": 1793552080664,
+          "maxId": 3945,
+          "maxTs": 1793551943822,
+          "n": 3945
+        },
+        "hot": false
+      },
+      "lossMs": 0,
+      "lostRows": 0,
+      "elapsedMs": 147771
+    },
+    {
+      "phase": "snapshot",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 30,
+      "killAt": 1793552122412,
+      "opToKillMs": 27061,
+      "stateAfterKill": "running",
+      "killToSettledMs": 65673,
+      "boot": {
+        "gen": 31,
+        "plan": "gen",
+        "sqliteGen": 30,
+        "snapshotId": "db7516a5-ce75-4c90-9381-7da0e8a8b0f4",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>draining",
+        "draining>asleep",
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2187
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 640,
+        "replyMs": 22567
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": {
+          "now": 1793552094728,
+          "maxId": 4152,
+          "maxTs": 1793552091506,
+          "n": 4152
+        },
+        "after": {
+          "now": 1793552228245,
+          "maxId": 4152,
+          "maxTs": 1793552091506,
+          "n": 4152
+        },
+        "hot": false
+      },
+      "lossMs": 0,
+      "lostRows": 0,
+      "elapsedMs": 147566
+    },
+    {
+      "phase": "destroy",
+      "action": "sigterm",
+      "armed": {
+        "ok": true
+      },
+      "g0": 31,
+      "killAt": 1793552278588,
+      "opToKillMs": 35639,
+      "stateAfterKill": "running",
+      "killToSettledMs": 34735,
+      "boot": {
+        "gen": 32,
+        "plan": "marker",
+        "sqliteGen": 31,
+        "snapshotId": "46600998-c7ba-43ba-baeb-9929cfbc8ae2",
+        "rootfs": "snapshot",
+        "ladder": 1
+      },
+      "transitions": [
+        "running>quiescing",
+        "quiescing>asleep",
+        "asleep>starting",
+        "starting>running",
+        "running>quiescing",
+        "quiescing>running"
+      ],
+      "u1": {
+        "ack": 200,
+        "replyMs": 2223
+      },
+      "u2": {
+        "ack": 200,
+        "runningMs": 125,
+        "replyMs": 20629
+      },
+      "replies": 2,
+      "repeated": 0,
+      "writer": {
+        "fin": {
+          "now": 1793552242709,
+          "maxId": 4366,
+          "maxTs": 1793552239474,
+          "n": 4366
+        },
+        "after": {
+          "now": 1793552349601,
+          "maxId": 4366,
+          "maxTs": 1793552239474,
+          "n": 4366
+        },
+        "hot": false
+      },
+      "lossMs": 0,
+      "lostRows": 0,
+      "elapsedMs": 121411
+    }
+  ]
+}

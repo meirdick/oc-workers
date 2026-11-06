@@ -1,0 +1,170 @@
+---
+title: CLI reference
+description: Every ochost command with its flags, the global options, and the exit codes.
+sidebar:
+  order: 12
+---
+
+This page lists every `ochost` command with its flags. Install the CLI with `npm install -g oc-workers`. See [Quickstart](/quickstart/).
+
+`ochost -h` lists the commands. `ochost <command> -h` shows the flags of one command.
+
+## Global options
+
+| Option | Meaning |
+|---|---|
+| `--dir <path>` | Project directory. Default: the current directory. |
+| `--json` | Print one JSON document on stdout, also on failure. Progress goes to stderr, one JSON event per line. |
+| `--non-interactive` | Never prompt. A missing answer exits 3 and the `fix:` names the step. |
+| `-h`, `--help` | Show help. |
+| `-v`, `--version` | Show the version. |
+
+`init` and `deploy` also take `--verbose`. A login link in `--json` output (`openUrl`) is a secret.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | OK. WARN lines are allowed. |
+| 1 | Failed. One `Failed:` line. |
+| 2 | Usage error. |
+| 3 | A manual step is needed. The `fix:` names it. |
+| 4 | The time budget passed. The install can still come up. A rerun is safe. |
+| 130 | Interrupted. |
+
+An error is one line: `Failed: <you see> — fix: <do this>`. A warning is `WARN: ...` with the same shape.
+
+`upgrade check` exits 3 when a newer version or a moved digest exists, and 0 otherwise.
+
+## Install and deploy
+
+| Command | Flags | Does |
+|---|---|---|
+| `init [dir]` | `--account-id <id>`, `--name <name>`, `--subdomain <name>`, `--adopt`, `--gateway <id>` (`none` = no gateway), `--ai-token-file <file>` (optional), `--model <id>`, `--instance <v/G/D>`, `--bucket <name>`, `--skip-ai`, `--no-open`, `--accept-loss`, `--verbose`, `--fake-telegram`, `--telegram-owner <id>` | Set up an install end to end. Safe to rerun. `--telegram-owner` records your Telegram user id: your first direct message to the bot is approved without a pairing code. |
+| `deploy` | `--force`, `--require-archive` | Re-render `.oc-host/wrangler.jsonc` and deploy when the deploy hash changed. A live install gets a pre-upgrade archive first. |
+| `destroy` | `--dry-run`, `--yes`, `--delete-data`, `--bucket <name>` | Delete the Worker, the runtime and sandbox container apps and their image tags. Keeps the R2 bucket unless `--delete-data`. |
+
+Defaults for `init`: Worker name `oc-workers`; instance `2/6/20` (vCPU, GiB, GB; the floor is `2/6/16`, the maximum is 4 vCPU, 12 GiB, 20 GB); model `@cf/deepseek-ai/deepseek-v4.1-flash-1017`; gateway `default`; bucket `oc-workers-<inst>`.
+
+`--adopt` manages an existing install from this directory. It makes a new owner token and changes no image. `--accept-loss` allows a fresh install over existing data. `--skip-ai` installs with no model.
+
+## Run and watch
+
+| Command | Flags | Does |
+|---|---|---|
+| `status` | `--watch`, `-w` | Sleep state, next wake, last activity, cost range, alternatives, model. Never wakes. |
+| `logs` | `-f`, `--lines N`, `-n N`, `--source ctl\|rt\|ocsup\|gate\|alert` | Ring events and container lines, redacted. |
+| `open` | `--no-open`, `--qr` | A new single-use login link. It opens the owner console at `/`. |
+| `doctor` | `--ai-token-file <file>` | PASS, WARN and FAIL checks, each with a fix. Reads `GET /ops/doctor`, the JSON the owner console shows. Never wakes. |
+
+## Sleep and wake
+
+| Command | Flags | Does |
+|---|---|---|
+| `sleep now` | `--force`, `--timeout <s>`, `--no-wait` | Run the sleep gate. It names the rule that refuses. `--force` skips the rules that you can override. If undelivered inbox rows refuse the sleep, `--force` dead-letters the pending rows, prints how many, and tries again. |
+| `sleep status` | | Show the sleep state. |
+| `sleep set auto\|off` | `--idle-minutes N`, `--proactive <v>` | Write the `sleep.*` keys in `oc-host.jsonc` and in the Worker's settings document. Applies at the next op. No deploy. |
+| `wake` | `--timeout <s>` | Wake and wait for running. Default 120 s. |
+| `restart` | `--hard`, `--yes`, `--timeout <s>`, `--no-wait` | A planned stop and start. `--hard` skips the sleep flush. Default 300 s. After a `deploy` with a new image it takes a workspace archive first (up to 3 min), then stops and boots the newest image: image path, new generation, Doctor. It prints that. If that archive fails or takes longer, the restart does not run; `--hard` skips the archive and loses writes since the last one. |
+
+## State
+
+| Command | Flags | Does |
+|---|---|---|
+| `backup list` | `--limit N` | List archives. |
+| `backup create` | `--reason <text>` | Archive now. It wakes the install. |
+| `backup restore <id>` | `--sqlite pitr:<time>\|archive:<id>`, `--accept-loss`, `--yes` | Restore. It prints the loss window first. |
+| `snapshot list` | | Sleep snapshots and the chain. |
+| `snapshot prune` | `--dry-run`, `--yes` | Delete registry tags of old chains. |
+
+## Config and secrets
+
+| Command | Flags | Does |
+|---|---|---|
+| `config get [path]` | `--ver N` | Show the OpenClaw config version, or one key. For an `oc-host.jsonc` key such as `sleep.idleMinutes`, show the live value. |
+| `config render` | `--dry-run`, `--restart` | Merge the CLI's current capability render (gate URLs, plugins, media) into the live config as a new version. Render keys win, your other keys stay. Prints the top-level keys it added or changed. `ochost deploy` does this by itself when the config's `ochost.renderVersion` is older than the CLI's, and says to restart. |
+| `config set <path> <json>` | `--unset`, `--restart`, `--force` | New version with one change. Refuses when the base changed elsewhere. For an `oc-host.jsonc` key such as `archive.everyHours`: checks the range, writes a settings version and the file. Applies at the next op. `--unset` restores the default. |
+| `settings [show\|push]` | | `show` lists the live tuning keys. `push` sends the tuning keys of `oc-host.jsonc` to the Worker as the whole settings document. Applies at the next op. |
+| `config settings` | | Every `oc-host.jsonc` tuning key with its live value and whether you set it. |
+| `config pull` | | Write the current version to `oc-host.jsonc` and `openclaw.jsonc`. |
+| `config list` | | List versions. |
+| `secrets set <NAME>` | `--from-file <file>`, `--no-restart` | Set the Worker secret `OC_SECRET_<NAME>`. The gateway sees it as env `NAME`. Restarts unless `--no-restart`. |
+| `secrets list` | | Names and set times. |
+
+Config and secret changes apply when the gateway starts: at the next wake, or now with `--restart`.
+
+## Channels and models
+
+| Command | Flags | Does |
+|---|---|---|
+| `channels add telegram` | `--token-file <file>`, `--wait-pair`, `--pair-timeout <t>` | Add the Telegram bot. Prints the webhook URL (the secret path shows as `<secret>`). |
+| `channels add slack\|discord\|twilio\|sms` | `--no-wait`, `--verify-timeout <t>` | Add a webhook channel. `sms` is the same as `twilio`. Secrets from env or a hidden prompt. Prints the console URL and waits for the platform's first call. |
+| `channels list` | | Status of each channel. |
+| `channels remove <channel>` | `--force` | Remove a channel. It refuses while the channel has undelivered inbox rows. `--force` removes it and dead-letters those rows. For Slack, Discord and Twilio it prints the `wrangler secret delete` commands. |
+| `inbox list` | `--channel <name>` | The webhook rows the Worker stored: id, channel, state, attempts, age. |
+| `inbox drop <id>` | | Dead-letter one pending or held row. It is not delivered. |
+| `inbox drop --all` | `--channel <name>`, `--state pending` | Dead-letter every pending and held row, or those of one channel. |
+| `pairing list [telegram]` | | Open pairing requests. |
+| `pairing approve telegram <code>` | | Approve a direct-message pairing. |
+| `pairing wait [telegram]` | `--timeout <t>` | Wait for a pairing request. Default 10 minutes. |
+| `model list` | `--all`, `--ai-token-file <file>` | Workers AI models with tool calls. Uses your wrangler login unless you give a token. |
+| `model set <id>` | `--fallback <id>` (repeat), `--restart` | Set the primary model (`@cf/...` or `anthropic/...`). Tests it through the gate first. |
+| `model bench` | `--models a,b`, `--turns N`, `--gateway <id>`, `--concurrency N`, `--out <file>`, `--gate-url <url>`, `--direct` with `--ai-token-file <file>` | Agent turns with tool calls through the gate. |
+| `ai-gateway setup` | `--gateway <id>`, `--model <id>`, `--spend-limit-usd <n>`, `--ai-token-file <file>`, `--restart` | Choose the gateway, run the model test through the gate. A token lets it list or create the gateway. `--spend-limit-usd` records `llm.spendLimitUsd` and prints the dashboard step. |
+| `caps` | | Show the daily budgets. |
+| `caps set <browser\|neurons\|requests\|websearch\|exec\|sandbox> <n>` | | Set one budget. |
+| `sandbox [status]` | | Sandbox state, last backup, exec and sandbox budgets. |
+| `sandbox on\|off` | | Write `sandbox` in `oc-host.jsonc`. Then `ochost deploy` and `ochost restart`. |
+| `sandbox sleep` | | Back up the sandbox workspace and stop it. |
+
+## Access and alerts
+
+| Command | Flags | Does |
+|---|---|---|
+| `auth rotate` | `--control`, `--cookie`, `--webhook`, `--all`, `--yes` | New owner token, cookie key or webhook secret. |
+| `auth sessions` | `--revoke <id>`, `--revoke-all` | List or end owner sessions. |
+| `auth access` | `--domain <host>`, `--idp-hint <id>`, `--email <e>`, `--token-file <file>`, `--workers-dev ops\|webhooks`, `--team <t>`, `--aud <a>`, `--off` | Put the install behind Cloudflare Access on a custom domain. No flags: status. `--domain` and `--off` restart a running install, so the gateway takes the new origin. See [Security](/security/#cloudflare-access). |
+| `alerts list` | | List alerts. |
+| `alerts setup` | `--channel ntfy\|webhook\|none`, `--url <https URL>`, `--token-file <file>` | Choose where alerts go. |
+| `alerts test` | | Send a test alert. |
+| `alerts ack <code>` | | Confirm that the test alert arrived. |
+| `ci setup` | `--repo owner/name`, `--force` | Opt in to a GitHub dead-man check and a `CI_TOKEN`. |
+
+## Upgrade
+
+| Command | Flags | Does |
+|---|---|---|
+| `upgrade check` | | Compare the release track with the pinned image. Exit 3 when newer. Tells the install the result, for the owner console. |
+| `upgrade run [<version>\|extended-stable]` | `--timeout <s>` | Upgrade the image. Default 600 s. |
+| `upgrade rollback` | `--timeout <s>` | Go back to the previous pin. |
+
+See [Upgrades](/upgrades/).
+
+## Hidden commands
+
+`ochost advanced -h` shows low-level views: `creds [history --path <p>]`, `prune --plan|--apply`, `inbox` and `events [--lines N]`.
+
+## Files
+
+| Path | What | In git |
+|---|---|---|
+| `oc-host.jsonc` | Your settings. `baseVersion` is the config version you last saw. | yes |
+| `openclaw.jsonc` | A copy of the OpenClaw config from `ochost config pull`. | yes |
+| `.oc-host/wrangler.jsonc` | Generated on each run. Never edit it. | no |
+| `.oc-host/state.json` | URL, inst, account, deploy hash, bot, test-install flag, Access app ids. | no |
+| `.oc-host/control-token` | The owner token, mode 0600. | no |
+| `.oc-host/secrets.json` | Secret names and sha256, never values. | no |
+| `.oc-host/logs/deploy-*.log` | wrangler output, redacted. | no |
+
+## Scripts and agents
+
+Every prompt has a flag. This runs with no prompt:
+
+```sh
+ochost init --non-interactive --json --no-open \
+  --account-id <id> --subdomain <name>
+```
+
+## Next
+
+Go to [How it works](/how-it-works/).

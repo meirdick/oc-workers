@@ -1,0 +1,121 @@
+---
+title: Security
+description: How the owner logs in, what anonymous requests can do, what the container can reach, and what is still open.
+sidebar:
+  order: 10
+---
+
+This page says how the owner logs in, what an anonymous request can do, what the container can reach, and what is still open.
+
+## One owner
+
+An install has one owner. There are no other users. The owner has two credentials.
+
+| Credential | Use |
+|---|---|
+| Owner token (`CONTROL_TOKEN`) | The CLI uses it as a bearer token for `/ops/*`. A browser never calls `/ops/*`. The CLI keeps it in `.oc-host/control-token`, mode 0600. |
+| Owner cookie | The browser. Set by a login. |
+
+## Login
+
+There are two ways to log in.
+
+- **Single-use link.** `ochost open` makes one. It works once and expires after 5 minutes. `init` prints one at the end. Opening the link shows a Continue button. The link is spent only when you press it (a POST). A link preview in a chat app does a GET, so it cannot spend the link.
+- **Token form.** `/_ochost/login` takes the owner token.
+
+Both set the cookie `__Host-ochost`. It is HttpOnly, Secure and SameSite=Strict, and lasts 30 days. A session is stored in the Auth Durable Object. At most 20 sessions exist. After a login the browser goes to `/`, the owner console (see [How it works](/how-it-works/#the-owner-console)).
+
+A browser does not send a SameSite=Strict cookie on a navigation from another site, such as the Access login redirect or a link in a mail. Then `/` reloads itself once by script. The second load is from the same origin, so the cookie goes with it.
+
+Login attempts are limited. Per client IP, 5 failed logins or 20 attempts in 10 minutes give a 429. All IPs together, 30 failed logins in 10 minutes block the form. `ochost open` still works then.
+
+```sh
+ochost auth sessions                      # list sessions
+ochost auth sessions --revoke <id>        # end one
+ochost auth rotate --control              # new owner token
+ochost auth rotate --cookie               # new cookie key; every session ends
+ochost auth rotate --all
+```
+
+## What an anonymous request can do
+
+| Request | Result |
+|---|---|
+| Any path other than the ones below | 404. No wake. |
+| `GET /` | The login form. No state, no install name, no wake. |
+| `GET /_ochost/login` | The login page. |
+| `POST /_ochost/login` with a wrong token | 401, or 429 when limited. |
+| `GET /_ochost/login/<code>` | A page with a Continue button. The code is not checked and not spent. |
+| `POST /_ochost/login/<code>` with a wrong or spent code | 404. |
+| `POST /_ochost/power`, `/_ochost/wake`, `/_ochost/sleep` or `/_ochost/panel/*` (the console buttons) | 404. No wake. |
+| `GET /ops/doctor` without the owner token (or with the CI token) | 404. |
+| The Telegram webhook with a wrong secret | Rejected. No wake. |
+| A Slack, Discord or Twilio webhook with a bad signature | 401. No wake. A Slack timestamp more than 5 minutes off is refused too. |
+
+In a test, 50 anonymous requests to proxied paths and the wake-status route while the install was asleep all got 404. They wrote no event and did not wake the install. A bearer token alone does not open a proxied path. It needs the cookie.
+
+A request that is not GET or HEAD, and every WebSocket upgrade, must come from the same origin. This includes every console button. A POST with another origin gets 403.
+
+## The owner console
+
+The owner console at `/` has three tabs: Overview, Alerts and log, and Setup. It follows these rules:
+
+- Without the owner cookie, `/` shows the login form and nothing else, with or without `?tab=`.
+- Every button is a POST. It needs the owner cookie and the same origin. Firefox sends `Origin: null` on a same-origin form. That passes only with `Sec-Fetch-Site: same-origin`. A button runs the same `/ops` action the CLI uses. The state button calls the Runtime DO (wake, sleep without force, or owner start).
+- No secret value appears. The console shows names, states, counts and ages. It redacts the Telegram bot token, the alert URL and the webhook path secret, or never reads them.
+- A strict CSP with a per-answer nonce. No external asset: no web font, no image file, and icons are inline SVG. One inline style and one inline script (the reload of the current tab). No style attribute. The tabs are links that the Worker renders. The Worker matches `tab` and `kind` against fixed lists. Anything else shows Overview.
+- The login page shares the console's style sheet. It names no install state.
+- Opening the page never wakes the install. Checks that call out run at most once a minute.
+
+## What the container can reach
+
+The agent runs as uid 1000. oc-workers treats agent code as hostile to the supervisor.
+
+- uid 1000 cannot connect to the control gates at `15.0.0.1` and `15.0.0.2`. It reaches only the capability gate at `15.0.0.3` and the sandbox gate at `15.0.0.4`, both port 80. The sandbox gate answers 403 when the sandbox is off, and both gates answer 429 when a daily budget is spent.
+- The Cloudflare services behind the capability gate need no credential in the container. Models, embeddings, speech, transcription, images and web search run on the Worker's Workers AI binding. See [Capabilities](/capabilities/) and [Models](/models/).
+- uid 1000 cannot read the environment of the gateway process.
+- The R2 bucket, the stored credentials and the keys of other generations answer 403 or 409 to the container.
+
+Tests checked each of these points.
+
+## What is not clean
+
+- Channel tokens (the Telegram bot token) reach the gateway process. The AI token no longer exists: model calls go through the gate and the Worker's Workers AI binding, so the container holds no Cloudflare AI credential. A Worker from before this change may still hold the secret `OC_SECRET_OC_CF_AI_TOKEN`. It is not passed to the container. `ochost init` prints the line that deletes it.
+- A steered agent can spend neurons up to the daily budget (default 100,000, about $1.10) and make Claude calls if you added a gateway key. Set a spend limit on the gateway.
+- The container is not free of secrets. In a test, uid 1000 could read secrets from the environment of gateway child processes. oc-workers added a scrub fix afterward. We did not repeat the test.
+- The agent can write to its own generation of the database replica. This is by design.
+- The tool sandbox is off by default. With it off, agent code runs as uid 1000 in the gateway container. With it on, exec and file tools run in a separate container with no internet access (see [Capabilities](/capabilities/#sandbox)). The sandbox is experimental.
+
+## Cloudflare Access
+
+Access puts a second gate in front of the login page. Nobody reaches the login page without signing in to your Access team first. It needs a domain on Cloudflare, because Access cannot sit on workers.dev for WebSockets.
+
+Cloudflare Access on a custom domain is an opt-in step. It is recommended when you have a domain on Cloudflare. It is experimental. Without it, the install is on a workers.dev URL with token auth only.
+
+```sh
+ochost auth access --domain oc.example.com   # Access app, owner email policy, custom domain
+ochost auth access                           # status
+ochost auth access --off                     # remove the domain, then the app
+```
+
+- The Worker checks the Access token (RS256, the team keys, the app AUD, expiry) on every request to the custom domain, WebSocket upgrades too. No valid token: 403. A failed key fetch also refuses.
+- The owner cookie layer stays behind Access. You still sign in with `ochost open` or the owner token. Without the cookie, `/` on the custom domain shows the login form.
+- The gateway gets the custom domain as `gateway.publicOrigin` at boot. `gateway.controlUi.allowedOrigins` holds the custom domain and the workers.dev URL. `auth access --domain` and `--off` restart a running install, so the new origin applies at once. An asleep install takes it at the next wake.
+- On workers.dev, pages redirect to the custom domain. Webhooks (Telegram, Slack, Discord, Twilio) and `/ops` (bearer token, for the CLI) still work there. `--workers-dev webhooks` closes `/ops` too, and then `ochost` commands fail until `--off`.
+- If the wrangler login has no Access scope, the command exits 3 and prints the dashboard steps. Give `--token-file` with an API token (Access: Apps and Policies Edit, Zone Read), or finish with `--team` and `--aud`.
+- Not built: Access service tokens for the CLI, closing a WebSocket when its token expires, and an Access policy check in `doctor`.
+
+## Alerts
+
+`ochost alerts setup` sets where alerts go: `ntfy`, `webhook` or `none`. The default is `none`. A WARN line says when alerts are not set up.
+
+- Each day the install sends a `heartbeat` alert, whatever the minimum severity. If no sink is set, it opens the `alerts-none` alert instead.
+- The `deadman-silent` alert opens when the external dead-man check has not posted for 2 hours. It is sent once a day while it stays open, whatever the minimum severity.
+- `ochost doctor` fails when the sink never confirmed a delivery, when its last delivery failed, or when the dead-man is silent.
+- `ochost status` shows the sink state (last success, last failure, last heartbeat) and the dead-man state.
+
+The alert sink is experimental.
+
+## Next
+
+Go to [Troubleshooting](/troubleshooting/).

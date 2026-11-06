@@ -1,0 +1,14 @@
+{
+  "name": "@oc-host/ochost-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.10.9"
+    }
+  }
+}

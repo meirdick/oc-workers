@@ -1,0 +1,84 @@
+---
+title: State and backups
+description: What oc-workers saves, how often, what you can lose in a crash, and how to restore.
+sidebar:
+  order: 8
+---
+
+oc-workers keeps the state of OpenClaw outside the container, because a container can stop at any time. This page says what is saved, how to make and restore a backup, and what you lose in a crash.
+
+## What is saved
+
+| Class | What it is | How it is saved | Target loss |
+|---|---|---|---|
+| Databases | OpenClaw SQLite: pairing, cron jobs, ingress queue, sessions | Litestream copies each change to R2 about every second | 1 to 3 s |
+| Credentials | Channel and login credentials | Written to the Control DO on each change, plus a copy to R2 at most every 15 minutes | Under 1 s typical, 30 s worst |
+| Files | Workspace, plugins, media | Disk snapshots, hourly while awake and at each planned stop | 60 min. 0 after a planned stop. |
+| Archives | A portable backup of everything | `openclaw backup create` on a schedule while awake (every 6 hours by default), at maintenance and before upgrades | 6 h for files |
+
+Other state is covered too. The config is a versioned document in the Control DO. Secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
+
+## Make and restore a backup
+
+```sh
+ochost backup list
+ochost backup create --reason "before I change plugins"
+ochost backup restore <id>
+```
+
+- `backup create` wakes the install.
+- `backup restore` prints the loss window first and asks you to accept it. Use `--accept-loss` to skip the question.
+- After each new archive, oc-workers prunes old ones. It keeps the newest 8, the newest of each of the last 14 days, the newest of each of the last 8 weeks, and every archive made before an upgrade.
+- You can also select **Archive now** on the Setup tab of the owner console. It wakes the install.
+
+### Point-in-time restore of the database
+
+```sh
+ochost backup restore --sqlite pitr:<time>
+ochost backup restore --sqlite archive:<id>
+```
+
+`--sqlite` takes `pitr:<time>` or `archive:<id>`. The time is an ISO time or a number of milliseconds.
+
+### Replica checks
+
+Once per generation, while the install is awake, oc-workers restores the database replica into a scratch database and runs `quick_check`. A pass marks the generation `verified`. A failure marks it `bad` and sends the `gen-bad` alert. Cleanup keeps the newest verified generation. With none verified, it keeps the newest complete one.
+
+The Setup tab also has **Restore drill**. It restores into a throw-away instance.
+
+## Snapshots
+
+```sh
+ochost snapshot list
+ochost snapshot prune --dry-run
+```
+
+`snapshot list` shows sleep snapshots and the chain. `snapshot prune` deletes registry tags of old chains. The plan lists only chains older than the live root, and only after one wake from that root worked. Cloudflare has not published a price for snapshot storage. See [Cost](/cost/).
+
+## The install never boots empty
+
+If an install has state and the copy in R2 is missing or unreadable, the boot stops. It does not start with empty state. In tests with a missing snapshot, an R2 outage and a wiped Control DO, no empty boot happened. After a Control DO wipe, one test rebuilt the install in 69.3 s.
+
+## Measured loss after a crash
+
+These results come from 50 random SIGKILLs on a Cloudflare install with test timers.
+
+| Class | Target | Measured | Result |
+|---|---|---|---|
+| Databases | 3 s | p50 0.66 s, p95 1.32 s, max 5.95 s. 1 of 49 kills was over 3 s (a kill during an online archive). | Does not hold fully |
+| Credentials | 30 s | p50 1.5 s, max 6.9 s | Holds for crashes. If the Control DO is lost, the bound is the 15 minute copy. |
+| Other SQLite files | 15 min | p50 188 s, max 1607 s. 5 of 49 were over 15 minutes. | Does not hold |
+| Files | 60 min | Max 102.7 s with a checkpoint in the awake period, 1608 s without | Not bounded under crash loops. 0 after a planned stop. |
+| Archive | 6 h | Newest archive 12.1 min old at test cadence | Holds at test timers |
+| Webhook inbox | 0 | 0 rows lost in 586 acknowledged updates | Holds for rows |
+
+Replies are a separate case. In one test, 4 of 586 acknowledged updates never got a reply after a crash. A reply can also repeat. Treat replies as at-least-once, not exactly-once.
+
+oc-workers made these changes after the test. We did not repeat the test:
+
+- An online archive no longer reads the live database. It is made from a copy. oc-workers restores the managed databases from the R2 replica and copies other SQLite files with the backup API. This targets the 5.95 s case.
+- oc-workers sees and copies a database change that only touches the WAL file.
+
+## Next
+
+Go to [Upgrades](/upgrades/).
