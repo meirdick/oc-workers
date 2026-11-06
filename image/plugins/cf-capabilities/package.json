@@ -1,8 +1,8 @@
 {
-  "name": "oc-host-cf-web-search",
-  "version": "1.0.0",
+  "name": "oc-host-cf-capabilities",
+  "version": "1.1.0",
   "private": true,
-  "description": "Cloudflare Web Search for OpenClaw web_search, through the oc-host capability gate.",
+  "description": "Cloudflare web search, web fetch and browser status for OpenClaw, through the oc-host capability gate.",
   "type": "module",
   "openclaw": {
     "extensions": ["./index.js"],

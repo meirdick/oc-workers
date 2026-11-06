@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { chooseGateway, gateEndpoint, gateSmoke } from "./ai-gateway.ts";
+import { loadCatalog } from "./catalog.ts";
 import {
   bucketOf,
   DEFAULT_GATEWAY,
@@ -793,6 +794,7 @@ export async function runInit(ctx: Ctx, o: InitOptions, steps: InitStep[], g: Ga
           const doc = renderOpenclawDoc(
             ai || (!o.skipAi && state.gateway) ? { model: ai?.model ?? cfg.llm.primary } : null,
             { bucket: bucketOf(cfg), inst: cfg.inst },
+            loadCatalog(ctx.dir),
           );
           const sha = sha256(JSON.stringify(doc));
           const ops = makeOps(ctx, url, controlToken);

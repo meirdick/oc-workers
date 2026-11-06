@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { modelEntry, renderOpenclawDoc } from "../src/config.ts";
-import { formatModels, listModels, modelRoles, setModel, withPrimary, withRole } from "../src/model.ts";
+import { SHIPPED_CATALOG } from "../src/catalog.ts";
+import { modelEntry, renderModelRoles, renderOpenclawDoc } from "../src/config.ts";
+import {
+  formatModels,
+  listModels,
+  modelRoles,
+  setModel,
+  toCatalog,
+  withPrimary,
+  withRole,
+} from "../src/model.ts";
 import { cf, fakeFetch, fakeOps, TOKEN } from "./fakes.ts";
 
 const ACCT = "0123456789abcdef0123456789abcdef";
@@ -92,23 +101,50 @@ describe("model roles and effort", () => {
     const glm = modelEntry("@cf/zai-org/glm-5.3") as any;
     expect(glm.input).toEqual(["text"]); // no vision
     expect(glm.compat).toEqual({ supportedReasoningEfforts: ["low", "high", "max"] }); // cannot switch off
-    expect(modelEntry("@cf/openai/gpt-oss-120b")).toMatchObject({ reasoning: false, input: ["text"] });
+    expect(modelEntry("@cf/openai/gpt-oss-120b")).toMatchObject({ reasoning: true, input: ["text"] }); // from the catalogue
     expect(modelEntry("anthropic/claude-x")).toMatchObject({ reasoning: false, input: ["text"] });
     expect(modelEntry("anthropic/claude-x")).not.toHaveProperty("compat");
   });
-  it("render: main at low, utility and compaction at off, both entries in the cfgw list", () => {
+  it("render: thinkingDefault low for the main model, utility and compaction at off per model, both entries in the cfgw list", () => {
     const d = renderOpenclawDoc({ model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017" }) as any;
     const g = "cfgw/@cf/google/gemma-4-26b-a4b-it";
     expect(d.agents.defaults.utilityModel).toBe(g);
     expect(d.agents.defaults.compaction).toEqual({ model: g, thinkingLevel: "off" });
-    expect(d.agents.defaults.models["cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017"].params.thinking).toBe(
-      "low",
-    );
+    // the main level is the global default (the Control UI's Thinking row), never a per-model override
+    expect(d.agents.defaults.thinkingDefault).toBe("low");
+    expect(d.agents.defaults.models["cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017"]).toBeUndefined();
+    // migration: an older render's per-model low on the main model goes; other params and an owner's level stay
+    const main = "cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017";
+    const old = renderModelRoles({
+      ...d,
+      agents: {
+        ...d.agents,
+        defaults: {
+          ...d.agents.defaults,
+          thinkingDefault: "high",
+          models: { ...d.agents.defaults.models, [main]: { params: { thinking: "low", temperature: 0.2 } } },
+        },
+      },
+    }) as any;
+    expect(old.agents.defaults.models[main]).toEqual({ params: { temperature: 0.2 } });
+    expect(old.agents.defaults.thinkingDefault).toBe("high");
+    const kept = renderModelRoles({
+      ...d,
+      agents: {
+        ...d.agents,
+        defaults: {
+          ...d.agents.defaults,
+          models: { ...d.agents.defaults.models, [main]: { params: { thinking: "high" } } },
+        },
+      },
+    }) as any;
+    expect(kept.agents.defaults.models[main].params.thinking).toBe("high"); // the owner chose it
     expect(d.agents.defaults.models[g].params.thinking).toBe("off");
-    expect(d.models.providers.cfgw.models.map((x: any) => x.id)).toEqual([
-      "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
-      "@cf/google/gemma-4-26b-a4b-it",
-    ]);
+    const ids = d.models.providers.cfgw.models.map((x: any) => x.id);
+    expect(ids).toEqual(
+      expect.arrayContaining(["@cf/deepseek-ai/deepseek-v4.1-flash-1017", "@cf/google/gemma-4-26b-a4b-it"]),
+    );
+    expect(ids).toHaveLength(SHIPPED_CATALOG.models.length);
   });
   it("render keeps an owner's role choice; a BYOK main model gets no thinking params", () => {
     const d = renderOpenclawDoc({ model: "anthropic/claude-x" }) as any;
@@ -208,5 +244,21 @@ describe("model set", () => {
     await expect(setModel({ id: "@cf/openai/gpt-oss-120b" }, conflict.ops, d)).rejects.toThrow(
       "Failed: config changed elsewhere (base 6, current 7) — fix: run ochost config pull, then set again",
     );
+  });
+});
+
+describe("toCatalog", () => {
+  it("keeps function calling without a deprecation date; known ids keep their efforts", () => {
+    const c = toCatalog(
+      [
+        m("@cf/openai/gpt-oss-120b", { context_window: "128000", function_calling: "true" }),
+        { ...m("@cf/x/old", { function_calling: "true" }), planned_deprecation_date: "2026-12-01" },
+        m("@cf/x/notools", { context_window: "1000" }),
+      ],
+      "2026-11-06",
+    );
+    expect(c.models.map((x) => x.id)).toEqual(["@cf/openai/gpt-oss-120b"]);
+    expect(c.models[0]?.efforts).toEqual(["low", "medium", "high"]);
+    expect(c.date).toBe("2026-11-06");
   });
 });

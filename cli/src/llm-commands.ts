@@ -6,6 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { chooseGateway, DEFAULT_GATEWAY, DEFAULT_MODEL, gateEndpoint, gateSmoke, hop } from "./ai-gateway.ts";
 import { benchTable, runBench } from "./bench.ts";
+import { loadCatalog, saveCatalog } from "./catalog.ts";
 import {
   aigDeps,
   applyChange,
@@ -20,6 +21,7 @@ import {
 import { renderOpenclawDoc } from "./config.ts";
 import {
   currentConfig,
+  fetchCatalog,
   formatModels,
   listModels,
   type ModelRole,
@@ -49,6 +51,8 @@ import { makeWrangler, wranglerBearer } from "./wrangler.ts";
 
 export const modelFlags: FlagSpec = {
   all: { type: "boolean" },
+  /** list: fetch the live catalogue and write .oc-host/models-catalog.json */
+  refresh: { type: "boolean" },
   "ai-token-file": { type: "string" },
   fallback: { type: "string", multi: true },
   restart: { type: "boolean" },
@@ -84,12 +88,23 @@ function roleFlag(ctx: OpsCtx): ModelRole {
 async function modelShow(ctx: OpsCtx): Promise<number> {
   const cur = await currentConfig(looseOps(opsClient(ctx)));
   const rows = modelRoles(cur.doc);
-  if (ctx.out.json) ctx.out.result({ ok: true, ver: cur.ver, roles: rows });
-  else
+  const cat = loadCatalog(ctx.dir);
+  if (ctx.out.json)
+    ctx.out.result({
+      ok: true,
+      ver: cur.ver,
+      roles: rows,
+      catalogue: { models: cat.models.length, date: cat.date },
+    });
+  else {
     for (const r of rows)
       ctx.out.line(
         `${r.role.padEnd(11)} ${r.model || "(not set)"}${r.thinking ? `  thinking ${r.thinking}` : ""}`,
       );
+    ctx.out.line(
+      `catalogue: ${cat.models.length} models (snapshot ${cat.date}; ochost model list --refresh)`,
+    );
+  }
   return EXIT.ok;
 }
 
@@ -97,6 +112,17 @@ async function modelList(ctx: OpsCtx): Promise<number> {
   const install = loadInstall(ctx);
   // the opt-in token, else the wrangler login (it reads Workers AI; docs/09)
   const token = (await laptopAiToken(ctx, false)) ?? (await loginBearer(ctx, install.accountId));
+  if (flagBool(ctx.args, "refresh")) {
+    const date = new Date(ctx.now()).toISOString().slice(0, 10);
+    const cat = await fetchCatalog({ acct: install.accountId, token, date }, aigDeps(ctx));
+    const file = await saveCatalog(ctx.dir, cat);
+    if (ctx.out.json) ctx.out.result({ ok: true, file, date, models: cat.models.length });
+    else
+      ctx.out.line(
+        `catalogue: ${cat.models.length} models (snapshot ${date}) written to ${file}; ochost config render adds them to the cfgw list`,
+      );
+    return EXIT.ok;
+  }
   const primary = readHostConfig(ctx.dir)?.llm?.primary ?? DEFAULT_MODEL;
   const ms = await listModels(
     { acct: install.accountId, token, primary, all: flagBool(ctx.args, "all") },

@@ -12,6 +12,7 @@ import {
   specOf,
   specOfFile,
 } from "../../worker/src/core/tunables.ts";
+import { loadCatalog } from "./catalog.ts";
 import {
   applyChange,
   looseOps,
@@ -230,7 +231,11 @@ export async function config(ctx: OpsCtx): Promise<number> {
     let r: Awaited<ReturnType<typeof renderIntoConfig>>;
     try {
       const i = loadInstall(ctx);
-      r = await renderIntoConfig(lo, { dryRun, files: { bucket: bucketOf(i), inst: i.inst } });
+      r = await renderIntoConfig(lo, {
+        dryRun,
+        files: { bucket: bucketOf(i), inst: i.inst },
+        catalog: loadCatalog(ctx.dir),
+      });
     } catch (e) {
       throw new CliError(String((e as Error).message), "ochost config pull, then ochost config render");
     }

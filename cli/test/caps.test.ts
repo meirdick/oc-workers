@@ -30,13 +30,17 @@ describe("renderCapabilities", () => {
   });
 
   it("web_fetch, memory, tts, stt and image all point at the gate; only the docs MCP leaves it", () => {
-    expect(doc.plugins.entries.firecrawl.config.webFetch.baseUrl).toBe(FETCH_URL);
+    // docs/11 §11: one plugin holds search, fetch and the browser status; firecrawl and cf-web-search are not rendered.
+    expect(doc.tools.web.fetch.provider).toBe("cloudflare-web-fetch");
     expect(doc.tools.web.search.provider).toBe("cloudflare-web-search");
-    expect(doc.plugins.entries["cf-web-search"]).toEqual({
+    expect(doc.plugins.entries["cf-capabilities"]).toEqual({
       enabled: true,
-      config: { webSearch: { baseUrl: CAP_URL } },
+      config: { webSearch: { baseUrl: CAP_URL }, webFetch: { baseUrl: FETCH_URL } },
     });
-    expect(doc.plugins.load).toBeUndefined(); // both plugins are bundled extensions (docs/13)
+    expect(doc.plugins.entries.firecrawl).toBeUndefined();
+    expect(doc.plugins.entries["cf-web-search"]).toBeUndefined();
+    expect(doc.plugins.load).toBeUndefined(); // bundled extension (docs/13)
+    expect(JSON.stringify(doc.plugins.entries["cf-capabilities"])).not.toMatch(/key|token|secret/i);
     expect(doc.memory.search.remote.baseUrl).toBe(`${CAP_URL}/ai/v1`);
     expect(doc.tts.providers.openai.baseUrl).toBe(`${CAP_URL}/ai/v1`);
     expect(doc.tools.media.models[0].baseUrl).toBe(`${CAP_URL}/ai/v1`);
@@ -62,7 +66,9 @@ describe("renderOpenclawDoc", () => {
     expect(p.baseUrl).toBe("http://15.0.0.3/ai/v1");
     expect(p.apiKey).toBe("capgate");
     expect(p.headers).toBeUndefined();
-    expect(p.models.map((m: { id: string }) => m.id)).toEqual(["@cf/a/b", "@cf/google/gemma-4-26b-a4b-it"]);
+    const ids = p.models.map((m: { id: string }) => m.id);
+    expect(ids[0]).toBe("@cf/a/b"); // the primary stays first, the catalogue follows
+    expect(ids).toEqual(expect.arrayContaining(["@cf/google/gemma-4-26b-a4b-it", "@cf/zai-org/glm-5.3"]));
     expect(d.browser.profiles.cf).toBeDefined();
     const s = JSON.stringify(d);
     expect(s).not.toMatch(/OC_CF_AI_TOKEN|cf-aig-authorization|gateway\.ai\.cloudflare\.com|\$\{/);

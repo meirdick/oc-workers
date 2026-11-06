@@ -1,0 +1,48 @@
+{
+  "id": "cf-capabilities",
+  "name": "Cloudflare capabilities",
+  "description": "Web search, web fetch and the browser on Cloudflare through the oc-workers gate; no API key.",
+  "categories": ["web"],
+  "activation": { "onStartup": false },
+  "cliCommands": [
+    {
+      "name": "cf-capabilities",
+      "description": "Cloudflare capabilities through the oc-host gate",
+      "hasSubcommands": true
+    }
+  ],
+  "contracts": {
+    "webSearchProviders": ["cloudflare-web-search"],
+    "webFetchProviders": ["cloudflare-web-fetch"]
+  },
+  "uiHints": {
+    "webSearch.baseUrl": {
+      "label": "Capability gate URL",
+      "help": "Where the gate listens inside the container (default http://15.0.0.3). Web search and the browser status read use it. Live browser state: `openclaw cf-capabilities status`."
+    },
+    "webFetch.baseUrl": {
+      "label": "Web fetch relay URL",
+      "help": "Loopback relay to the gate (default http://127.0.0.1:18791)."
+    }
+  },
+  "configGroups": [
+    { "id": "web-search", "title": "Web search", "order": 10, "properties": ["webSearch"] },
+    { "id": "web-fetch", "title": "Web fetch", "order": 20, "properties": ["webFetch"] }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "webSearch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "baseUrl": { "type": "string" } }
+      },
+      "webFetch": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": { "baseUrl": { "type": "string" } }
+      }
+    }
+  }
+}

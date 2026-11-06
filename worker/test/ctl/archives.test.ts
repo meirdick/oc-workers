@@ -708,6 +708,21 @@ describe("N8 pre-boot archive: a deploy since the last boot", () => {
     }
   });
 
+  it("a pre-restart archive request with no progress for 90 s is given up as stalled, well under the 5 min cap", async () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const { w, gen } = await booted();
+      await mkArchive(w, gen);
+      w.advance(MIN);
+      upload(w, gen, 50);
+      const p = w.core.archiveBeforeRestart();
+      await vi.advanceTimersByTimeAsync(MIN + 95_000); // ocsup never starts it (the clock was MIN ahead of the timers)
+      expect(await p).toBe("stalled");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("restart after a deploy: a failed pre-restart archive refuses (409, no stop); hard skips the wait", async () => {
     vi.useFakeTimers({ now: T0 });
     try {

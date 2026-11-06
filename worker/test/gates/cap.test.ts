@@ -397,6 +397,31 @@ describe("budgets at the gate", () => {
     expect((await t.post("/browser/content", { url: "https://e.com/" })).status).toBe(200);
   });
 
+  it("GET /browser/status reads the binding and the daily seconds, and costs nothing", async () => {
+    const t = setup();
+    t.w.ledger.capAdd("browser", 40);
+    const j = await (await t.call("/browser/status")).json();
+    expect(j).toMatchObject({ on: true, used: 40, limit: 3600, ok: true });
+    expect((j as { retryAfterS: number }).retryAfterS).toBeGreaterThan(0);
+    // A status read is not a request and not browser time.
+    const caps = (await (await t.call("/caps")).json()) as Record<string, { used: number }>;
+    expect(caps.requests?.used).toBe(0);
+    expect(caps.browser?.used).toBe(40);
+    // Spent budget: still on, not ok.
+    t.w.ledger.capsSet({ browser: 40 });
+    expect(await (await t.call("/browser/status")).json()).toMatchObject({
+      on: true,
+      used: 40,
+      limit: 40,
+      ok: false,
+    });
+  });
+
+  it("GET /browser/status says off when the Worker has no BROWSER binding", async () => {
+    const t = setup({ browser: null });
+    expect(await (await t.call("/browser/status")).json()).toMatchObject({ on: false, used: 0 });
+  });
+
   it("GET /caps shows used and limits", async () => {
     const t = setup();
     await t.post("/ai/v1/embeddings", { input: "a" });

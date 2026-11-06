@@ -24,6 +24,7 @@ import {
   STATE_DIR,
   wrangler,
 } from "./ops-lib.ts";
+import { makeCf, makeWrangler, wranglerBearer } from "./wrangler.ts";
 
 export const destroyFlags: FlagSpec = {
   yes: { type: "boolean", short: "y" },
@@ -44,6 +45,26 @@ export interface DestroyPlan {
 }
 
 export const bucketOf = (i: Install) => String(i.state.bucket ?? `oc-host-${i.inst}`);
+
+/** Start an R2 job that deletes every object in the bucket. Best effort: without a bearer the delete step says why. */
+async function emptyBucket(ctx: OpsCtx, i: Install, bucket: string): Promise<void> {
+  try {
+    const bearer = await wranglerBearer(makeWrangler(ctx.run, { accountId: i.accountId }));
+    if (!bearer) return;
+    const r = await makeCf(ctx.fetch, bearer, ctx.sleep).call<{ id?: string; status?: string }>(
+      "POST",
+      `/accounts/${i.accountId}/r2/buckets/${encodeURIComponent(bucket)}/jobs`,
+      { jobType: "prefixDelete", prefix: "" },
+    );
+    ctx.out.step(
+      r.status >= 200 && r.status < 300
+        ? `emptying bucket ${bucket} (R2 job ${r.j.result?.status ?? "started"})`
+        : `could not start the R2 empty-bucket job (HTTP ${r.status}); the delete may say "not empty"`,
+    );
+  } catch (e) {
+    ctx.out.step(`could not start the R2 empty-bucket job (${(e as Error).message.slice(0, 60)})`);
+  }
+}
 
 export function parseJson<T>(s: string, dflt: T): T {
   const i = s.search(/[[{]/);
@@ -149,7 +170,20 @@ export async function destroy(ctx: OpsCtx): Promise<number> {
   for (const a of [p.app, p.sandboxApp])
     if (a) await step(`container app ${a.name}`, ["containers", "delete", a.id], "y\n");
   for (const img of p.images) await step(`image ${img}`, ["containers", "images", "delete", img], "y\n");
-  if (deleteData) await step(`bucket ${p.bucket}`, ["r2", "bucket", "delete", p.bucket], "y\n");
+  if (deleteData) {
+    // R2 refuses to delete a bucket with objects (10008). A prefix-delete job with an empty prefix empties it
+    // (the account API; no wrangler command). Then the delete, retried while the job runs (up to 5 min).
+    await emptyBucket(ctx, i, p.bucket);
+    let r = await wrangler(ctx, i, ["r2", "bucket", "delete", p.bucket], "y\n");
+    for (let k = 0; r.code !== 0 && /not empty|10008/i.test(r.stderr + r.stdout) && k < 30; k++) {
+      await ctx.sleep(10_000);
+      r = await wrangler(ctx, i, ["r2", "bucket", "delete", p.bucket], "y\n");
+    }
+    const what = `bucket ${p.bucket}`;
+    if (r.code === 0) done.push(what);
+    else failed.push(`${what}: ${oneLine(redact(r.stderr || r.stdout)).slice(0, 160)}`);
+    ctx.out.step(`${r.code === 0 ? "done" : "FAILED"}: ${what}`);
+  }
   const st = join(ctx.dir, STATE_DIR, "state.json");
   if (!failed.length && existsSync(st)) renameSync(st, join(ctx.dir, STATE_DIR, "state.destroyed.json"));
   if (ctx.out.json)

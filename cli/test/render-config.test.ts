@@ -1,5 +1,9 @@
 // Item 10: `ochost config render` and the render step of `ochost deploy` against the fake /ops server.
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadCatalog, SHIPPED_CATALOG } from "../src/catalog.ts";
 import { FETCH_URL, RENDER_VERSION, renderOpenclawDoc } from "../src/config.ts";
 import { renderStep } from "../src/deploy.ts";
 import { mergeRender, renderVersionOf } from "../src/render-config.ts";
@@ -10,7 +14,10 @@ const oldDoc = () => ({
   agents: { defaults: { model: { primary: "cfgw/@cf/a/b" }, userKey: 7 } },
   channels: { telegram: { enabled: true } },
   plugins: {
-    entries: { firecrawl: { enabled: true, config: { webFetch: { baseUrl: "http://15.0.0.3", mine: 1 } } } },
+    entries: {
+      firecrawl: { enabled: true, config: { webFetch: { baseUrl: "http://15.0.0.3", mine: 1 } } },
+      "cf-web-search": { enabled: true, config: { webSearch: { baseUrl: "http://15.0.0.3" } } },
+    },
   },
   tools: { web: { fetch: { provider: "firecrawl" } } },
 });
@@ -18,7 +25,14 @@ const oldDoc = () => ({
 describe("mergeRender (pure)", () => {
   it("render keys win, owner keys stay, new keys are added; the diff names top-level keys", () => {
     const { doc, diff } = mergeRender(oldDoc());
-    expect(doc.plugins.entries.firecrawl.config.webFetch).toEqual({ baseUrl: FETCH_URL, mine: 1 });
+    // docs/11 §11: one plugin; the old search entry is gone; the provider is ours; an owner-edited firecrawl entry stays.
+    expect(doc.plugins.entries["cf-capabilities"].config).toEqual({
+      webSearch: { baseUrl: "http://15.0.0.3" },
+      webFetch: { baseUrl: FETCH_URL },
+    });
+    expect(doc.plugins.entries["cf-web-search"]).toBeUndefined();
+    expect(doc.tools.web.fetch.provider).toBe("cloudflare-web-fetch");
+    expect(doc.plugins.entries.firecrawl.config.webFetch).toEqual({ baseUrl: "http://15.0.0.3", mine: 1 });
     expect(doc.agents.defaults.userKey).toBe(7);
     expect(doc.agents.defaults.model.primary).toBe("cfgw/@cf/a/b");
     expect(doc.channels).toEqual({ telegram: { enabled: true } });
@@ -27,6 +41,12 @@ describe("mergeRender (pure)", () => {
     expect(diff.changed).toEqual(expect.arrayContaining(["plugins", "agents"]));
     expect(diff.added).not.toContain("channels");
     expect(diff.changed).not.toContain("channels");
+  });
+
+  it("drops the firecrawl entry an older render wrote (only the gate address in it)", () => {
+    const old = oldDoc();
+    old.plugins.entries.firecrawl.config.webFetch = { baseUrl: FETCH_URL } as any;
+    expect(mergeRender(old).doc.plugins.entries.firecrawl).toBeUndefined();
   });
 
   it("is idempotent, and a fresh init doc is already current", () => {
@@ -80,7 +100,7 @@ describe("config render and deploy", () => {
     });
     expect(posts[0].baseVer).toBe(3);
     expect(posts[0].doc.ochost.renderVersion).toBe(RENDER_VERSION);
-    expect(posts[0].doc.plugins.entries.firecrawl.config.webFetch.baseUrl).toBe(FETCH_URL);
+    expect(posts[0].doc.plugins.entries["cf-capabilities"].config.webFetch.baseUrl).toBe(FETCH_URL);
     // docs/11 §8: storage location r2 on the install's own bucket, its own prefix, no credential in the doc
     expect(posts[0].doc.storage.locations.r2).toEqual({
       provider: "ochost-r2",
@@ -145,5 +165,60 @@ describe("config render and deploy", () => {
     } as any;
     expect(await renderStep(ctx, f.url, OWNER)).toBeNull();
     expect(warns[1]).toMatch(/config changed elsewhere \(base 3, current 9\)/);
+  });
+});
+
+describe("catalogue in the cfgw model list", () => {
+  const doc = () => renderOpenclawDoc({ model: "@cf/zai-org/glm-5.3" }) as any;
+  it("lists every catalogue model once; entries carry reasoning, efforts, vision and context", () => {
+    const ms = doc().models.providers.cfgw.models;
+    expect(ms.map((m: any) => m.id).sort()).toEqual(SHIPPED_CATALOG.models.map((m) => m.id).sort());
+    const oss = ms.find((m: any) => m.id === "@cf/openai/gpt-oss-120b");
+    expect(oss).toMatchObject({ reasoning: true, input: ["text"], contextWindow: 128000 });
+    expect(oss.compat.supportedReasoningEfforts).toEqual(["low", "medium", "high"]);
+    expect(ms.find((m: any) => m.id === "@cf/meta/llama-4-scout-17b-16e-instruct").input).toEqual([
+      "text",
+      "image",
+    ]);
+    expect(doc().agents.defaults.models?.["cfgw/@cf/zai-org/glm-5.3"]).toBeUndefined(); // the UI row owns the main level
+    expect(doc().agents.defaults.thinkingDefault).toBe("low");
+  });
+  it("a deprecated model is left out; the install snapshot wins over the shipped one", () => {
+    const cat = {
+      date: "2026-12-01",
+      source: "test",
+      models: [
+        {
+          id: "@cf/x/new",
+          contextWindow: 9000,
+          supportsReasoning: false,
+          efforts: [],
+          vision: true,
+          priceInPerM: 1,
+          priceOutPerM: 2,
+        },
+        {
+          id: "@cf/x/old",
+          deprecated: "2026-12-15",
+          contextWindow: 9000,
+          supportsReasoning: false,
+          efforts: [],
+          vision: false,
+          priceInPerM: 1,
+          priceOutPerM: 2,
+        },
+      ],
+    } as any;
+    const ids = (
+      renderOpenclawDoc({ model: "@cf/zai-org/glm-5.3" }, undefined, cat) as any
+    ).models.providers.cfgw.models.map((m: any) => m.id);
+    expect(ids).toContain("@cf/x/new");
+    expect(ids).not.toContain("@cf/x/old");
+    expect(ids).not.toContain("@cf/openai/gpt-oss-120b");
+    const dir = mkdtempSync(join(tmpdir(), "cat-"));
+    expect(loadCatalog(dir)).toBe(SHIPPED_CATALOG);
+    mkdirSync(join(dir, ".oc-host"));
+    writeFileSync(join(dir, ".oc-host", "models-catalog.json"), JSON.stringify(cat));
+    expect(loadCatalog(dir).date).toBe("2026-12-01");
   });
 });

@@ -1,4 +1,4 @@
-// docs/11 §7: web_fetch through the CapGate. The firecrawl and cf-web-search plugins are bundled extensions of the image
+// docs/11 §7: web_fetch through the CapGate. The cf-capabilities plugin (search, fetch, browser status) is a bundled extension of the image
 // (/app/dist/extensions, no load path; docs/13), so with no network at all: config validates, Doctor does not try npm, and an agent turn
 // (mock model) calls web_fetch / web_search and the mock gate gets POST /v2/scrape and /search. Runs as uid 1000 with --network none.
 import fs from "node:fs";
@@ -22,14 +22,19 @@ const CFG = {
   // toolSearch off: the model sees web_fetch directly (default mode hides it behind tool_search).
   tools: {
     toolSearch: false,
-    web: { fetch: { provider: "firecrawl" }, search: { provider: "cloudflare-web-search" } },
+    web: { fetch: { provider: "cloudflare-web-fetch" }, search: { provider: "cloudflare-web-search" } },
   },
   plugins: {
     // Production: firecrawl baseUrl is ocsup's loopback forwarder (127.0.0.1:18791 -> 15.0.0.3:80, cli FETCH_URL), since
     // OpenClaw refuses the public-looking 15.0.0.3. Here the real forwarder (lib/cap-proxy.mjs) fronts the mock gate.
     entries: {
-      firecrawl: { enabled: true, config: { webFetch: { baseUrl: "http://127.0.0.1:18791" } } },
-      "cf-web-search": { enabled: true, config: { webSearch: { baseUrl: "http://127.0.0.1:9101" } } },
+      "cf-capabilities": {
+        enabled: true,
+        config: {
+          webFetch: { baseUrl: "http://127.0.0.1:18791" },
+          webSearch: { baseUrl: "http://127.0.0.1:9101" },
+        },
+      },
     },
   },
 };
@@ -40,9 +45,10 @@ node /t/fakes/webfetch-mock.mjs > /tmp/mock.out 2>&1 & M=$!
 node --input-type=module -e 'import {startCapProxy} from "/opt/ocrt/lib/cap-proxy.mjs"; startCapProxy({target:{host:"127.0.0.1",port:9101}}); setInterval(()=>{},1e6)' > /tmp/proxy.out 2>&1 & P=$!
 sleep 1
 echo "@@validate"; node openclaw.mjs config validate 2>&1
-echo "@@list"; node openclaw.mjs plugins list --json 2>&1 | grep -A16 '"id": "firecrawl"'
+echo "@@list"; node openclaw.mjs plugins list --json 2>&1 | grep -A16 '"id": "cf-capabilities"'
 echo "@@providers"; node openclaw.mjs infer web providers --json 2>&1
 echo "@@health"; node openclaw.mjs infer web search --provider cloudflare-web-search --query "health probe" --json 2>&1
+echo "@@status"; node openclaw.mjs cf-capabilities status 2>&1
 echo "@@doctor"; timeout 200 node openclaw.mjs doctor --fix --non-interactive 2>&1
 echo "@@agent"; timeout 200 node openclaw.mjs agent --local --message "fetch http://example.com" --session-id t1 --json 2>&1
 echo "@@agent2"; timeout 200 node openclaw.mjs agent --local --message "search for cloudflare web search" --session-id t2 --json 2>&1
@@ -53,12 +59,12 @@ echo "@@mock"; cat /tmp/mock.out
 export default {
   name: "webfetch-plugin",
   source: "docs/11 §7 (web_fetch through the CapGate); M6 capgate live F2",
-  rule: "Image ships the firecrawl plugin as a root-owned bundled extension (no load path); offline: config validate has no 'plugin not installed', Doctor never mentions npm or EAI_AGAIN, plugins list shows firecrawl enabled, and a mock-model turn runs web_fetch http://example.com so the mock gate gets POST /v2/scrape through ocsup's loopback forwarder (baseUrl http://127.0.0.1:18791) and the model sees its text; another runs web_search and the gate gets POST /search (plugin cf-web-search, shown as a provider).",
+  rule: "Image ships cf-capabilities (and firecrawl, deprecated) as root-owned bundled extensions (no load path); offline: config validate has no 'plugin not installed', Doctor never mentions npm or EAI_AGAIN, plugins list shows cf-capabilities enabled, and a mock-model turn runs web_fetch http://example.com so the mock gate gets POST /v2/scrape through ocsup's loopback forwarder (baseUrl http://127.0.0.1:18791) and the model sees its text; another runs web_search and the gate gets POST /search (plugin cf-capabilities, shown as a provider); `openclaw cf-capabilities status` reads GET /browser/status.",
   timeoutMs: 600_000,
   async run(t) {
     const sh = (c) => dk(["run", "--rm", "--entrypoint", "sh", t.image, "-c", c]);
     const own = sh(
-      "stat -c '%U' /app/dist/extensions/firecrawl /app/dist/extensions/firecrawl/dist/index.js /app/dist/extensions/cf-web-search",
+      "stat -c '%U' /app/dist/extensions/firecrawl /app/dist/extensions/firecrawl/dist/index.js /app/dist/extensions/cf-capabilities /app/dist/extensions/cf-capabilities/index.js",
     ).out;
     t.check(
       "plugin dir root-owned",
@@ -113,6 +119,11 @@ export default {
       /GATE-SEARCH-MARKER/.test(part("health")),
       part("health").slice(0, 600),
     );
+    t.check(
+      "browser status read through the gate",
+      /Browser: on, 40 s of 3600 s today/.test(part("status")),
+      part("status").slice(0, 300),
+    );
     const doc = part("doctor");
     t.check(
       "Doctor never tried npm",
@@ -124,7 +135,7 @@ export default {
     t.check("agent called web_fetch → gate got POST /v2/scrape", gate?.gate === "/v2/scrape", log);
     t.check(
       "gate body carries the url",
-      JSON.parse(gate?.body || "{}").url === "http://example.com",
+      String(JSON.parse(gate?.body || "{}").url ?? "").replace(/\/$/, "") === "http://example.com", // the provider normalizes the URL
       gate?.body,
     );
     t.check("model saw the gate's text", /done: SAW-MARKER/.test(part("agent")), part("agent").slice(-300));

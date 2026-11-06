@@ -1,7 +1,15 @@
 // `ochost config render` and the render step of `ochost deploy`: old installs keep the capability keys they were
 // created with. Merge the CLI's current renderCapabilities() into the live config as a new version.
 // Render keys win, every other key stays. The document records `ochost.renderVersion` (cli/src/config.ts).
-import { RENDER_VERSION, renderCapabilities, renderModelRoles } from "./config.ts";
+import { type Catalog, SHIPPED_CATALOG } from "./catalog.ts";
+import {
+  CAP_URL,
+  FETCH_URL,
+  RENDER_VERSION,
+  renderCapabilities,
+  renderCatalog,
+  renderModelRoles,
+} from "./config.ts";
 
 /** What the merge needs from the Worker: GET and POST of /ops/config (an ops client or a plain fetch). */
 export interface ConfigIo {
@@ -30,13 +38,39 @@ export interface RenderDiff {
   same: string[];
 }
 
+/**
+ * Render version 3: the plugin cf-capabilities replaced cf-web-search and the firecrawl plugin for web_fetch. Take
+ * out the entries the old render wrote. A firecrawl entry the owner changed (an API key, another host) stays.
+ */
+function dropReplacedEntries(doc: Record<string, any>): Record<string, any> {
+  const entries = doc.plugins?.entries;
+  if (!isObj(entries)) return doc;
+  const out = structuredClone(doc);
+  const e = out.plugins.entries;
+  delete e["cf-web-search"];
+  const fc = e.firecrawl;
+  const ours = (u: unknown) => u === FETCH_URL || u === CAP_URL;
+  const keys = isObj(fc?.config) ? Object.keys(fc.config) : [];
+  if (
+    isObj(fc) &&
+    keys.every((k) => k === "webFetch") &&
+    ours(fc.config?.webFetch?.baseUrl) &&
+    Object.keys(fc.config.webFetch).length === 1
+  )
+    delete e.firecrawl;
+  return out;
+}
+
 /** Pure: the doc with the current render merged in, and which top-level keys it added or changed. */
 export function mergeRender(
   doc: Record<string, any>,
   files?: { bucket: string; inst: string },
+  catalog: Catalog = SHIPPED_CATALOG,
 ): { doc: Record<string, any>; diff: RenderDiff } {
   const render = { ...renderCapabilities(files), ochost: { renderVersion: RENDER_VERSION } };
-  const next = renderModelRoles(deepMerge(doc, render) as Record<string, any>);
+  const next = renderModelRoles(
+    renderCatalog(deepMerge(dropReplacedEntries(doc), render) as Record<string, any>, catalog),
+  );
   const diff: RenderDiff = { added: [], changed: [], same: [] };
   for (const k of Object.keys(next).sort()) {
     if (!(k in doc)) diff.added.push(k);
@@ -62,7 +96,13 @@ export interface RenderResult {
  */
 export async function renderIntoConfig(
   io: ConfigIo,
-  o: { dryRun?: boolean; onlyIfOlder?: boolean; files?: { bucket: string; inst: string } } = {},
+  o: {
+    dryRun?: boolean;
+    onlyIfOlder?: boolean;
+    files?: { bucket: string; inst: string };
+    /** the install's snapshot when it has one (loadCatalog); default: the shipped one */
+    catalog?: Catalog;
+  } = {},
 ): Promise<RenderResult> {
   const empty: RenderDiff = { added: [], changed: [], same: [] };
   const l = await io.get("/ops/config");
@@ -76,7 +116,7 @@ export async function renderIntoConfig(
   const docRenderVersion = renderVersionOf(doc);
   if (o.onlyIfOlder && docRenderVersion >= RENDER_VERSION)
     return { action: "none", from, ver: from, docRenderVersion, diff: empty };
-  const m = mergeRender(doc, o.files);
+  const m = mergeRender(doc, o.files, o.catalog);
   if (o.dryRun) return { action: "dry", from, ver: from, docRenderVersion, diff: m.diff };
   const r = await io.post("/ops/config", { doc: m.doc, baseVer: from });
   if (r.status === 409)

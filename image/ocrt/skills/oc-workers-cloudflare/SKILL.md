@@ -1,6 +1,6 @@
 ---
-name: oc-host-cloudflare
-description: What this oc-host install gives you on Cloudflare (browser, web fetch, embeddings, speech, images, docs) and its daily limits. Read before choosing a web or media tool.
+name: oc-workers-cloudflare
+description: What this oc-workers install gives you on Cloudflare (browser, web fetch, embeddings, speech, images, docs) and its daily limits. Read before choosing a web or media tool.
 ---
 
 # Cloudflare tools on this install

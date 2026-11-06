@@ -142,6 +142,17 @@ export interface Panel {
 }
 
 /** The newest config version the install would boot (good or candidate). */
+/** `ochost.renderVersion` of the newest good or candidate version that carries the CLI's `ochost` block; 0 if none. */
+function renderVersionOf(c: Ctx): number {
+  for (const r of c.db.all<{ doc: string }>(
+    "SELECT doc FROM config WHERE status IN ('good', 'candidate') ORDER BY ver DESC LIMIT 20",
+  )) {
+    const v = pj<any>(r.doc, null)?.ochost?.renderVersion;
+    if (Number.isInteger(v)) return v as number;
+  }
+  return 0;
+}
+
 function configDoc(c: Ctx): any {
   const r = c.db.one<{ doc: string }>(
     "SELECT doc FROM config WHERE status IN ('good', 'candidate') ORDER BY ver DESC LIMIT 1",
@@ -388,7 +399,10 @@ export async function ownerPanel(
   });
 
   const cli = c.db.metaJson<{ at: number; version: number } | null>("cliRender", null);
-  const docVer = Number.isInteger(doc?.ochost?.renderVersion) ? (doc.ochost.renderVersion as number) : 0;
+  // The render version lives in the CLI's `ochost` block. A version the container proposed (Doctor rewrote the
+  // file; OpenClaw rejects unknown root keys, so the block is gone) carries the same rendered keys: read the newest
+  // version that has the block, not the newest version.
+  const docVer = renderVersionOf(c);
   const render: RenderState = {
     docVersion: docVer,
     cliVersion: cli?.version ?? null,

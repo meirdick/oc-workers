@@ -1,5 +1,5 @@
-// ocio helper (uid 1000): install the oc-host-cloudflare skill into the agent workspace (docs/11 §4).
-// Usage: node skill-install.mjs <json-args>   {src, workspace, name}  -> {ok, changed}
+// ocio helper (uid 1000): install the oc-workers-cloudflare skill into the agent workspace (docs/11 §4).
+// Usage: node skill-install.mjs <json-args>   {src, workspace, name, remove?: [oldName]}  -> {ok, changed}
 // Writes <workspace>/skills/<name>/SKILL.md from the image copy. Overwritten each boot (image-owned file).
 // Refuses symlinked or non-directory path parts (plan §4.13).
 import fs from "node:fs";
@@ -39,6 +39,14 @@ try {
     const tmp = `${dest}.tmp${process.pid}`;
     fs.writeFileSync(tmp, body, { mode: 0o644, flag: "wx" });
     fs.renameSync(tmp, dest);
+  }
+  // An older name of this skill (the product was renamed): its dir goes, so the agent sees one skill.
+  for (const old of Array.isArray(a.remove) ? a.remove : []) {
+    if (!/^[a-z0-9-]+$/.test(old) || old === a.name) continue;
+    const d = path.join(a.workspace, "skills", old);
+    try {
+      if (fs.lstatSync(d).isDirectory()) fs.rmSync(d, { recursive: true, force: true });
+    } catch {}
   }
   out({ ok: true, changed: !same });
 } catch (e) {

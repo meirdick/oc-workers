@@ -4,7 +4,7 @@
 !ocrt/ocio/
 !probe.sh
 !native/nodump.c
-!plugins/cf-web-search/
+!plugins/cf-capabilities/
 !plugins/ochost-storage/
 ocrt/vitest.config.mjs
 !ocrt/plugins/

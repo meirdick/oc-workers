@@ -423,6 +423,14 @@ describe("GET /ops/doctor", () => {
     j = await doc();
     expect(j.render).toEqual({ docVersion: 1, cliVersion: 1, outdated: false });
     expect(by(j.connected, "config render").result).toBe("PASS");
+    // A newer version the container proposed (Doctor rewrote the file) has no ochost block: the render version
+    // comes from the newest version that carries it, so the row stays PASS.
+    w.ctx.db.run(
+      "INSERT INTO config (ver, status, source, doc, created_at) SELECT MAX(ver) + 1, 'candidate', 'doctor', json_remove(doc, '$.ochost'), 1 FROM config",
+    );
+    j = await doc();
+    expect(j.render).toEqual({ docVersion: 1, cliVersion: 1, outdated: false });
+    expect(by(j.connected, "config render").result).toBe("PASS");
   });
 });
 

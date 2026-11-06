@@ -4,6 +4,8 @@
 // per-verb daily budgets in the Control DO (gates/caps.ts). No bearer: the address exists only inside this install's container. The budget
 // bounds what a steered agent can spend.
 //   GET  /caps                      budgets used today
+//   GET  /browser/status            {on, used, limit, ok, retryAfterS} browser binding present and the daily seconds
+//                                   used of the cap; no charge, not counted as a request (cf-capabilities plugin card)
 //   GET  /browser/devtools          WebSocket CDP bridge to env.BROWSER (cdpUrl ws://15.0.0.3/browser/devtools)
 //   GET  /browser/devtools/json/version   discovery document for CDP clients
 //   POST /browser/content           {url} → {success, result: html}        (Browser Run REST shape)
@@ -82,6 +84,16 @@ export async function handleCapGate(req: Request, d: CapDeps): Promise<Response>
       for (const v of ["browser", "neurons", "requests", "websearch"] as const)
         out[v] = await d.ctl.capCheck(v);
       return json(out);
+    }
+    if (path === "/browser/status" && req.method === "GET") {
+      const c = await d.ctl.capCheck("browser");
+      return json({
+        on: d.browser !== undefined,
+        used: Math.round(c.used),
+        limit: c.limit,
+        ok: c.ok,
+        retryAfterS: c.retryAfterS,
+      });
     }
     if (path === "/browser/devtools/json/version" && req.method === "GET")
       return json({

@@ -65,6 +65,14 @@ The default utility and compaction model is `@cf/google/gemma-4-26b-a4b-it`. Cha
 
 Run `ochost config render` and `ochost restart` to apply this to an older install. `ochost model bench --role utility` tests the model of one role at the effort that role uses.
 
+## The model catalogue
+
+The `cfgw` provider lists every Workers AI chat model that has function calling and no deprecation date. You can pick one in the OpenClaw Control UI (Settings > Models) or with `/model <id>`. Each entry has the context window, the reasoning efforts and image input of the model.
+
+oc-workers ships a snapshot of this list. To get the live list, run `ochost model list --refresh` with an AI token (`--ai-token-file`). It writes `.oc-host/models-catalog.json`. Then run `ochost config render` and `ochost restart`. The render uses the file in `.oc-host/` when it exists, and the shipped snapshot when it does not.
+
+`ochost model` shows the roles and the size and date of the snapshot. The roles (main, utility, compaction) keep their thinking levels.
+
 ## Benchmark
 
 `ochost model bench` sends agent turns with tool calls through the gate. One turn is a prompt with 4 tools. The model must call the right tool with the right arguments, then answer with the fact from the result. The results use 10 turns per model and one run each.

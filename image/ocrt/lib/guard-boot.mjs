@@ -8,7 +8,7 @@
 //       stageDir, log, alert, cgIo, runDir}
 import fs from "node:fs";
 import path from "node:path";
-import { defaultVersion, docSha, render, sensitiveChanges } from "./config.mjs";
+import { defaultVersion, deprecations, docSha, render, sensitiveChanges } from "./config.mjs";
 import { createConfigWatch } from "./configwatch.mjs";
 import { afterDoctor, doctorTail, runDoctorStaged } from "./doctor.mjs";
 import { openclawCli } from "./guard.mjs";
@@ -133,6 +133,7 @@ export async function configStep(ctx) {
     proposals: rendered.proposals,
     missingPlugins: plugins.missing,
   });
+  for (const note of deprecations(version.doc)) ctx.log?.("config-deprecated", { note });
   return {
     rec: {
       ver: version.ver,

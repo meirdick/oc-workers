@@ -1,0 +1,132 @@
+{
+  "date": "2026-11-06",
+  "source": "Cloudflare Workers AI docs model pages (developers.cloudflare.com/workers-ai/models/<name>/index.md), read 2026-11-06. TODO: replace with the live catalogue: ochost model list --refresh.",
+  "models": [
+    {
+      "id": "@cf/daily-co/phonellm-mini-alpha-2",
+      "contextWindow": 262140,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": 0.06,
+      "priceOutPerM": 0.24
+    },
+    {
+      "id": "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "contextWindow": 1048576,
+      "supportsReasoning": true,
+      "efforts": ["none", "low", "high", "max"],
+      "vision": true,
+      "priceInPerM": 0.3,
+      "priceOutPerM": 1.2
+    },
+    {
+      "id": "@cf/google/gemma-4-26b-a4b-it",
+      "contextWindow": 256000,
+      "supportsReasoning": true,
+      "efforts": [],
+      "vision": true,
+      "priceInPerM": 0.1,
+      "priceOutPerM": 0.3
+    },
+    {
+      "id": "@cf/ibm-granite/granite-4.0-h-micro",
+      "contextWindow": 131000,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": 0.017,
+      "priceOutPerM": 0.112
+    },
+    {
+      "id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "contextWindow": 24000,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": 0.293,
+      "priceOutPerM": 2.253
+    },
+    {
+      "id": "@cf/meta/llama-4-scout-17b-16e-instruct",
+      "contextWindow": 131000,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": true,
+      "priceInPerM": 0.27,
+      "priceOutPerM": 0.85
+    },
+    {
+      "id": "@cf/mistralai/mistral-small-3.1-24b-instruct",
+      "contextWindow": 128000,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": 0.351,
+      "priceOutPerM": 0.555
+    },
+    {
+      "id": "@cf/openai/gpt-oss-120b",
+      "contextWindow": 128000,
+      "supportsReasoning": true,
+      "efforts": ["low", "medium", "high"],
+      "vision": false,
+      "priceInPerM": 0.35,
+      "priceOutPerM": 0.75
+    },
+    {
+      "id": "@cf/openai/gpt-oss-20b",
+      "contextWindow": 128000,
+      "supportsReasoning": true,
+      "efforts": ["low", "medium", "high"],
+      "vision": false,
+      "priceInPerM": 0.2,
+      "priceOutPerM": 0.3
+    },
+    {
+      "id": "@cf/qwen/qwen3.8-27b",
+      "contextWindow": 262144,
+      "supportsReasoning": true,
+      "efforts": ["low", "medium", "xhigh"],
+      "vision": true,
+      "priceInPerM": 0.45,
+      "priceOutPerM": 3.2
+    },
+    {
+      "id": "@cf/swiss-ai/apertus-v1.5-8b",
+      "contextWindow": 262144,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": true,
+      "priceInPerM": null,
+      "priceOutPerM": null
+    },
+    {
+      "id": "@cf/utter-project/eurollm-9b-it",
+      "contextWindow": 32000,
+      "supportsReasoning": false,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": null,
+      "priceOutPerM": null
+    },
+    {
+      "id": "@cf/zai-org/glm-4.7-flash",
+      "contextWindow": 131072,
+      "supportsReasoning": true,
+      "efforts": [],
+      "vision": false,
+      "priceInPerM": 0.0605,
+      "priceOutPerM": 0.4
+    },
+    {
+      "id": "@cf/zai-org/glm-5.3",
+      "contextWindow": 1048576,
+      "supportsReasoning": true,
+      "efforts": ["low", "high", "max"],
+      "vision": false,
+      "priceInPerM": 1.4,
+      "priceOutPerM": 4.4
+    }
+  ]
+}

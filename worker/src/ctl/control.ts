@@ -150,7 +150,9 @@ const AWAKE_FOR_PROBE: RtState[] = [
 const RUNNING: RtState[] = ["starting", "running", "maintenance"];
 const DAILY_HOUR_UTC = 3;
 /** `ochost restart` after a deploy waits this long for the pre-restart archive (N8). */
-export const RESTART_ARCHIVE_WAIT_MS = 180_000;
+export const RESTART_ARCHIVE_WAIT_MS = 300_000;
+/** A pre-restart archive request with no progress for this long is dead (an upload cut by the Worker swap, 1.1.0 live). */
+export const RESTART_ARCHIVE_STALL_MS = 90_000;
 /** N7: the restore probe's own cap (ocsup verify-gen); the RPC gets 10 s more. Under the 60 s tick cap. */
 export const GEN_VERIFY_MS = 40_000;
 
@@ -717,16 +719,21 @@ export class ControlCore {
    * `ochost restart` after a deploy: wait (≤ RESTART_ARCHIVE_WAIT_MS) for an archive that holds the latest writes.
    * ocsup serves a request at its next archive poll (≤ 60 s). Returns what happened, for the CLI line.
    */
-  async archiveBeforeRestart(): Promise<"fresh" | "taken" | "failed" | "timeout" | "skipped"> {
+  async archiveBeforeRestart(): Promise<"fresh" | "taken" | "failed" | "timeout" | "stalled" | "skipped"> {
     const c = this.c;
     if (this.rtState() !== "running") return "skipped";
     if (!archiveDirty(c)) return "fresh";
     const req = requestArchive(c, "pre-upgrade");
     const end = Date.now() + RESTART_ARCHIVE_WAIT_MS;
     for (;;) {
-      const cur = c.db.metaJson<{ id?: string; state?: string } | null>("archiveRequest", null);
+      const cur = c.db.metaJson<{ id?: string; state?: string; progressAt?: number; at?: number } | null>(
+        "archiveRequest",
+        null,
+      );
       if (cur?.id === req.id && cur.state === "done") return "taken";
       if (cur?.id === req.id && cur.state === "failed") return "failed";
+      const last = cur?.id === req.id ? (cur.progressAt ?? cur.at ?? 0) : 0;
+      if (last && Date.now() - last > RESTART_ARCHIVE_STALL_MS) return "stalled";
       if (Date.now() >= end || this.rtState() !== "running") return "timeout";
       await new Promise((ok) => setTimeout(ok, 2000));
     }
@@ -1295,11 +1302,11 @@ export class ControlCore {
             ? "skipped"
             : await this.archiveBeforeRestart()
           : undefined;
-        if (archive === "failed" || archive === "timeout")
+        if (archive === "failed" || archive === "timeout" || archive === "stalled")
           return {
             status: 409,
             body: {
-              error: `pre-restart archive ${archive === "failed" ? "failed" : "not done in 180 s"}`,
+              error: `pre-restart archive ${archive === "failed" ? "failed" : archive === "stalled" ? "made no progress for 90 s" : "not done in 5 min"}`,
               redeploy,
               archive,
             },

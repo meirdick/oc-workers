@@ -53,7 +53,7 @@ export function createTool(ctx) {
 
 export default definePluginEntry({
   id: PLUGIN_ID,
-  name: "oc-host file storage",
+  name: "Cloudflare R2 via oc-workers",
   description: "Storage location r2 on the install's R2 bucket through the oc-host gate. No credential in the config.",
   register(api) {
     api.registerStorageProvider(storageProvider);

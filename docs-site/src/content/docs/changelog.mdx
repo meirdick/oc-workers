@@ -7,6 +7,17 @@ sidebar:
 
 Version 1.1.0 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
 
+## 1.1.1
+
+- One plugin card, "Cloudflare capabilities", for web search and web fetch through the gate, with the browser state in its status and Test. It replaces the "Cloudflare Web Search" card and the `firecrawl` entry. Run `ochost config render` on an older install.
+- The `cfgw` provider lists the whole Workers AI chat catalogue, so you can pick a model in the Control UI or with `/model`. `ochost model list --refresh` updates the list.
+- The owner console reads the config render version from the newest version that carries it, so a boot where OpenClaw's Doctor rewrote the config no longer shows "config render outdated".
+- The file storage plugin card is named "Cloudflare R2 via oc-workers"; OpenClaw's own "Cloudflare" plugin stays off.
+- The skill is `oc-workers-cloudflare`.
+- `ochost restart` after a deploy waits up to 5 minutes for the pre-restart archive and gives up after 90 s without progress.
+- `ochost destroy --delete-data` empties the bucket with an R2 job before it deletes it.
+- The main model's thinking level is `agents.defaults.thinkingDefault` (the Control UI's Thinking row), set to `low` only when absent; utility and compaction keep a per-model `off`. The UI row is the one place to change it.
+
 ## 1.1.0 {#v1-1-0}
 
 New:

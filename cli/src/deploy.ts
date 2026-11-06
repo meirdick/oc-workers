@@ -15,6 +15,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadCatalog } from "./catalog.ts";
 import {
   bucketOf,
   CONFIG_FILE,
@@ -554,7 +555,7 @@ export async function renderStep(
     await call("POST", "/ops/render-check", { renderVersion: RENDER_VERSION }).catch(() => undefined);
     const r = await renderIntoConfig(
       { get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) },
-      { onlyIfOlder: true, files },
+      { onlyIfOlder: true, files, catalog: loadCatalog(ctx.dir) },
     );
     if (r.action === "merged")
       ctx.ui.warn(

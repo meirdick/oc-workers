@@ -99,7 +99,7 @@ export function createPluginRetry(manifest, missing, deps) {
 
 /**
  * Bundled extensions an older install may hold an npm record for (firecrawl was an npm install before the image baked
- * it; image/Dockerfile puts it in /app/dist/extensions). cf-web-search is new, so no older record.
+ * it; image/Dockerfile puts it in /app/dist/extensions). cf-capabilities (and its former id cf-web-search) were never npm installs, so no older record.
  */
 export const RECORDED_BUNDLED_DIRS = ["/app/dist/extensions/firecrawl"];
 

@@ -26,6 +26,11 @@ http
           }),
         );
       }
+      if (u.endsWith("/browser/status")) {
+        log.push({ gate: u, body: raw });
+        res.setHeader("content-type", "application/json");
+        return res.end(JSON.stringify({ on: true, used: 40, limit: 3600, ok: true, retryAfterS: 100 }));
+      }
       if (u.endsWith("/search")) {
         log.push({ gate: u, body: raw });
         res.setHeader("content-type", "application/json");

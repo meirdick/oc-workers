@@ -89,6 +89,7 @@ export function managedKeys(plan = {}, base = {}) {
     // CLI bookkeeping (ochost.renderVersion, cli/src/render-config.ts): OpenClaw rejects unknown root keys.
     { path: "ochost", value: undefined },
     ...webFetchKeys(base),
+    ...capabilitiesKeys(base),
     ...(plan.sandbox === true ? sandboxKeys(base, plan.sandboxMode) : sandboxOffKeys(base)),
     ...originKeys(plan),
   ];
@@ -130,6 +131,51 @@ export function webFetchKeys(base = {}) {
   return typeof v === "string" && CAP_GATE_URL_RE.test(v)
     ? [{ path: FIRECRAWL_URL_PATH, value: CAP_PROXY_URL }]
     : [];
+}
+
+/** docs/11 §11: the entry of the plugin cf-capabilities, and of its former id (cf-web-search, search only). */
+const CAPS_ENTRY = "plugins.entries.cf-capabilities";
+const OLD_SEARCH_ENTRY = "plugins.entries.cf-web-search";
+const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+const mergeObj = (a, b) => {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = isObj(v) && isObj(out[k]) ? mergeObj(out[k], v) : v;
+  return out;
+};
+
+/**
+ * Compatibility for installs whose config still has plugins.entries.cf-web-search: the image has no plugin of that id
+ * any more, so its entry becomes the entry of cf-capabilities (an entry already there wins) and the old one is removed.
+ * The search provider id (cloudflare-web-search) did not change, so tools.web.search.provider keeps working.
+ */
+export function capabilitiesKeys(base = {}) {
+  const old = getPath(base, OLD_SEARCH_ENTRY);
+  if (old === undefined) return [];
+  const cur = getPath(base, CAPS_ENTRY);
+  return [
+    { path: CAPS_ENTRY, value: mergeObj(isObj(old) ? old : {}, isObj(cur) ? cur : {}) },
+    { path: OLD_SEARCH_ENTRY, value: undefined },
+  ];
+}
+
+/**
+ * Deprecation lines for a config version that still uses what cf-capabilities replaced. The boot logs them;
+ * `ochost config render` (render version 3) moves the version to cf-capabilities.
+ */
+export function deprecations(base = {}) {
+  const out = [];
+  if (getPath(base, OLD_SEARCH_ENTRY) !== undefined)
+    out.push(
+      `${OLD_SEARCH_ENTRY} is now ${CAPS_ENTRY}; rendered from the old entry. Run: ochost config render`,
+    );
+  if (
+    getPath(base, "tools.web.fetch.provider") === "firecrawl" ||
+    getPath(base, "plugins.entries.firecrawl") !== undefined
+  )
+    out.push(
+      "web_fetch through the firecrawl plugin is deprecated and the package goes in the next release; cf-capabilities replaces it. Run: ochost config render",
+    );
+  return out;
 }
 
 /**

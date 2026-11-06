@@ -3,8 +3,8 @@
 #   Found with: docker buildx imagetools inspect ghcr.io/openclaw/openclaw:2026.10.9-slim
 #   linux/amd64 manifest: sha256:deab8686a863c1d2255a43bb4677f4907b9af45aff340c062834d16756fd4ff8
 # Tools stage is built FROM the same digest, so libjemalloc matches the base glibc (2.36, Debian 12).
-# The runtime stage has COPY only, no RUN. Plugins: slack, sms in /opt/oc-plugins (load paths); firecrawl, cf-web-search in /app/dist/extensions (npm pack, tools stage)
-# and cf-web-search (image/plugins).
+# The runtime stage has COPY only, no RUN. Plugins: slack, sms in /opt/oc-plugins (load paths); firecrawl (deprecated, kept one release for old configs), cf-capabilities in /app/dist/extensions (npm pack, tools stage)
+# and cf-capabilities (image/plugins).
 # M1 adds: nft + its libs (owner-match rule, scope §1.1 [Z2.4], M0 T2 item 8), the dumpable shim
 # /opt/ocrt/nodump.so (T2 item 7; gcc only in the tools stage), ocio helpers. Litestream runs as
 # uid 1000 (binary root-owned, 0755).
@@ -72,7 +72,8 @@ RUN set -eux; mkdir -p /tmp/ch; cd /tmp/ch; \
   done; \
   test -d /opt/oc-plugins/slack/node_modules/@slack/bolt; test -d /opt/oc-plugins/sms/node_modules/zod; \
   rm -rf /tmp/ch
-COPY plugins/cf-web-search/ /opt/oc-bundled/cf-web-search/
+# docs/11 §11: web search, web fetch and browser status in one plugin (was cf-web-search). Plain ESM, no dependency.
+COPY plugins/cf-capabilities/ /opt/oc-bundled/cf-capabilities/
 # docs/11 §8: storage provider ochost-r2 and the file_store tool (R2 through the gate). Plain ESM, no dependency.
 COPY plugins/ochost-storage/ /opt/oc-bundled/ochost-storage/
 COPY ocrt/ /opt/ocrt/
@@ -97,7 +98,7 @@ COPY --from=tools /out/sbin/nft /usr/sbin/nft
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /opt/ocrt /opt/ocrt
 COPY --from=tools /opt/oc-plugins /opt/oc-plugins
-# firecrawl, cf-web-search and ochost-storage are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
+# firecrawl, cf-capabilities and ochost-storage are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
 COPY --from=tools /opt/oc-bundled/ /app/dist/extensions/
 COPY --from=tools /opt/oc-nm/ /app/node_modules/
 USER root

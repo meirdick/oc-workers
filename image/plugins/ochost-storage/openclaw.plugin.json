@@ -1,6 +1,6 @@
 {
   "id": "ochost-storage",
-  "name": "oc-host file storage",
+  "name": "Cloudflare R2 via oc-workers",
   "description": "Storage location r2 on the install's R2 bucket through the oc-host gate. No credential in the config.",
   "categories": ["infrastructure"],
   "activation": { "onStartup": false },

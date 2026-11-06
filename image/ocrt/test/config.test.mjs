@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   canon,
+  capabilitiesKeys,
+  deprecations,
   getPath,
   overlayEntries,
   proposalFrom,
@@ -234,6 +236,57 @@ describe("web fetch address (docs/11 §7)", () => {
   });
 });
 
+describe("cf-capabilities entry (docs/11 §11)", () => {
+  const OLD = "plugins.entries.cf-web-search";
+  const NEW = "plugins.entries.cf-capabilities";
+  const withEntries = (entries) => ({ ver: 1, doc: { plugins: { entries } } });
+
+  it("the old cf-web-search entry is rendered as cf-capabilities; the old one is gone from the file", () => {
+    const v = withEntries({
+      "cf-web-search": { enabled: true, config: { webSearch: { baseUrl: "http://15.0.0.3" } } },
+    });
+    const r = render(v, { mode: "prod" });
+    assert.deepEqual(getPath(r.doc, NEW), {
+      enabled: true,
+      config: { webSearch: { baseUrl: "http://15.0.0.3" } },
+    });
+    assert.equal(getPath(r.doc, OLD), undefined);
+    assert.notEqual(getPath(v.doc, OLD), undefined); // the version is not rewritten
+  });
+
+  it("an entry already under the new id wins key by key; the old one still goes", () => {
+    const v = withEntries({
+      "cf-web-search": { enabled: false, config: { webSearch: { baseUrl: "http://old" } } },
+      "cf-capabilities": { enabled: true, config: { webFetch: { baseUrl: "http://127.0.0.1:18791" } } },
+    });
+    const r = render(v, {});
+    assert.deepEqual(getPath(r.doc, NEW), {
+      enabled: true,
+      config: { webSearch: { baseUrl: "http://old" }, webFetch: { baseUrl: "http://127.0.0.1:18791" } },
+    });
+    assert.equal(getPath(r.doc, OLD), undefined);
+  });
+
+  it("no old entry, no change; a file with the new entry gives no proposal", () => {
+    const v = { ...withEntries({ "cf-capabilities": { enabled: true } }), schemaSha: "s" };
+    assert.deepEqual(capabilitiesKeys(v.doc), []);
+    const r = render(v, { mode: "prod" });
+    assert.equal(proposalFrom(r.doc, r, v), null);
+  });
+
+  it("deprecations name the old entry and firecrawl as the fetch provider; a current doc has none", () => {
+    const old = {
+      tools: { web: { fetch: { provider: "firecrawl" } } },
+      plugins: { entries: { "cf-web-search": {}, firecrawl: {} } },
+    };
+    const d = deprecations(old);
+    assert.equal(d.length, 2);
+    assert.match(d[0], /cf-web-search is now plugins\.entries\.cf-capabilities/);
+    assert.match(d[1], /firecrawl plugin is deprecated/);
+    assert.deepEqual(deprecations({ tools: { web: { fetch: { provider: "cloudflare-web-fetch" } } } }), []);
+  });
+});
+
 describe("ochost.renderVersion (cli/src/render-config.ts)", () => {
   it("never reaches openclaw.json (OpenClaw rejects the root key); a file without it gives no proposal", () => {
     const v = { ver: 1, schemaSha: "s", doc: { ochost: { renderVersion: 1 }, cron: { enabled: true } } };
@@ -270,7 +323,10 @@ describe("sandbox keys (docs/12)", () => {
     const r = render(v, { mode: "prod", sandbox: true });
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.mode"), "non-main");
     assert.equal(
-      getPath(render(v, { mode: "prod", sandbox: true, sandboxMode: "all" }).doc, "agents.defaults.sandbox.mode"),
+      getPath(
+        render(v, { mode: "prod", sandbox: true, sandboxMode: "all" }).doc,
+        "agents.defaults.sandbox.mode",
+      ),
       "all",
     );
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.backend"), "ochost");

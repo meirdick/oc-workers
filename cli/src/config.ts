@@ -10,6 +10,7 @@ import {
   SPECS,
   specOfFile,
 } from "../../worker/src/core/tunables.ts";
+import { type Catalog, type CatalogModel, SHIPPED_CATALOG } from "./catalog.ts";
 import { CliError } from "./ui.ts";
 
 export const CONFIG_FILE = "oc-host.jsonc";
@@ -512,13 +513,17 @@ export const MODEL_NAMES: Record<string, string> = {
  * merges the new render into the live config when the document's `ochost.renderVersion` is lower (render-config.ts).
  * ocsup removes the `ochost` key before it writes openclaw.json (OpenClaw rejects unknown root keys).
  */
-export const RENDER_VERSION = 2; // 2: storage location r2 + plugin ochost-storage (docs/11 §8); model roles and thinking
+// 2: storage location r2 + plugin ochost-storage (docs/11 §8); model roles and thinking
+// 3: one plugin cf-capabilities (web search, web fetch, browser; docs/11 §11) replaces cf-web-search and firecrawl;
+//    the whole Workers AI chat catalogue in the cfgw model list
+export const RENDER_VERSION = 3;
 
 /** CapGate address inside the container. The only gate uid 1000 reaches. */
 export const CAP_URL = "http://15.0.0.3";
 /**
  * ocsup's loopback forwarder to CapGate (image/ocrt/lib/cap-proxy.mjs). OpenClaw 2026.10.9 refuses a firecrawl
  * baseUrl that is a public IP, and 15.0.0.3 is one to it; loopback passes. Same port as CAP_PROXY_PORT there.
+ * The plugin cf-capabilities fetches through it too.
  */
 export const FETCH_URL = "http://127.0.0.1:18791";
 /**
@@ -560,16 +565,18 @@ export function renderCapabilities(files?: { bucket: string; inst: string }): Re
       profiles: { cf: { cdpUrl: `${CAP_URL.replace("http", "ws")}/browser/devtools` } },
     },
     tools: {
-      web: { fetch: { provider: "firecrawl" }, search: { provider: "cloudflare-web-search" } },
+      web: { fetch: { provider: "cloudflare-web-fetch" }, search: { provider: "cloudflare-web-search" } },
       media: { models: [{ provider: "openai", model: STT_MODEL, baseUrl: ai }] },
     },
     plugins: {
-      // firecrawl (web_fetch) and cf-web-search (web_search, image/plugins/cf-web-search) are bundled extensions of
-      // the image (/app/dist/extensions): no load path, no npm in Doctor, and no untrusted-plugin boot cost (docs/13).
-      // The plugin keeps only the host of baseUrl and posts to <host>/v2/scrape, so no path here.
+      // cf-capabilities (image/plugins/cf-capabilities) is a bundled extension of the image (/app/dist/extensions): no
+      // load path, no npm in Doctor, and no untrusted-plugin boot cost (docs/13). It holds web search (the gate),
+      // web fetch (the loopback relay, POST <host>/v2/scrape) and the browser status read. No API key.
       entries: {
-        firecrawl: { enabled: true, config: { webFetch: { baseUrl: FETCH_URL } } },
-        "cf-web-search": { enabled: true, config: { webSearch: { baseUrl: CAP_URL } } },
+        "cf-capabilities": {
+          enabled: true,
+          config: { webSearch: { baseUrl: CAP_URL }, webFetch: { baseUrl: FETCH_URL } },
+        },
       },
     },
     memory: {
@@ -618,7 +625,13 @@ const MODEL_FACTS: [RegExp, { efforts: string[]; vision: boolean }][] = [
   [/^@cf\/google\/gemma-4/, { efforts: ["none", "low", "medium", "high"], vision: true }],
   [/^@cf\/qwen\/qwen3\.8/, { efforts: [], vision: true }],
 ];
-const factsOf = (id: string) => MODEL_FACTS.find(([re]) => re.test(id))?.[1];
+/** Family facts win; else the catalogue entry (the install's snapshot when given, else the shipped one). */
+const factsOf = (id: string, cat?: CatalogModel) => {
+  const f = MODEL_FACTS.find(([re]) => re.test(id))?.[1];
+  if (f) return f;
+  const c = cat ?? SHIPPED_CATALOG.models.find((m) => m.id === id);
+  return c ? { efforts: c.efforts, vision: c.vision } : undefined;
+};
 /** True when the model accepts effort `none` (GLM-5.3 cannot switch reasoning off). */
 export const canDisableThinking = (id: string) => !!factsOf(id)?.efforts.includes("none");
 
@@ -627,9 +640,13 @@ export const canDisableThinking = (id: string) => !!factsOf(id)?.efforts.include
  * compat map, so OpenClaw sends reasoning_effort; vision models take images. Others (and anthropic/<model>) stay
  * reasoning false, text only.
  */
-export function modelEntry(id: string, contextWindow?: number | null): Record<string, unknown> {
+export function modelEntry(
+  id: string,
+  contextWindow?: number | null,
+  cat?: CatalogModel,
+): Record<string, unknown> {
   const provider = isProviderModel(id);
-  const f = provider ? undefined : factsOf(id);
+  const f = provider ? undefined : factsOf(id, cat);
   const reasoning = !!f?.efforts.length;
   return {
     id,
@@ -649,6 +666,26 @@ export function modelEntry(id: string, contextWindow?: number | null): Record<st
     contextWindow: Math.min(contextWindow || (provider ? 200_000 : 131_072), 262_144),
     maxTokens: 8192,
   };
+}
+
+/**
+ * Every catalogue model gets an entry in the cfgw model list (a current entry replaces an old one with the same id,
+ * order stays). Models with a planned deprecation date are left out. Role models are refreshed after this by
+ * renderModelRoles. Without a cfgw provider the doc is returned as is.
+ */
+export function renderCatalog(doc: Record<string, any>, catalog: Catalog): Record<string, any> {
+  if (!doc.models?.providers?.cfgw) return doc;
+  const out = structuredClone(doc);
+  const prov = out.models.providers.cfgw;
+  prov.models ??= [];
+  for (const m of catalog.models) {
+    if ((m as { deprecated?: string | null }).deprecated) continue;
+    const entry = modelEntry(m.id, m.contextWindow, m);
+    const at = prov.models.findIndex((e: { id?: string }) => e.id === m.id);
+    if (at >= 0) prov.models[at] = entry;
+    else prov.models.push(entry);
+  }
+  return out;
 }
 
 const idOfRef = (ref: unknown): string | undefined =>
@@ -685,12 +722,27 @@ export function renderModelRoles(doc: Record<string, any>): Record<string, any> 
     if (at >= 0) prov.models[at] = entry;
     else prov.models.push(entry);
     if (!entry.reasoning) continue;
+    // The main model's level is the global default (Settings > Models > Thinking in the Control UI, the owner's
+    // knob; a per-model param would override it: model-thinking-default-core.ts). Utility and compaction models
+    // get a per-model `off`, which the UI row does not cover.
     const quiet = id !== main && (id === utility || id === compaction);
+    if (!quiet) continue;
     dd.models ??= {};
     dd.models[`cfgw/${id}`] ??= {};
     const m = dd.models[`cfgw/${id}`];
     m.params ??= {};
-    m.params.thinking ??= quiet ? offOrLow(id) : "low";
+    m.params.thinking ??= offOrLow(id);
+  }
+  if (modelEntry(main).reasoning) dd.thinkingDefault ??= "low";
+  // Migration from render 2 and 3, which wrote a per-model `low` on the main model: that entry overrides the UI
+  // row, so it goes when it holds nothing else. An owner's other params stay.
+  const mainKey = `cfgw/${main}`;
+  const mm = dd.models?.[mainKey];
+  if (mm?.params?.thinking === "low") {
+    delete mm.params.thinking;
+    if (Object.keys(mm.params).length === 0) delete mm.params;
+    if (Object.keys(mm).length === 0) delete dd.models[mainKey];
+    if (Object.keys(dd.models).length === 0) delete dd.models;
   }
   return out;
 }
@@ -703,26 +755,32 @@ export function renderModelRoles(doc: Record<string, any>): Record<string, any> 
 export function renderOpenclawDoc(
   o: { model: string } | null,
   files?: { bucket: string; inst: string },
+  catalog: Catalog = SHIPPED_CATALOG,
 ): Record<string, unknown> {
   const caps: Record<string, any> = {
     ...renderCapabilities(files),
     ochost: { renderVersion: RENDER_VERSION },
   };
   if (!o) return caps;
-  return renderModelRoles({
-    ...caps,
-    agents: { defaults: { ...caps.agents.defaults, model: { primary: `cfgw/${o.model}` } } },
-    models: {
-      providers: {
-        ...caps.models.providers,
-        // Every model call goes to the CapGate, which runs it on the Worker's AI binding. No token, no header.
-        cfgw: {
-          baseUrl: `${CAP_URL}/ai/v1`,
-          api: "openai-completions",
-          apiKey: GATE_KEY,
-          models: [modelEntry(o.model)],
+  return renderModelRoles(
+    renderCatalog(
+      {
+        ...caps,
+        agents: { defaults: { ...caps.agents.defaults, model: { primary: `cfgw/${o.model}` } } },
+        models: {
+          providers: {
+            ...caps.models.providers,
+            // Every model call goes to the CapGate, which runs it on the Worker's AI binding. No token, no header.
+            cfgw: {
+              baseUrl: `${CAP_URL}/ai/v1`,
+              api: "openai-completions",
+              apiKey: GATE_KEY,
+              models: [modelEntry(o.model)],
+            },
+          },
         },
       },
-    },
-  });
+      catalog,
+    ),
+  );
 }

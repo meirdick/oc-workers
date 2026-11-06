@@ -1,7 +1,9 @@
 // `ochost model list` and `ochost model set` (docs/10-cli-spec.md §1.2, §3.4, D13).
 // list: Workers AI text-generation models from the API, filtered to function calling. Needs Workers AI Read.
 // set: new OpenClaw config version with agents.defaults.model.primary and the cfgw provider entry.
+
 import { type AigDeps, cfApi, DEFAULT_MODEL, errCode } from "./ai-gateway.ts";
+import { type Catalog, type CatalogModel, SHIPPED_CATALOG } from "./catalog.ts";
 import { canDisableThinking, isProviderModel, modelEntry, renderModelRoles } from "./config.ts";
 import { CliError } from "./ui.ts";
 
@@ -38,7 +40,7 @@ export interface ModelInfo {
   primary: boolean;
 }
 
-interface RawModel {
+export interface RawModel {
   name: string;
   created_at?: string;
   planned_deprecation_date?: string | null;
@@ -62,11 +64,11 @@ export function toInfo(m: RawModel, primary: string): ModelInfo {
   };
 }
 
-/** GET /ai/models/search?task=Text Generation, all pages. `all` keeps models without function calling. */
-export async function listModels(
-  p: { acct: string; token: string; primary?: string; all?: boolean },
+/** GET /ai/models/search?task=Text Generation, all pages. */
+async function fetchRaw(
+  p: { acct: string; token: string },
   d: Pick<AigDeps, "fetch" | "sleep">,
-): Promise<ModelInfo[]> {
+): Promise<RawModel[]> {
   const out: RawModel[] = [];
   for (let page = 1; page <= 10; page++) {
     const r = await cfApi<RawModel[]>(
@@ -84,6 +86,15 @@ export async function listModels(
     const ti = r.json.result_info;
     if (!ti?.total_pages || page >= ti.total_pages || (r.json.result ?? []).length < 100) break;
   }
+  return out;
+}
+
+/** `all` keeps models without function calling. */
+export async function listModels(
+  p: { acct: string; token: string; primary?: string; all?: boolean },
+  d: Pick<AigDeps, "fetch" | "sleep">,
+): Promise<ModelInfo[]> {
+  const out = await fetchRaw(p, d);
   const primary = p.primary ?? DEFAULT_MODEL;
   return out
     .map((m) => toInfo(m, primary))
@@ -94,6 +105,49 @@ export async function listModels(
         Number(b.shortlist) - Number(a.shortlist) ||
         b.createdAt.localeCompare(a.createdAt),
     );
+}
+
+/** USD per M tokens from the catalogue `price` property ([{unit: "per M input tokens", price}]). */
+const priceOf = (m: RawModel, unit: "input" | "output"): number | null => {
+  const v = prop(m, "price");
+  const hit = Array.isArray(v)
+    ? v.find((x) => typeof x?.unit === "string" && x.unit.includes(`M ${unit}`))
+    : undefined;
+  const n = Number(hit?.price);
+  return Number.isFinite(n) && hit ? n : null;
+};
+
+/**
+ * Pure: the catalogue snapshot from the raw API list: function calling, no planned deprecation. The API list has no
+ * effort enum and no image flag; those two come from the shipped snapshot for a known id (a new id: none, text only).
+ */
+export function toCatalog(raw: RawModel[], date: string): Catalog {
+  const known = new Map(SHIPPED_CATALOG.models.map((m) => [m.id, m]));
+  const models: CatalogModel[] = raw
+    .map((m) => ({ m, i: toInfo(m, "") }))
+    .filter(({ i }) => i.tools && !i.deprecated)
+    .map(({ m, i }): CatalogModel => {
+      const k = known.get(m.name);
+      return {
+        id: m.name,
+        contextWindow: i.contextWindow ?? k?.contextWindow ?? 131_072,
+        supportsReasoning: i.reasoning || !!k?.supportsReasoning,
+        efforts: k?.efforts ?? [],
+        vision: k?.vision ?? String(prop(m, "vision")) === "true",
+        priceInPerM: priceOf(m, "input") ?? k?.priceInPerM ?? null,
+        priceOutPerM: priceOf(m, "output") ?? k?.priceOutPerM ?? null,
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return { date, source: "Workers AI API /ai/models/search (ochost model list --refresh)", models };
+}
+
+/** `ochost model list --refresh`: the live catalogue as a snapshot. */
+export async function fetchCatalog(
+  p: { acct: string; token: string; date: string },
+  d: Pick<AigDeps, "fetch" | "sleep">,
+): Promise<Catalog> {
+  return toCatalog(await fetchRaw(p, d), p.date);
 }
 
 /** Table for the terminal. `*` = primary, `s` = D13 shortlist. */
@@ -181,7 +235,7 @@ export function modelRoles(doc: Record<string, any>): { role: ModelRole; model: 
     const thinking =
       role === "compaction"
         ? (dd.compaction?.thinkingLevel ?? "")
-        : String(dd.models?.[ref]?.params?.thinking ?? "");
+        : String(dd.models?.[ref]?.params?.thinking ?? (role === "main" ? (dd.thinkingDefault ?? "") : ""));
     return {
       role,
       model: ref.startsWith(`${PROVIDER_ID}/`) ? ref.slice(PROVIDER_ID.length + 1) : ref,

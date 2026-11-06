@@ -16,13 +16,17 @@ The capability gate answers at `http://15.0.0.3`, port 80. The agent user (uid 1
 | Capability | Through the gate | Status |
 |---|---|---|
 | Browser | Cloudflare Browser Run, over CDP at `/browser/devtools` | Works. playwright-core and puppeteer-core connected and read a page title. |
-| Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The `firecrawl` plugin is in the image. It reaches the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first. It calls the gate only for pages that the plain fetch cannot read. |
-| Web search | Cloudflare Web Search API, through `/search` | Experimental. A plugin in the image adds the provider "Cloudflare Web Search" to Settings > Search. It needs no API key. |
+| Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The provider `cloudflare-web-fetch` of the `cf-capabilities` plugin posts to the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first. It calls the gate only for pages that the plain fetch cannot read. |
+| Web search | Cloudflare Web Search API, through `/search` | Experimental. The `cf-capabilities` plugin adds the provider "Cloudflare Web Search" to Settings > Search. It needs no API key. |
 | Embeddings | `@cf/baai/bge-m3` | Works through the gate (1024 dimensions). |
 | Speech out | `@cf/deepgram/aura-2-en` | Works through the gate. The reply is MP3. |
 | Transcription | `@cf/openai/whisper-large-v3-turbo` | Works through the gate. |
 | Image | `@cf/black-forest-labs/flux-1-schnell` | Works through the gate. |
 | Cloudflare docs | MCP server `https://docs.mcp.cloudflare.com/mcp`, no auth | Configured. |
+
+### One plugin for web search, web fetch and the browser
+
+The plugin `cf-capabilities` ("Cloudflare capabilities") is in the image. Its card in Settings lists Web search, Web fetch and Browser. It needs no API key. OpenClaw has no plugin API for the built-in browser tool, so the browser stays a config key (`browser.profiles.cf`). The plugin only reads its state from the gate: `openclaw cf-capabilities status` prints `Browser: on, 40 s of 3600 s today`. `openclaw cf-capabilities test` runs one search, one fetch of `https://example.com` and one browser status read. Older installs: run `ochost config render`.
 
 "Works through the gate" means a test call from the agent user returned a valid answer. We did not run a full agent turn for each tool.
 

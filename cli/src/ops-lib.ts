@@ -501,10 +501,11 @@ export interface OpsClient {
 }
 
 /**
- * POST /ops/restart after a deploy waits up to 180 s for a pre-restart archive (worker ctl/control.ts
- * RESTART_ARCHIVE_WAIT_MS), then stops and starts. The call gets that much time and a margin.
+ * POST /ops/restart after a deploy waits up to 5 min for a pre-restart archive (worker ctl/control.ts
+ * RESTART_ARCHIVE_WAIT_MS; a request with no progress for 90 s is given up), then stops and starts. The call gets
+ * that much time and a margin.
  */
-export const RESTART_CALL_MS = 240_000;
+export const RESTART_CALL_MS = 360_000;
 
 /** Tries per GET in the ops client when the network fails (see transientNetError). */
 export const OPS_GET_TRIES = 3;

@@ -62,7 +62,7 @@ import { exportWakeAllow } from "./wake-allow.mjs";
 import { createWarmup, warmupMode } from "./warmup.mjs";
 import { workspaceRestore, workspaceStep } from "./workspace.mjs";
 
-const SKILL_SRC = "/opt/ocrt/skills/oc-host-cloudflare/SKILL.md";
+const SKILL_SRC = "/opt/ocrt/skills/oc-workers-cloudflare/SKILL.md";
 
 const RELOAD_LINE = /config change detected; evaluating reload/;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1598,7 +1598,7 @@ export async function main() {
         setPhase("gateway-start");
         const r = await doReap("pre-gateway");
         if (!r.ok) return { exit: r.reason };
-        // D14: the oc-host-cloudflare skill (what the gate gives the agent). Best effort: a failure never blocks boot.
+        // D14: the oc-workers-cloudflare skill (what the gate gives the agent). Best effort: a failure never blocks boot.
         {
           const k = await runOcio(
             "skill-install",
@@ -1606,7 +1606,8 @@ export async function main() {
               JSON.stringify({
                 src: SKILL_SRC,
                 workspace: path.join(C.state, "workspace"),
-                name: "oc-host-cloudflare",
+                name: "oc-workers-cloudflare",
+                remove: ["oc-host-cloudflare"],
               }),
             ],
             { cg: CG.io, timeoutMs: 10_000 },
