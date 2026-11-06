@@ -18,7 +18,8 @@ describe("config", () => {
     expect(workerSettings(c, "https://x").sandbox).toBe("off");
     expect(workerSettings({ ...c, sandbox: undefined }, "https://x").sandbox).toBe("off");
     expect(workerSettings({ ...c, sandbox: "on" }, "https://x").sandbox).toBe("on");
-    expect(() => validateConfig({ ...c, sandbox: "yes" })).toThrow(/sandbox must be on or off/);
+    expect(workerSettings({ ...c, sandbox: "all" }, "https://x").sandbox).toBe("all");
+    expect(() => validateConfig({ ...c, sandbox: "yes" })).toThrow(/sandbox must be on, all or off/);
   });
 
   it("setSandboxKey flips the key in place, keeps comments, inserts when absent", () => {

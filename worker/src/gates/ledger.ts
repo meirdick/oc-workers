@@ -51,6 +51,8 @@ export const GATE_DDL: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS gate_hbseq (gen INTEGER PRIMARY KEY, seq INTEGER NOT NULL, at INTEGER NOT NULL)`,
   // CapGate daily budgets (gates/caps.ts).
   ...CAP_DDL,
+  // docs/11 §8 file storage: bytes per object under f/<inst>/ (the per-install cap sums them).
+  `CREATE TABLE IF NOT EXISTS files_obj (key TEXT PRIMARY KEY, bytes INTEGER NOT NULL, at INTEGER NOT NULL)`,
 ];
 
 /** Columns added to spec §3.1 tables (expand-only migration; ALTER only when missing). */
@@ -170,6 +172,36 @@ export interface ReplicaPreOut {
   /** Soak test fault: ReplicaGate waits this long before it serves a write (Litestream throttle). */
   slowMs?: number;
 }
+/** docs/11 §8: settings files.capGb and files.maxObjectMb in bytes (decimal). */
+export interface FilesLimits {
+  cap: number;
+  objectMax: number;
+}
+export const FILES_DEFAULT: FilesLimits = Object.freeze({ cap: 5e9, objectMax: 100e6 });
+export const FILES_ALERT_AT = 0.8;
+export interface FilesPreIn {
+  epoch: number;
+  gen: number;
+  op: string;
+  key?: string | null;
+  /** PutObject: the declared body length. */
+  bytes?: number;
+}
+export interface FilesPreOut {
+  current: boolean;
+  why?: string;
+  iid: string | null;
+  mode?: string | null;
+  /** The cap refused this write: S3 status, code, message. */
+  refuse?: { status: number; code: string; message: string };
+}
+export interface FilesView {
+  used: number;
+  limit: number;
+  objects: number;
+  objectMax: number;
+  pct: number;
+}
 export interface ReplicaPostIn {
   gen: number;
   op: string;
@@ -202,6 +234,8 @@ export class GateLedger {
       sandbox?: () => boolean;
       /** Settings storage.pruneAtMb and refuseAtMb in bytes; STORAGE when absent. */
       storage?: () => StorageLimits;
+      /** Settings files.capGb and files.maxObjectMb in bytes; FILES_DEFAULT when absent. */
+      files?: () => FilesLimits;
     },
   ) {}
 
@@ -368,6 +402,86 @@ export class GateLedger {
     const v = this.caps.setLimits(limits);
     this.ring("caps", "limits", limits);
     return v;
+  }
+
+  // ---------- file storage (docs/11 §8; gates/files.ts) ----------
+
+  private get filesLimits(): FilesLimits {
+    return this.o.files ? this.o.files() : FILES_DEFAULT;
+  }
+  private filesUsed(): { used: number; objects: number } {
+    const r = this.one<{ b: number | null; n: number }>(
+      "SELECT SUM(bytes) AS b, COUNT(*) AS n FROM files_obj",
+    );
+    return { used: Number(r?.b ?? 0), objects: Number(r?.n ?? 0) };
+  }
+  /** /ops/caps and the panel: bytes stored under f/<inst>/ against the cap. */
+  filesView(): FilesView {
+    const { used, objects } = this.filesUsed();
+    const { cap, objectMax } = this.filesLimits;
+    return { used, limit: cap, objects, objectMax, pct: cap > 0 ? used / cap : 1 };
+  }
+  /**
+   * Before a files request (uncached, after the signature check): current gen and bound iid like replicaPre, and
+   * for a PutObject the per-object cap and the per-install cap (an overwrite counts the new size only). A refusal
+   * at the cap raises `storage-cap-100`.
+   */
+  filesPre(a: FilesPreIn): FilesPreOut {
+    return this.tx(() => {
+      const cur = this.current(a.epoch, a.gen);
+      const out: FilesPreOut = { current: cur.current, why: cur.why, iid: cur.iid, mode: cur.mode };
+      if (!cur.current || a.op !== "PutObject" || !a.key) return out;
+      const { cap, objectMax } = this.filesLimits;
+      const bytes = a.bytes ?? 0;
+      if (bytes > objectMax) {
+        out.refuse = {
+          status: 400,
+          code: "EntityTooLarge",
+          message: `object ${bytes} bytes is above files.maxObjectMb (${objectMax} bytes)`,
+        };
+        return out;
+      }
+      const old = this.one<{ bytes: number }>("SELECT bytes FROM files_obj WHERE key = ?", a.key)?.bytes ?? 0;
+      const used = this.filesUsed().used;
+      if (used - old + bytes > cap) {
+        this.alert("storage-cap-100", "high", `files ${used}/${cap} bytes; refused ${bytes} bytes`);
+        out.refuse = {
+          status: 403,
+          code: "StorageCapExceeded",
+          message: `files.capGb reached: ${used} of ${cap} bytes used; this object needs ${bytes}`,
+        };
+      }
+      return out;
+    });
+  }
+  /** After R2 answered a files write: record or drop the object; the write that crosses 80 % or 100 % alerts. */
+  filesPost(a: { op: string; key: string; status: number; bytes?: number }): FilesView {
+    return this.tx(() => {
+      const before = this.filesView();
+      if (a.status >= 200 && a.status < 300) {
+        if (a.op === "PutObject")
+          this.run(
+            `INSERT INTO files_obj (key, bytes, at) VALUES (?, ?, ?)
+             ON CONFLICT(key) DO UPDATE SET bytes = excluded.bytes, at = excluded.at`,
+            a.key,
+            a.bytes ?? 0,
+            this.now,
+          );
+        else if (a.op === "DeleteObject") this.run("DELETE FROM files_obj WHERE key = ?", a.key);
+      }
+      const after = this.filesView();
+      const line = `files ${after.used}/${after.limit} bytes (${Math.round(after.pct * 100)}%)`;
+      if (before.pct < 1 && after.pct >= 1)
+        this.alert("storage-cap-100", "high", `${line}; writes are refused`);
+      else if (before.pct < FILES_ALERT_AT && after.pct >= FILES_ALERT_AT)
+        this.alert("storage-cap-80", "warn", line);
+      return after;
+    });
+  }
+  /** `ochost destroy --delete-data` (POST /ops/files/purge): the objects are gone from R2. */
+  filesForget(keys: string[] | null): void {
+    if (keys === null) this.run("DELETE FROM files_obj");
+    else for (const k of keys) this.run("DELETE FROM files_obj WHERE key = ?", k);
   }
 
   // ---------- gens: current check, hello, boot ----------
@@ -1890,6 +2004,8 @@ export const GATE_CALLS = [
   "capTake",
   "capAdd",
   "sbxAdmit",
+  "filesPre",
+  "filesPost",
 ] as const;
 export type GateCall = (typeof GATE_CALLS)[number];
 type Fn = (...a: any[]) => any;

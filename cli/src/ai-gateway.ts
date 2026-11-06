@@ -14,7 +14,7 @@ export const USD_PER_1K_NEURONS = 0.011;
 export { DEFAULT_GATEWAY, NO_GATEWAY };
 
 import { DEFAULT_GATEWAY, NO_GATEWAY } from "./config.ts";
-import { CliError } from "./ui.ts";
+import { CliError, tokenFromText } from "./ui.ts";
 
 export type Fetch = typeof fetch;
 
@@ -125,7 +125,7 @@ export async function resolveAiToken(
     }
     if ((f.mode & 0o077) !== 0)
       d.log(`WARN: ${o.tokenFile} is readable by others — fix: chmod 600 ${o.tokenFile}`);
-    token = f.text.trim();
+    token = tokenFromText(f.text, ["OC_CF_AI_TOKEN", "CF_AI_TOKEN"]);
   } else if (o.useEnv && d.env.OC_CF_AI_TOKEN?.trim()) {
     token = d.env.OC_CF_AI_TOKEN.trim();
     source = "env";
@@ -384,6 +384,8 @@ export async function hop(
     timeoutMs?: number;
     /** Send cf-aig-skip-cache on a direct gateway call (bench: every call must reach the model). */
     skipCache?: boolean;
+    /** reasoning_effort for the call (bench --role). Absent: the model's own default. */
+    reasoningEffort?: string;
   },
 ): Promise<HopResult> {
   const now = d.now ?? Date.now;
@@ -394,6 +396,7 @@ export async function hop(
     max_tokens: p.maxTokens ?? 2048,
   };
   if (p.tools?.length) body.tools = p.tools;
+  if (p.reasoningEffort) body.reasoning_effort = p.reasoningEffort;
   const empty = {
     content: "",
     toolCalls: [],

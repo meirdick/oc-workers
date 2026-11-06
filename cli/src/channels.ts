@@ -12,7 +12,7 @@
 import { randomBytes } from "node:crypto";
 import type { AigDeps } from "./ai-gateway.ts";
 import { currentConfig, type OpsClient, proposeConfig } from "./model.ts";
-import { CliError } from "./ui.ts";
+import { CliError, tokenFromText } from "./ui.ts";
 
 export const TELEGRAM_API = "https://api.telegram.org";
 export const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{35}$/;
@@ -102,7 +102,7 @@ async function resolveBotToken(o: AddTelegramOpts, d: ChannelDeps): Promise<stri
     });
     if ((f.mode & 0o077) !== 0)
       d.log(`WARN: ${o.tokenFile} is readable by others — fix: chmod 600 ${o.tokenFile}`);
-    t = f.text.trim();
+    t = tokenFromText(f.text, ["TELEGRAM_BOT_TOKEN"]);
   } else if (d.env.TELEGRAM_BOT_TOKEN?.trim()) t = d.env.TELEGRAM_BOT_TOKEN.trim();
   else if (o.nonInteractive || !d.askHidden)
     throw new CliError("no Telegram bot token", "rerun with --token-file <f> (token from @BotFather)", 3);
@@ -304,7 +304,7 @@ export async function addTelegram(o: AddTelegramOpts, d: ChannelDeps): Promise<A
   if (!o.waitPair) {
     d.log(`Webhook URL: ${res.webhook.url}`);
     d.log(
-      `Telegram bot @${me.username} is on. DM it; the request stays open 24 h: ochost pairing list, then ochost pairing approve telegram <code>`,
+      "DM the bot. With --telegram-owner set at init, your first message is approved; else the pairing request stays open 24 h: ochost pairing list, then ochost pairing approve telegram <code>",
     );
     return res;
   }

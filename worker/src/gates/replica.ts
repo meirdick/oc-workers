@@ -2,7 +2,15 @@
 // the R2 binding. Path style /<bucket>/<key>. Order: hello → SigV4 parse (presigned 403, key form, gen 409) →
 // date skew → payload mode → current gen + bound iid (Control DO, uncached; other iid 409) → signature with
 // the derived per-boot key (403) → bucket → replicaAccess() → ceiling, reseed guard → R2 → record → answer.
-import { REPLICA_HELLO_PATH, replicaAccess, s3OpOf } from "../core/contract";
+import {
+  filesAccess,
+  filesPrefix,
+  isFilesTarget,
+  REPLICA_HELLO_PATH,
+  replicaAccess,
+  s3OpOf,
+} from "../core/contract";
+import type { BucketLike } from "../core/types";
 import { awsChunkedDecoder } from "./chunked";
 import { helloAllowed } from "./control";
 import { HELLO_MAC_HEADER, replicaHelloProof, replicaKey, sha256Hex } from "./crypto";
@@ -24,6 +32,8 @@ import type { GateDeps } from "./types";
 export const SKEW_MS = 15 * 60_000;
 /** Host values tried for the signed `host` header (spec §18.2 guess, L-2): as received, then the proxy's. */
 export const PROXY_HOST = "127.0.0.1:18790";
+/** The ochost-storage plugin signs for ocsup's files forwarder (image/ocrt/lib/cap-proxy.mjs FILES_PROXY_PORT). */
+export const FILES_PROXY_HOST = "127.0.0.1:18792";
 const KEY_RE = /^ocrt-g(\d+)-([0-9a-f]{32})$/;
 
 interface Ctx {
@@ -82,7 +92,7 @@ async function checkSig(req: Request, url: URL, h: Record<string, string>, k: Ke
     headers: h,
     auth: k.auth,
     secret,
-    hostCandidates: [url.host, PROXY_HOST],
+    hostCandidates: [url.host, PROXY_HOST, FILES_PROXY_HOST],
   });
   if (v.ok) return null;
   const now = d.now();
@@ -136,6 +146,8 @@ export async function handleReplicaGate(req: Request, d: GateDeps): Promise<Resp
       `${req.method} ${url.search} is not in the S3 subset`,
       url.pathname,
     );
+  if (isFilesTarget(op, key || null, url.searchParams.get("prefix")))
+    return handleFiles(req, url, h, a.mode, kIid, op, bucketName, key, d);
   const acc = replicaAccess(P, op, key || null, url.searchParams.get("prefix"));
   if (!acc.allow && acc.status === 501) return s3Error(501, "NotImplemented", op, url.pathname);
   const write = acc.scope === "write";
@@ -359,6 +371,122 @@ async function serve(
     }
   }
   return refused(c, s3Error(501, "NotImplemented", op, key));
+}
+
+// ---------- file storage: f/<inst>/ (docs/11 §8) ----------
+
+/** Declared body length of a PUT (decoded length for aws-chunked). NaN when absent. */
+function putLength(h: Record<string, string>, mode: Mode): number {
+  const chunked = /aws-chunked/i.test(h["content-encoding"] ?? "") || mode === "streaming-unsigned-trailer";
+  const v = chunked ? h["x-amz-decoded-content-length"] : h["content-length"];
+  return v !== undefined && /^\d+$/.test(v) ? Number(v) : Number.NaN;
+}
+
+/**
+ * The files key space of the ReplicaGate. Same key and signature as the replica, its own rule (filesAccess):
+ * prefix f/<inst>/ for every gen, Put, Get, Head, Delete and ListObjectsV2 only, the caps in the Control DO
+ * (filesPre), usage recorded after R2 (filesPost). No replica counters, no LTX record, no delete cover check.
+ */
+async function handleFiles(
+  req: Request,
+  url: URL,
+  h: Record<string, string>,
+  mode: Mode,
+  kIid: string,
+  op: string,
+  bucketName: string,
+  key: string,
+  d: GateDeps,
+): Promise<Response> {
+  const P = d.props;
+  const res = key || url.pathname;
+  const acc = filesAccess(P, op, key || null, url.searchParams.get("prefix"));
+  if (!acc.allow && acc.status === 501)
+    return s3Error(
+      501,
+      "NotImplemented",
+      `${op} is not in the files subset (no multipart, no batch delete)`,
+      res,
+    );
+  if (op === "PutObject" && h["x-amz-copy-source"])
+    return s3Error(501, "NotImplemented", "copy is not supported", res);
+  const len = op === "PutObject" ? putLength(h, mode) : undefined;
+  if (op === "PutObject" && !Number.isFinite(len))
+    return s3Error(411, "MissingContentLength", "files PUT needs a content length", res);
+  let pre: Awaited<ReturnType<GateDeps["ctl"]["filesPre"]>>;
+  try {
+    pre = await d.ctl.filesPre({ epoch: P.epoch, gen: P.gen, op, key: key || null, bytes: len });
+  } catch {
+    return s3Error(503, "ServiceUnavailable", "ctl-unavailable", res);
+  }
+  if (!pre.current) return s3Error(409, "Stale", `gen ${P.gen} is not current (${pre.why ?? "?"})`, res);
+  if (!pre.iid) return s3Error(403, "AccessDenied", "no iid bound for this gen yet", res);
+  if (pre.iid !== kIid) return s3Error(409, "Stale", "key of another instance id", res);
+  if (bucketName !== d.bucketName) return s3Error(404, "NoSuchBucket", `bucket ${bucketName}`, res);
+  if (!acc.allow) return s3Error(403, "AccessDenied", `access: ${acc.why}`, res);
+  if (acc.scope === "write" && pre.mode && pre.mode !== "prod")
+    return s3Error(403, "AccessDenied", `access: mode ${pre.mode}`, res);
+  if (pre.refuse) return s3Error(pre.refuse.status, pre.refuse.code, pre.refuse.message, res);
+  const b = d.bucket;
+  try {
+    if (op === "PutObject") {
+      // OpenClaw's storage contract: never overwrite. guess: R2 takes If-None-Match: * as Headers in onlyIf; the
+      // head first answers 412 in the common case either way (a race between two writers of one key remains).
+      const createOnly = h["if-none-match"] === "*";
+      if (createOnly && (await b.head(key)))
+        return s3Error(412, "PreconditionFailed", "object exists (If-None-Match: *)", res);
+      const body = await readBody(req, h, mode);
+      if (body === "mismatch")
+        return s3Error(400, "XAmzContentSHA256Mismatch", "payload hash does not match", res);
+      if (body.bytes !== len)
+        return s3Error(400, "IncompleteBody", "body length differs from content length", res);
+      const o = await b.put(
+        key,
+        body.value,
+        createOnly ? { onlyIf: new Headers({ "if-none-match": "*" }) } : undefined,
+      );
+      if (!o) return s3Error(412, "PreconditionFailed", "object exists (If-None-Match: *)", res);
+      await d.ctl.filesPost({ op, key, status: 200, bytes: body.bytes }).catch(() => undefined);
+      return new Response(null, { status: 200, headers: { etag: etagQ(o.etag) } });
+    }
+    if (op === "DeleteObject") {
+      await b.delete(key);
+      await d.ctl.filesPost({ op, key, status: 204 }).catch(() => undefined);
+      return new Response(null, { status: 204 });
+    }
+    return (await serve(req, url, h, mode, { d, op, key })).res;
+  } catch (e) {
+    return s3Error(500, "InternalError", e instanceof Error ? e.message : String(e), res);
+  }
+}
+
+/** Probe key of `ochost doctor` row "file storage" (Control DO, filesProbe). */
+export const FILES_PROBE = ".ochost-probe";
+
+/**
+ * Doctor row "file storage": PUT, GET and DELETE of a 1-byte object under f/<inst>/ on the install's bucket. Runs
+ * in the Control DO with its R2 binding (the files code path without SigV4: the probe holds no per-gen key, and an
+ * asleep install has no current gen). Never throws.
+ */
+export async function filesProbe(
+  b: Pick<BucketLike, "put" | "get" | "delete" | "head">,
+  inst: string,
+  now: () => number = Date.now,
+): Promise<{ ok: boolean; ms: number; error?: string }> {
+  const t0 = now();
+  const key = `${filesPrefix(inst)}${FILES_PROBE}`;
+  const done = (ok: boolean, error?: string) => ({ ok, ms: now() - t0, ...(error ? { error } : {}) });
+  try {
+    await b.put(key, "1");
+    const o = await b.get(key);
+    const got = o ? await o.text() : null;
+    await b.delete(key);
+    if (got !== "1") return done(false, got === null ? "GET found no object" : "GET returned other bytes");
+    if (await b.head(key)) return done(false, "DELETE left the object");
+    return done(true);
+  } catch (e) {
+    return done(false, String((e as Error)?.message ?? e).slice(0, 160));
+  }
 }
 
 function objHeaders(o: R2Object, len: number): Record<string, string> {

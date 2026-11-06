@@ -1,19 +1,19 @@
-// ochost sandbox [status] | on | off | sleep (docs/12 §7). on|off writes oc-host.jsonc `sandbox`; the Worker reads it
+// ochost sandbox [status] | on [--all] | off | sleep (docs/12 §7). on|off writes oc-host.jsonc `sandbox`; the Worker reads it
 // from OC_SETTINGS (like sleep set, gap W8), and ocsup renders the OpenClaw sandbox keys at the next gateway boot.
 // status: GET /ops/sandbox (never wakes the sandbox). sleep: POST /ops/sandbox/sleep (back up, then stop).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CliError, EXIT, type FlagSpec, fmtAgo, kv, type OpsCtx, opsClient, usage } from "./ops-lib.ts";
 
-export const sandboxFlags: FlagSpec = {};
+export const sandboxFlags: FlagSpec = { all: { type: "boolean" } };
 
-/** Set the top-level `"sandbox": "on|off"` in the JSONC text, keeping comments; insert it after `{` when absent. */
-export function setSandboxKey(text: string, v: "on" | "off"): string {
-  const re = /("sandbox"\s*:\s*)"(?:on|off)"/;
+/** Set the top-level `"sandbox": "on|all|off"` in the JSONC text, keeping comments; insert it after `{` when absent. */
+export function setSandboxKey(text: string, v: "on" | "all" | "off"): string {
+  const re = /("sandbox"\s*:\s*)"(?:on|all|off)"/;
   if (re.test(text)) return text.replace(re, `$1"${v}"`);
   const i = text.indexOf("{");
   if (i < 0) throw new CliError("oc-host.jsonc is not an object", "run ochost config pull, or ochost init");
-  return `${text.slice(0, i + 1)}\n  "sandbox": "${v}",                       // on | off: agent exec and file tools in a Cloudflare sandbox (docs/12)${text.slice(i + 1)}`;
+  return `${text.slice(0, i + 1)}\n  "sandbox": "${v}",                       // off | on (every chat but your main one) | all: exec and file tools in a Cloudflare sandbox${text.slice(i + 1)}`;
 }
 
 interface Use {
@@ -24,7 +24,8 @@ interface Use {
 
 export async function sandbox(ctx: OpsCtx): Promise<number> {
   const sub = ctx.args.positionals[0] ?? "status";
-  if (sub === "on" || sub === "off") return sandboxSet(ctx, sub);
+  if (sub === "on" || sub === "off")
+    return sandboxSet(ctx, sub === "on" && ctx.args.flags.all === true ? "all" : sub);
   const ops = opsClient(ctx);
   if (sub === "sleep") {
     const r = (await ops.call("POST", "/ops/sandbox/sleep")).body as { slept?: boolean; why?: string };
@@ -56,7 +57,7 @@ export async function sandbox(ctx: OpsCtx): Promise<number> {
   return EXIT.ok;
 }
 
-function sandboxSet(ctx: OpsCtx, v: "on" | "off"): number {
+function sandboxSet(ctx: OpsCtx, v: "on" | "all" | "off"): number {
   const path = join(ctx.dir, "oc-host.jsonc");
   let text: string;
   try {

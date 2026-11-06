@@ -235,15 +235,7 @@ describe("secrets", () => {
     const r = await run("secrets", ["set", "MY_KEY", "--from-file", file, "--dir", dir], { run: fr.run });
     expect(r.code).toBe(0);
     const put = fr.calls.find((c) => c.args.includes("put"));
-    expect(put?.args).toEqual([
-      "--no-install",
-      "wrangler",
-      "secret",
-      "put",
-      "OC_SECRET_MY_KEY",
-      "--name",
-      "oc-m5-test",
-    ]);
+    expect(put?.args.slice(-5)).toEqual(["secret", "put", "OC_SECRET_MY_KEY", "--name", "oc-m5-test"]);
     expect(put?.input).toBe("s3cr3t-value-123");
     const man = readFileSync(join(dir, ".oc-host", "secrets.json"), "utf8");
     expect(man).toContain("OC_SECRET_MY_KEY");

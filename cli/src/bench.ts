@@ -219,6 +219,8 @@ export interface BenchTarget {
   gateway: string;
   /** System prompt; default BENCH_SYSTEM. A long one models the OpenClaw prompt (13k tokens). */
   system?: string;
+  /** reasoning_effort sent on every call (`model bench --role`). */
+  effort?: string;
   /** Sends again after 429 (Workers AI "Capacity temporarily exceeded", 3040). Default 2, 1 s apart. */
   retries429?: number;
   /** Wait between 429 retries. Default 1000 ms. */
@@ -246,6 +248,7 @@ export async function runTurn(
     gateway: t.gateway,
     token: t.token,
     model,
+    reasoningEffort: t.effort,
     maxTokens: 4096,
     skipCache: true,
   };

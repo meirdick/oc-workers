@@ -24,6 +24,7 @@ import {
   wrangler,
 } from "./ops-lib.ts";
 import { setBlockKey } from "./sleep.ts";
+import { expandHome, tokenFromText } from "./ui.ts";
 
 export const alertsFlags: FlagSpec = {
   channel: { type: "string" },
@@ -147,7 +148,7 @@ async function setup(ctx: OpsCtx): Promise<number> {
     await putSecret(ctx, install, "ALERT_URL", url);
     const tf = flagStr(ctx.args, "token-file");
     if (channel === "webhook" && tf) {
-      const tok = readFileSync(tf, "utf8").trim();
+      const tok = tokenFromText(readFileSync(expandHome(tf), "utf8"), ["ALERT_TOKEN"]);
       await putSecret(ctx, install, "ALERT_TOKEN", tok);
     }
   } else {

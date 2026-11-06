@@ -381,8 +381,11 @@ export function replicaPre(S, { method, key, searchParams, headers, body, rawPat
   const no = (status, code, message) => ({ status, code, message, op, sig });
   if (!op) return no(501, "NotImplemented", `${method} not in the S3 subset`);
   if (S.faults.sigv4Strict && sig !== "ok") return no(403, "AccessDenied", `sigv4 ${sig}`);
-  const a = C.replicaAccess(props(S), op, key, searchParams.get("prefix"));
+  // docs/11 §8: the files key space f/<inst>/ has its own rule (no caps in the fake).
+  const files = C.isFilesTarget(op, key, searchParams.get("prefix"));
+  const a = (files ? C.filesAccess : C.replicaAccess)(props(S), op, key, searchParams.get("prefix"));
   if (!a.allow) return no(a.status, a.status === 501 ? "NotImplemented" : "AccessDenied", `access ${a.why}`);
+  if (files) return { forward: true, op, sig };
   if (a.scope === "read" && S.faults.readDelayMs)
     return { forward: true, op, delayMs: S.faults.readDelayMs, sig };
   if (a.scope === "write") {

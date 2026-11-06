@@ -18,7 +18,18 @@ import {
   wantRestart,
 } from "./cmd-util.ts";
 import { renderOpenclawDoc } from "./config.ts";
-import { currentConfig, formatModels, listModels, PROVIDER_ID, proposeConfig, setModel } from "./model.ts";
+import {
+  currentConfig,
+  formatModels,
+  listModels,
+  type ModelRole,
+  modelRoles,
+  PROVIDER_ID,
+  proposeConfig,
+  ROLES,
+  roleEffort,
+  setModel,
+} from "./model.ts";
 import {
   CliError,
   EXIT,
@@ -41,6 +52,8 @@ export const modelFlags: FlagSpec = {
   "ai-token-file": { type: "string" },
   fallback: { type: "string", multi: true },
   restart: { type: "boolean" },
+  /** set, bench: main (default), utility or compaction */
+  role: { type: "string" },
   models: { type: "string" },
   turns: { type: "string" },
   gateway: { type: "string" },
@@ -53,10 +66,31 @@ export const modelFlags: FlagSpec = {
 };
 
 export async function model(ctx: OpsCtx): Promise<number> {
-  const s = sub(ctx, ["list", "set", "bench"], "list");
+  const s = sub(ctx, ["show", "list", "set", "bench"], "show");
+  if (s === "show") return modelShow(ctx);
   if (s === "list") return modelList(ctx);
   if (s === "set") return modelSet(ctx);
   return modelBench(ctx);
+}
+
+function roleFlag(ctx: OpsCtx): ModelRole {
+  const r = flagStr(ctx.args, "role") ?? "main";
+  if (!(ROLES as readonly string[]).includes(r))
+    throw usage(`unknown role ${r}`, `use --role ${ROLES.join(" | ")}`);
+  return r as ModelRole;
+}
+
+/** `ochost model`: the model of every role, from the live config. */
+async function modelShow(ctx: OpsCtx): Promise<number> {
+  const cur = await currentConfig(looseOps(opsClient(ctx)));
+  const rows = modelRoles(cur.doc);
+  if (ctx.out.json) ctx.out.result({ ok: true, ver: cur.ver, roles: rows });
+  else
+    for (const r of rows)
+      ctx.out.line(
+        `${r.role.padEnd(11)} ${r.model || "(not set)"}${r.thinking ? `  thinking ${r.thinking}` : ""}`,
+      );
+  return EXIT.ok;
 }
 
 async function modelList(ctx: OpsCtx): Promise<number> {
@@ -91,6 +125,9 @@ async function modelSet(ctx: OpsCtx): Promise<number> {
   const ops = opsClient(ctx);
   const token = await laptopAiToken(ctx, false);
   const fallbacks = (ctx.args.flags.fallback as string[] | undefined) ?? [];
+  const role = roleFlag(ctx);
+  if (role !== "main" && fallbacks.length)
+    throw usage("--fallback applies to the main model", "drop --fallback");
   const d = aigDeps(ctx);
   const ep = gateEndpoint(ops.install.url, ops.install.token);
   const hopFn = async (model: string) => {
@@ -102,16 +139,21 @@ async function modelSet(ctx: OpsCtx): Promise<number> {
     });
     return { status: r.status, error: r.error };
   };
-  const r = await setModel({ id, fallbacks, token, acct: ops.install.accountId, hop: hopFn }, looseOps(ops), {
-    fetch: d.fetch,
-    sleep: d.sleep,
-    log: d.log,
-  });
+  const r = await setModel(
+    { id, fallbacks, role, token, acct: ops.install.accountId, hop: hopFn },
+    looseOps(ops),
+    {
+      fetch: d.fetch,
+      sleep: d.sleep,
+      log: d.log,
+    },
+  );
   await setBaseVersion(ctx, r.ver);
-  await patchLlm(ctx, { primary: id, fallbacks });
+  if (role === "main") await patchLlm(ctx, { primary: id, fallbacks });
   const applied = r.same ? "none" : await applyChange(ctx, ops, wantRestart(ctx));
-  if (ctx.out.json) ctx.out.result({ ok: true, primary: id, fallbacks, ver: r.ver, same: r.same, applied });
-  else ctx.out.line(`model ${id}: config version ${r.ver}${r.same ? " (no change)" : ""}`);
+  if (ctx.out.json)
+    ctx.out.result({ ok: true, role, primary: id, fallbacks, ver: r.ver, same: r.same, applied });
+  else ctx.out.line(`model ${role} ${id}: config version ${r.ver}${r.same ? " (no change)" : ""}`);
   return EXIT.ok;
 }
 
@@ -130,10 +172,22 @@ async function modelBench(ctx: OpsCtx): Promise<number> {
     const w = url && envTok ? { url, token: envTok } : loadInstall(ctx);
     target = { endpoint: gateEndpoint(url ?? w.url, w.token), gateway };
   }
-  const models = flagStr(ctx.args, "models")
+  let models = flagStr(ctx.args, "models")
     ?.split(",")
     .map((m) => m.trim())
     .filter(Boolean);
+  // --role: bench the model the live config uses for that role, at the effort the role runs with
+  if (flagStr(ctx.args, "role")) {
+    const role = roleFlag(ctx);
+    if (!models?.length) {
+      const live = modelRoles((await currentConfig(looseOps(opsClient(ctx)))).doc).find(
+        (r) => r.role === role,
+      );
+      if (!live?.model) throw usage(`no ${role} model in the config`, `ochost model set --role ${role} <id>`);
+      models = [live.model];
+    }
+    target.effort = roleEffort(role, models[0] as string);
+  }
   const d = aigDeps(ctx);
   const rep = await runBench(
     {

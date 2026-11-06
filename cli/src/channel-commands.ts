@@ -132,11 +132,11 @@ async function channelsAdd(ctx: OpsCtx): Promise<number> {
   );
   await saveState(ctx, { telegramBotId: r.bot.id, telegramBot: r.bot.username });
   await setBaseVersion(ctx, r.configVer);
-  if (ctx.out.json) ctx.out.result(r);
-  else
-    ctx.out.line(
-      `Telegram bot @${r.bot.username} on (config version ${r.configVer}). Webhook URL: ${r.webhook.url}`,
-    );
+  // The gateway reads the bot token (a Worker secret) at boot only (M8 F4): a running install restarts now, so the
+  // channel starts and held messages replay. The Worker already planned one when the webhook went via restart.
+  const applied = r.webhook.via === "restart" ? "restarted" : await applyChange(ctx, ops, true);
+  if (ctx.out.json) ctx.out.result({ ...r, applied });
+  else ctx.out.line(`Telegram bot @${r.bot.username} on (config version ${r.configVer}).`);
   return EXIT.ok;
 }
 

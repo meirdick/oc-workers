@@ -55,7 +55,7 @@ export function signV4({
 
 const base = (cfg) => `${cfg.endpoint.replace(/\/+$/, "")}/${cfg.bucket}`;
 
-async function s3fetch(cfg, method, url, { body = "", timeoutMs = 10_000 } = {}) {
+async function s3fetch(cfg, method, url, { body = "", timeoutMs = 10_000, headers: extra = {} } = {}) {
   const headers = signV4({
     method,
     url,
@@ -63,11 +63,12 @@ async function s3fetch(cfg, method, url, { body = "", timeoutMs = 10_000 } = {})
     accessKey: cfg.accessKey,
     secretKey: cfg.secretKey,
     body,
+    headers: extra,
   });
   return fetch(url, {
     method,
     headers,
-    body: method === "GET" ? undefined : body,
+    body: method === "GET" || method === "HEAD" ? undefined : body,
     signal: AbortSignal.timeout(timeoutMs),
   });
 }
@@ -99,6 +100,25 @@ export async function listKeys(cfg, prefix, { max = 100_000 } = {}) {
       : undefined;
   } while (token && keys.length < max);
   return keys;
+}
+
+const objUrl = (cfg, key) => `${base(cfg)}/${key.split("/").map(uriEncode).join("/")}`;
+
+/** HEAD an object. Returns the HTTP status (200, 404, ...). */
+export async function headObject(cfg, key) {
+  const r = await s3fetch(cfg, "HEAD", objUrl(cfg, key));
+  await r.arrayBuffer().catch(() => undefined);
+  return r.status;
+}
+
+/** PUT a small object (string or Buffer). `createOnly` sends If-None-Match: *. Returns the HTTP status. */
+export async function putObject(cfg, key, body, { createOnly = false } = {}) {
+  const r = await s3fetch(cfg, "PUT", objUrl(cfg, key), {
+    body,
+    headers: createOnly ? { "if-none-match": "*" } : {},
+  });
+  await r.arrayBuffer().catch(() => undefined);
+  return r.status;
 }
 
 /** Create the bucket. 409 (exists) counts as success. */

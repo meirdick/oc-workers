@@ -63,8 +63,40 @@ const CHAT_KEYS = [
   "frequency_penalty",
   "response_format",
   "reasoning_effort",
+  "chat_template_kwargs",
   "stream",
 ] as const;
+
+/**
+ * Gemma 4 has no `reasoning_effort`; its catalogue schema takes `chat_template_kwargs.enable_thinking` (default true).
+ * OpenClaw sends an effort level, so the gate turns `none` into enable_thinking false and any other level into true.
+ */
+const THINKING_SWITCH_RE = /^@cf\/google\/gemma-4/;
+function mapEffort(model: string, input: Record<string, unknown>): void {
+  if (!THINKING_SWITCH_RE.test(model) || input.reasoning_effort === undefined) return;
+  const effort = input.reasoning_effort;
+  delete input.reasoning_effort;
+  if (effort === null) return;
+  const kw = (input.chat_template_kwargs ?? {}) as Record<string, unknown>;
+  input.chat_template_kwargs = { ...kw, enable_thinking: effort !== "none" };
+}
+
+/** Reasoning text of a message or delta: OpenClaw reads `reasoning_content` and `reasoning`; `thinking` is renamed. */
+const REASONING_KEYS = ["reasoning_content", "reasoning", "thinking"] as const;
+const reasoningText = (o: Record<string, unknown>): string => {
+  for (const k of REASONING_KEYS) if (typeof o[k] === "string" && o[k] !== "") return o[k] as string;
+  return "";
+};
+/** Rename `thinking` to `reasoning_content` on a message or delta. Other fields stay. */
+function renameThinking<T extends Record<string, unknown>>(m: T): T {
+  if (typeof m.thinking !== "string") return m;
+  const { thinking, ...rest } = m;
+  return (
+    rest.reasoning_content === undefined && rest.reasoning === undefined
+      ? { ...rest, reasoning_content: thinking }
+      : rest
+  ) as T;
+}
 
 type Msg = { role?: unknown; content?: unknown; [k: string]: unknown };
 
@@ -87,6 +119,7 @@ export async function chat(body: Record<string, unknown>, c: AiCtx): Promise<Res
   const input: Record<string, unknown> = {};
   for (const k of CHAT_KEYS) if (body[k] !== undefined) input[k] = body[k];
   input.messages = fixMessages(body.messages as Msg[]);
+  mapEffort(model, input);
   const stream = body.stream === true;
   const billed = CF_MODEL_RE.test(model); // a provider key is billed by the provider, not in neurons
   const reqChars = JSON.stringify(input.messages).length;
@@ -157,19 +190,21 @@ export function toChatCompletion(r: unknown, model: string, created: number): Re
   if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
   if (Array.isArray(o.choices)) {
-    const choices = (o.choices as { message?: { content?: unknown } }[]).map((ch) => {
-      const m = ch.message;
-      return m && typeof m.content === "string"
+    const choices = (o.choices as { message?: Record<string, unknown> }[]).map((ch) => {
+      const m = ch.message ? renameThinking(ch.message) : undefined;
+      if (!m) return ch;
+      return typeof m.content === "string"
         ? { ...ch, message: { ...m, content: stripSafety(m.content) } }
-        : ch;
+        : { ...ch, message: m };
     });
     return { id: `chatcmpl-${created}`, object: "chat.completion", created, model, ...o, choices };
   }
-  if (typeof o.response !== "string" && !Array.isArray(o.tool_calls)) return null;
+  if (typeof o.response !== "string" && !Array.isArray(o.tool_calls) && !reasoningText(o)) return null;
   const calls = Array.isArray(o.tool_calls)
     ? toolCalls(o.tool_calls as LegacyToolCall[], (i) => `call_${created}_${i}`)
     : [];
   const text = typeof o.response === "string" ? stripSafety(o.response) : "";
+  const reasoning = reasoningText(o);
   return {
     id: `chatcmpl-${created}`,
     object: "chat.completion",
@@ -181,6 +216,7 @@ export function toChatCompletion(r: unknown, model: string, created: number): Re
         message: {
           role: "assistant",
           content: text || (calls.length ? null : ""),
+          ...(reasoning ? { reasoning_content: reasoning } : {}),
           ...(calls.length ? { tool_calls: calls } : {}),
         },
         finish_reason: calls.length ? "tool_calls" : "stop",
@@ -230,8 +266,13 @@ export function sseToOpenAi(
     }
     if (j.usage && typeof j.usage === "object") usage = j.usage as Usage;
     if (Array.isArray(j.choices)) {
-      const ch = j.choices[0] as { delta?: { content?: unknown } } | undefined;
+      const ch = j.choices[0] as { delta?: Record<string, unknown> } | undefined;
       if (typeof ch?.delta?.content === "string") outChars += ch.delta.content.length;
+      if (ch?.delta) outChars += reasoningText(ch.delta).length;
+      if (typeof ch?.delta?.thinking === "string") {
+        const choices = [{ ...ch, delta: renameThinking(ch.delta) }, ...j.choices.slice(1)];
+        return `data: ${JSON.stringify({ ...j, choices })}\n\n`;
+      }
       return `data: ${data}\n\n`;
     }
     const delta: Record<string, unknown> = started ? {} : { role: "assistant" };
@@ -239,6 +280,12 @@ export function sseToOpenAi(
     if (typeof j.response === "string" && j.response !== "") {
       delta.content = j.response;
       outChars += j.response.length;
+      any = true;
+    }
+    const reasoning = reasoningText(j);
+    if (reasoning) {
+      delta.reasoning_content = reasoning;
+      outChars += reasoning.length;
       any = true;
     }
     if (Array.isArray(j.tool_calls) && j.tool_calls.length) {

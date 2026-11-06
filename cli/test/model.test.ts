@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatModels, listModels, setModel, withPrimary } from "../src/model.ts";
+import { modelEntry, renderOpenclawDoc } from "../src/config.ts";
+import { formatModels, listModels, modelRoles, setModel, withPrimary, withRole } from "../src/model.ts";
 import { cf, fakeFetch, fakeOps, TOKEN } from "./fakes.ts";
 
 const ACCT = "0123456789abcdef0123456789abcdef";
@@ -29,8 +30,8 @@ describe("model list", () => {
     const ms = await listModels({ acct: ACCT, token: TOKEN }, { fetch: ff.fetch });
     expect(ms.map((x) => x.name)).toEqual([
       "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "@cf/zai-org/glm-5.3", // shortlist, newest first
       "@cf/openai/gpt-oss-120b",
-      "@cf/zai-org/glm-5.3",
     ]);
     expect(ff.calls[0]?.url).toMatch(/task=Text%20Generation/);
     const t = formatModels(ms);
@@ -80,6 +81,83 @@ describe("model set through the gate", () => {
   });
 });
 
+describe("model roles and effort", () => {
+  it("modelEntry: effort enum and vision come from the catalogue facts", () => {
+    const ds = modelEntry("@cf/deepseek-ai/deepseek-v4.1-flash-1017") as any;
+    expect(ds).toMatchObject({ reasoning: true, input: ["text", "image"] });
+    expect(ds.compat).toEqual({
+      supportedReasoningEfforts: ["none", "low", "high", "max"],
+      reasoningEffortMap: { off: "none" },
+    });
+    const glm = modelEntry("@cf/zai-org/glm-5.3") as any;
+    expect(glm.input).toEqual(["text"]); // no vision
+    expect(glm.compat).toEqual({ supportedReasoningEfforts: ["low", "high", "max"] }); // cannot switch off
+    expect(modelEntry("@cf/openai/gpt-oss-120b")).toMatchObject({ reasoning: false, input: ["text"] });
+    expect(modelEntry("anthropic/claude-x")).toMatchObject({ reasoning: false, input: ["text"] });
+    expect(modelEntry("anthropic/claude-x")).not.toHaveProperty("compat");
+  });
+  it("render: main at low, utility and compaction at off, both entries in the cfgw list", () => {
+    const d = renderOpenclawDoc({ model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017" }) as any;
+    const g = "cfgw/@cf/google/gemma-4-26b-a4b-it";
+    expect(d.agents.defaults.utilityModel).toBe(g);
+    expect(d.agents.defaults.compaction).toEqual({ model: g, thinkingLevel: "off" });
+    expect(d.agents.defaults.models["cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017"].params.thinking).toBe(
+      "low",
+    );
+    expect(d.agents.defaults.models[g].params.thinking).toBe("off");
+    expect(d.models.providers.cfgw.models.map((x: any) => x.id)).toEqual([
+      "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+      "@cf/google/gemma-4-26b-a4b-it",
+    ]);
+  });
+  it("render keeps an owner's role choice; a BYOK main model gets no thinking params", () => {
+    const d = renderOpenclawDoc({ model: "anthropic/claude-x" }) as any;
+    expect(d.agents.defaults.models["cfgw/anthropic/claude-x"]).toBeUndefined();
+    const set = withRole(d, "utility", "@cf/zai-org/glm-4.7-flash") as any;
+    expect(set.agents.defaults.utilityModel).toBe("cfgw/@cf/zai-org/glm-4.7-flash");
+    expect(set.agents.defaults.compaction.model).toBe("cfgw/@cf/google/gemma-4-26b-a4b-it");
+  });
+  it("withRole compaction: GLM cannot switch off, so its level is low; modelRoles shows all three", () => {
+    const d = withRole(
+      renderOpenclawDoc({ model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017" }),
+      "compaction",
+      "@cf/zai-org/glm-5.3",
+    );
+    expect(modelRoles(d)).toEqual([
+      { role: "main", model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", thinking: "low" },
+      { role: "utility", model: "@cf/google/gemma-4-26b-a4b-it", thinking: "off" },
+      { role: "compaction", model: "@cf/zai-org/glm-5.3", thinking: "low" },
+    ]);
+  });
+  it("set --role utility writes only utilityModel; a deprecated model is refused with a token, warned without", async () => {
+    const o = fakeOps();
+    o.versions.push({
+      ver: 1,
+      doc: renderOpenclawDoc({ model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017" }),
+    });
+    const logs: string[] = [];
+    await setModel({ id: "@cf/zai-org/glm-5.3", role: "utility" }, o.ops, {
+      fetch: searchFetch().fetch,
+      log: (l) => logs.push(l),
+    });
+    const doc = o.versions.at(-1)?.doc;
+    expect(doc.agents.defaults.utilityModel).toBe("cfgw/@cf/zai-org/glm-5.3");
+    expect(doc.agents.defaults.model.primary).toBe("cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017");
+    expect(logs.join()).toMatch(/deprecation date not checked/);
+    const dep = [m("@cf/old/model", { function_calling: "true" })];
+    (dep[0] as any).planned_deprecation_date = "2026-11-15";
+    const ff = fakeFetch([
+      [`GET https://api.cloudflare.com/client/v4/accounts/${ACCT}/ai/models/search`, () => cf(dep)],
+    ]);
+    await expect(
+      setModel({ id: "@cf/old/model", role: "utility", token: TOKEN, acct: ACCT }, o.ops, {
+        fetch: ff.fetch,
+        log: () => {},
+      }),
+    ).rejects.toThrow(/deprecated \(planned 2026-11-15\)/);
+  });
+});
+
 describe("model set", () => {
   const base = {
     agents: { defaults: { model: { primary: "cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017" } } },
@@ -99,6 +177,7 @@ describe("model set", () => {
     expect(d.models.providers.cfgw.models.map((x: any) => x.id)).toEqual([
       "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
       "@cf/openai/gpt-oss-120b",
+      "@cf/google/gemma-4-26b-a4b-it", // the utility role keeps its entry
     ]);
     expect(d.channels).toEqual(base.channels);
     expect(base.agents.defaults.model.primary).toBe("cfgw/@cf/deepseek-ai/deepseek-v4.1-flash-1017");

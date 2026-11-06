@@ -1,0 +1,12 @@
+{
+  "name": "oc-host-ochost-storage",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Storage provider ochost-r2 and the file_store tool: OpenClaw storage location r2 on the install's R2 bucket, through the oc-host gate.",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.js"],
+    "compat": { "pluginApi": ">=2026.10.9" },
+    "build": { "openclawVersion": "2026.10.9" }
+  }
+}

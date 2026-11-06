@@ -370,7 +370,8 @@ export function buildPlan(c: Ctx, a: BeginBootArgs, ep: EpochRow, facts: FreshFa
       proactive: s.sleep.proactive,
     },
     wakeIgnore: wakeIgnore(s),
-    sandbox: s.sandbox === "on",
+    sandbox: s.sandbox === "on" || s.sandbox === "all",
+    ...(s.sandbox === "all" ? { sandboxMode: "all" as const } : {}),
   };
   return {
     plan,

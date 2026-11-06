@@ -89,7 +89,7 @@ export function managedKeys(plan = {}, base = {}) {
     // CLI bookkeeping (ochost.renderVersion, cli/src/render-config.ts): OpenClaw rejects unknown root keys.
     { path: "ochost", value: undefined },
     ...webFetchKeys(base),
-    ...(plan.sandbox === true ? sandboxKeys(base) : sandboxOffKeys(base)),
+    ...(plan.sandbox === true ? sandboxKeys(base, plan.sandboxMode) : sandboxOffKeys(base)),
     ...originKeys(plan),
   ];
   for (const x of plan.managed || []) {
@@ -163,14 +163,15 @@ const SANDBOX_BACKEND = "ochost";
 export const SANDBOX_ALSO_ALLOW = ["group:web", "group:memory", "group:media", "group:messaging", "browser"];
 
 /**
- * docs/12 §5: plan.sandbox → every session sandboxed on backend `ochost` (the bundled plugin), remote root
- * /workspace in the SandboxSession container. load.paths keeps the user's entries and adds ours.
+ * docs/12 §5: plan.sandbox → sessions sandboxed on backend `ochost` (the bundled plugin), remote root /workspace in
+ * the SandboxSession container. Mode `non-main` (default) keeps the owner's main chat on the gateway, as OpenClaw's
+ * own example does; `all` sandboxes every session. load.paths keeps the user's entries and adds ours.
  */
-export function sandboxKeys(base = {}) {
+export function sandboxKeys(base = {}, mode = "non-main") {
   const paths = getPath(base, "plugins.load.paths");
   const keep = Array.isArray(paths) ? paths.filter((p) => p !== SANDBOX_PLUGIN_DIR) : [];
   return [
-    { path: "agents.defaults.sandbox.mode", value: "all" },
+    { path: "agents.defaults.sandbox.mode", value: mode === "all" ? "all" : "non-main" },
     { path: "agents.defaults.sandbox.backend", value: "ochost" },
     { path: "agents.defaults.sandbox.scope", value: "agent" },
     { path: "agents.defaults.sandbox.workspaceAccess", value: "rw" },

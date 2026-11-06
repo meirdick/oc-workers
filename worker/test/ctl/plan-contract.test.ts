@@ -27,6 +27,7 @@ describe("sandbox flag (docs/12)", () => {
     const { render } = await import("../../../image/ocrt/lib/config.mjs");
     for (const [settings, want] of [
       [{ sandbox: "on" }, true],
+      [{ sandbox: "all" }, true],
       [{}, false],
       [{ sandbox: "off" }, false],
     ] as const) {
@@ -39,6 +40,10 @@ describe("sandbox flag (docs/12)", () => {
         agents?: { defaults?: { sandbox?: unknown } };
       };
       expect(doc.agents?.defaults?.sandbox !== undefined).toBe(want);
+      if (want)
+        expect((doc.agents?.defaults?.sandbox as { mode?: string }).mode).toBe(
+          (settings as { sandbox?: string }).sandbox === "all" ? "all" : "non-main",
+        );
       // The gate reads the same setting through the ledger.
       expect(w.api.ledger.sbxAdmit(1, r.gen).on).toBe(want);
     }

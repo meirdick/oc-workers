@@ -122,7 +122,7 @@ export const OPS_COMMANDS: Record<string, OpsCommand> = {
   sandbox: {
     flags: sandboxFlags,
     run: sandbox,
-    usage: "sandbox [status] | on | off | sleep",
+    usage: "sandbox [status] | on [--all] | off | sleep",
     does: "tool sandbox: state, budgets, on/off",
   },
   doctor: {
@@ -161,8 +161,8 @@ export const OPS_COMMANDS: Record<string, OpsCommand> = {
     flags: modelFlags,
     run: model,
     usage:
-      "model list [--all] | set <id> [--fallback <id>]... [--restart] | bench [--models a,b] [--turns 20] [--gate-url u] [--direct --ai-token-file f]",
-    does: "models: list (Workers AI), set the primary (@cf/... or anthropic/...), bench through the gate",
+      "model [list [--all]] | set <id> [--role main|utility|compaction] [--fallback <id>]... [--restart] | bench [--role r] [--models a,b] [--turns 20] [--gate-url u] [--direct --ai-token-file f]",
+    does: "models: show each role, list (Workers AI), set a role (default the primary; @cf/... or anthropic/...), bench through the gate",
   },
   "ai-gateway": {
     flags: aiGatewayFlags,

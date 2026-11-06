@@ -268,7 +268,11 @@ describe("sandbox keys (docs/12)", () => {
   it("plan.sandbox renders backend ochost at the gate and keeps the user's plugin paths", () => {
     const v = { ver: 1, doc: { plugins: { load: { paths: ["/u/p1", SANDBOX_PLUGIN_DIR] } } } };
     const r = render(v, { mode: "prod", sandbox: true });
-    assert.equal(getPath(r.doc, "agents.defaults.sandbox.mode"), "all");
+    assert.equal(getPath(r.doc, "agents.defaults.sandbox.mode"), "non-main");
+    assert.equal(
+      getPath(render(v, { mode: "prod", sandbox: true, sandboxMode: "all" }).doc, "agents.defaults.sandbox.mode"),
+      "all",
+    );
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.backend"), "ochost");
     assert.equal(getPath(r.doc, "agents.defaults.sandbox.workspaceAccess"), "rw");
     // gateway-side tools stay callable from a sandboxed session (OpenClaw's default sandbox allowlist lacks them)

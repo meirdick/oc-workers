@@ -1,9 +1,24 @@
 # Changelog
 
-## 1.0.1
+## 1.1.0
 
-- Sandbox on: web search, web fetch, the browser, memory, media and the message tool work again in sandboxed sessions. OpenClaw's sandbox tool policy left them out; the render now allows them (`tools.sandbox.tools.alsoAllow`).
-- Speech model is `@cf/deepgram/aura-2-en`. `@cf/myshell-ai/melotts` stops on 2026-11-15.
+New:
+
+- File storage on R2. The agent saves files to the storage location `r2` through the gate, with no credential in the container. Files are durable on write and outside snapshots and archives. New tool `file_store`, `ochost caps set storage <gb>`, a `file storage` row in doctor and the console, `ochost destroy --delete-data` purges them.
+- Model roles. The main model thinks at `low`; titles, recaps and compaction run on `@cf/google/gemma-4-26b-a4b-it` with thinking off. The gate passes `reasoning_effort` to Workers AI. `ochost model` shows each role; `ochost model set --role utility|compaction <id>`; `model bench --role`; a deprecated model is refused. Run `ochost config render` on an older install.
+- One-shot init. `ochost init` finishes the setup: Telegram and Cloudflare Access from flags or one question each on a fresh install; `--alerts ntfy|webhook`; `--sandbox on` goes in before the first deploy.
+- `ochost sandbox on` sandboxes every session except your main chat (OpenClaw mode `non-main`); `on --all` sandboxes every session.
+
+Fixes:
+
+- Sandbox on: web search, web fetch, the browser, memory, media and the message tool work in sandboxed sessions. OpenClaw's sandbox tool policy left them out.
+- Speech model is `@cf/deepgram/aura-2-en`; `@cf/myshell-ai/melotts` stops on 2026-11-15.
+- `ochost channels add telegram` restarts a running gateway so the bot starts at once.
+- `ochost auth access` waits for the Control DO before the restart, ends with a login link, and names the `--team` fix when the token cannot read the organization.
+- Token files may be env files (`KEY=value`); `~` in a path expands; known files in `~/.config/oc-host/` are offered as defaults.
+- Ops commands run the wrangler the package ships, never `npx`.
+- `ochost init` refuses a Worker of the same name that is not an oc-host install.
+- The bench shortlist drops two retired models and adds `glm-5.3` and `glm-4.7-flash`.
 
 ## 1.0.0
 

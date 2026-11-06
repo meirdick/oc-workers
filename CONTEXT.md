@@ -13,7 +13,7 @@ Use these terms in code, docs, commits and chat. Source: `docs/01-plan.md` §3.1
 | ocsup | Supervisor in the container, PID 1 child under tini, root. Restore, cgroups, Litestream, gateway, heartbeat, sleep phases (`ocsupctl`). |
 | ocio | Helper run as uid 1000 that does all file I/O in uid-1000 trees for ocsup. Root never opens those paths. |
 | ControlGate | WorkerEntrypoint at `15.0.0.1:80`. Narrow authenticated API from ocsup to the Control DO: hello, boot, heartbeat, creds, config, archives. |
-| ReplicaGate | WorkerEntrypoint at `15.0.0.2:80`. S3 subset for Litestream: checks SigV4 per-boot keys, writes only to the current gen via the R2 binding, records uploads. |
+| ReplicaGate | WorkerEntrypoint at `15.0.0.2:80`. S3 subset for Litestream: checks SigV4 per-boot keys, writes only to the current gen via the R2 binding, records uploads. Also the files key space `f/<inst>/` (storage location `r2`, docs/11 §8). |
 | inbox | Control DO table that stores and acks each webhook update (Telegram) before the container is up. Row states: pending, held, accepted, replicated, dead. |
 | duty-cycle | Default mode (`sleep.mode: auto`). The container sleeps when idle and wakes on webhook, cron or UI. Always-on only when a socket needs it. |
 | wake | A new `start()` from a sleep snapshot. Gets a new gen. |

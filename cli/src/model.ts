@@ -2,7 +2,7 @@
 // list: Workers AI text-generation models from the API, filtered to function calling. Needs Workers AI Read.
 // set: new OpenClaw config version with agents.defaults.model.primary and the cfgw provider entry.
 import { type AigDeps, cfApi, DEFAULT_MODEL, errCode } from "./ai-gateway.ts";
-import { isProviderModel, modelEntry } from "./config.ts";
+import { canDisableThinking, isProviderModel, modelEntry, renderModelRoles } from "./config.ts";
 import { CliError } from "./ui.ts";
 
 /** D13 shortlist (09-llm-setup.md): the 6 candidates the bench measures. */
@@ -10,10 +10,14 @@ export const SHORTLIST = [
   "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
   "@cf/openai/gpt-oss-120b",
   "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
-  "@cf/qwen/qwen3-30b-a3b-fp8",
+  "@cf/zai-org/glm-5.3",
   "@cf/google/gemma-4-26b-a4b-it",
-  "@cf/nvidia/nemotron-3-120b-a12b",
+  "@cf/zai-org/glm-4.7-flash",
 ] as const;
+
+/** Model roles `ochost model set --role` writes (docs/research/models-2026-11.md §3). Default: main. */
+export const ROLES = ["main", "utility", "compaction"] as const;
+export type ModelRole = (typeof ROLES)[number];
 
 /** Provider id in the OpenClaw config doc (spec §2.8). */
 export const PROVIDER_ID = "cfgw";
@@ -27,6 +31,8 @@ export interface ModelInfo {
   tools: boolean;
   reasoning: boolean;
   beta: boolean;
+  /** planned_deprecation_date from the catalogue; null when none. */
+  deprecated: string | null;
   createdAt: string;
   shortlist: boolean;
   primary: boolean;
@@ -35,6 +41,7 @@ export interface ModelInfo {
 interface RawModel {
   name: string;
   created_at?: string;
+  planned_deprecation_date?: string | null;
   properties?: { property_id: string; value: unknown }[];
 }
 
@@ -48,6 +55,7 @@ export function toInfo(m: RawModel, primary: string): ModelInfo {
     tools: String(prop(m, "function_calling")) === "true",
     reasoning: String(prop(m, "reasoning")) === "true",
     beta: String(prop(m, "beta")) === "true",
+    deprecated: String(m.planned_deprecation_date ?? prop(m, "planned_deprecation_date") ?? "") || null,
     createdAt: m.created_at ?? "",
     shortlist: (SHORTLIST as readonly string[]).includes(m.name),
     primary: m.name === primary,
@@ -96,7 +104,9 @@ export function formatModels(ms: ModelInfo[]): string {
     m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : "-",
     m.tools ? "tools" : "-",
     m.reasoning ? "reasoning" : "-",
-    m.beta ? "beta" : "",
+    [m.beta ? "beta" : "", m.deprecated ? `deprecated ${m.deprecated.slice(0, 10)}` : ""]
+      .filter(Boolean)
+      .join(" "),
   ]);
   const w = rows.reduce<number[]>((acc, r) => r.map((c, i) => Math.max(acc[i] ?? 0, c.length)), []);
   const lines = rows.map((r) =>
@@ -158,6 +168,58 @@ export async function proposeConfig(
   return { ver: b.ver ?? baseVer + 1, same: !!b.same };
 }
 
+/** Pure: model and thinking level of each role in a doc. A role that is not set shows an empty model. */
+export function modelRoles(doc: Record<string, any>): { role: ModelRole; model: string; thinking: string }[] {
+  const dd = doc.agents?.defaults ?? {};
+  const refs: Record<ModelRole, unknown> = {
+    main: dd.model?.primary,
+    utility: dd.utilityModel,
+    compaction: dd.compaction?.model,
+  };
+  return ROLES.map((role) => {
+    const ref = typeof refs[role] === "string" ? (refs[role] as string) : "";
+    const thinking =
+      role === "compaction"
+        ? (dd.compaction?.thinkingLevel ?? "")
+        : String(dd.models?.[ref]?.params?.thinking ?? "");
+    return {
+      role,
+      model: ref.startsWith(`${PROVIDER_ID}/`) ? ref.slice(PROVIDER_ID.length + 1) : ref,
+      thinking,
+    };
+  });
+}
+
+/** Thinking effort the gate gets for a role: `low` for the main turn, `none` for the rest where the model allows. */
+export const roleEffort = (role: ModelRole, id: string) =>
+  role === "main" || !canDisableThinking(id) ? "low" : "none";
+
+/** Pure: the doc with `id` as the utility or compaction model. The cfgw entry and thinking level follow. */
+export function withRole(
+  doc: Record<string, any>,
+  role: Exclude<ModelRole, "main">,
+  id: string,
+  info?: Pick<ModelInfo, "contextWindow">,
+): Record<string, any> {
+  const next = structuredClone(doc);
+  next.agents ??= {};
+  next.agents.defaults ??= {};
+  const dd = next.agents.defaults;
+  const ref = `${PROVIDER_ID}/${id}`;
+  if (role === "utility") dd.utilityModel = ref;
+  else {
+    dd.compaction = { ...(dd.compaction ?? {}), model: ref };
+    delete dd.compaction.thinkingLevel; // the render picks the level for the new model
+  }
+  const prov = next.models?.providers?.[PROVIDER_ID];
+  if (prov) {
+    prov.models ??= [];
+    if (!prov.models.some((e: { id?: string }) => e.id === id))
+      prov.models.push(modelEntry(id, info?.contextWindow));
+  }
+  return renderModelRoles(next);
+}
+
 /**
  * Pure: the config doc with `id` as primary (and fallbacks). Adds the model to the cfgw provider list when it is
  * missing; keeps every other key. The provider block itself is rendered by init (spec §2.8).
@@ -184,12 +246,14 @@ export function withPrimary(
       prov.models.push(modelEntry(m, m === id ? info?.contextWindow : null));
     }
   }
-  return next;
+  return renderModelRoles(next);
 }
 
 export interface SetModelOpts {
   id: string;
   fallbacks?: string[];
+  /** Which role gets the model. Default main. Fallbacks apply to main only. */
+  role?: ModelRole;
   /** AI token; when given, the id is checked against the Workers AI list. */
   token?: string;
   acct?: string;
@@ -244,12 +308,24 @@ export async function setModel(
           `model ${m} not found on Workers AI`,
           "run ochost model list, then ochost model set <id>",
         );
+      if (hit.deprecated)
+        throw new CliError(
+          `model ${m} is deprecated (planned ${hit.deprecated.slice(0, 10)})`,
+          "pick another model: ochost model list",
+        );
       if (!hit.tools)
         d.log(`WARN: ${m} has no function calling — fix: pick a model marked tools in ochost model list`);
       if (m === o.id) info = hit;
     }
-  }
+  } else if (all.some((x) => !isProviderModel(x)))
+    d.log(
+      "WARN: deprecation date not checked (no AI token) — fix: rerun with --ai-token-file <f> (Workers AI Read) or check ochost model list",
+    );
   const cur = await currentConfig(ops);
+  if (o.role && o.role !== "main") {
+    const r = await proposeConfig(ops, withRole(cur.doc, o.role, o.id, info), cur.ver);
+    return { ...r, primary: o.id };
+  }
   const doc = withPrimary(cur.doc, o.id, o.fallbacks ?? [], info);
   const r = await proposeConfig(ops, doc, cur.ver);
   return { ...r, primary: o.id };

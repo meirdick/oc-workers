@@ -3,7 +3,7 @@
 // (ingress/headers.ts pageHeaders). Design rules: docs/18-owner-console-design.md.
 import type { OwnerView } from "../core/types";
 import type { Panel } from "../ctl/panel";
-import { alertFix, type Check } from "../ctl/panel-checks";
+import { alertFix, bytesStr, type Check } from "../ctl/panel-checks";
 
 /** Where "Open Control UI" goes. The Control UI is a single-page app: any path that is not `/` serves it. */
 export const CONTROL_UI_PATH = "/chat";
@@ -586,6 +586,27 @@ function setupRows(p: Panel): SetupRow[] {
       todo: !off && bad(sb),
     });
   }
+  const fs = find("file storage");
+  if (fs)
+    rows.push(
+      p.files
+        ? {
+            group: "in",
+            name: "File storage",
+            state: `On, prefix ${p.files.prefix}, ${bytesStr(p.files.used)} of ${bytesStr(p.files.limit)} used`,
+            result: fs.result,
+            cmd: fs.fix && fs.result !== "PASS" ? cmdOf(fs.fix) : "ochost caps set storage <n>",
+            todo: bad(fs),
+          }
+        : {
+            group: "in",
+            name: "File storage",
+            state: "Off (no storage location r2)",
+            result: null,
+            cmd: "ochost config render, then ochost restart",
+            todo: false,
+          },
+    );
   const mo = find("model");
   if (mo)
     rows.push({

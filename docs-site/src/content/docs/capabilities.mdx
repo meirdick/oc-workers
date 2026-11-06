@@ -52,14 +52,40 @@ Browser Run includes 10 hours a month. After that it costs $0.09 per browser hou
 
 The owner console shows each budget on the Overview tab. See [How it works](/how-it-works/#the-owner-console).
 
+## File storage {#file-storage}
+
+The agent saves files to the storage location `r2`. The files go to your R2 bucket, under the prefix `f/<inst>/`. They stay when the container stops, sleeps or restarts. They are not in snapshots or archives (see [State and backups](/state-and-backups/)).
+
+- A plugin in the image (`ochost-storage`) adds the storage provider `ochost-r2` and the agent tool `file_store` (save, read, list, delete).
+- The plugin talks S3 to the replica gate at `15.0.0.2` through a loopback relay in the container (`127.0.0.1:18792`). It signs each request with the key of the current boot, the same key Litestream uses. The gate accepts that key only for `r/<inst>/g<gen>/` and `f/<inst>/`. The key is not in the OpenClaw config.
+- The gate allows PUT, GET, HEAD, DELETE and list. It refuses multipart uploads, so one file is at most 100 MB.
+- A save never overwrites a file. Save to a new name.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `files.capGb` | 5 | Total bytes under `f/<inst>/`. At 80% the owner gets the warning alert `storage-cap-80`. At 100% the gate refuses writes and sends the high alert `storage-cap-100`. |
+| `files.maxObjectMb` | 100 | Largest single file. |
+
+```sh
+ochost caps                          # the files line shows bytes used and the cap
+ochost caps set storage 20           # raise the cap to 20 GB (same as config set files.capGb 20)
+openclaw storage test r2             # in the container: write, read and delete a check object
+```
+
+`ochost doctor` has a row `file storage`. It writes, reads and deletes a 1-byte object under `f/<inst>/`. `ochost destroy --delete-data` deletes `f/<inst>/` before it deletes the bucket. Without `--delete-data` the files stay.
+
+## Sandbox {#sandbox}
+
 ## Sandbox
 
-The tool sandbox is off by default. It is experimental. When it is on, every exec and file tool call of the agent runs in a separate Cloudflare Sandbox container, not in the gateway container.
+The tool sandbox is off by default. It is experimental. When it is on, the exec and file tool calls of a sandboxed session run in a separate Cloudflare Sandbox container, not in the gateway container.
+
+`ochost sandbox on` sandboxes every session except your own main chat: group chats, other channels and sub-agents. This is the pattern OpenClaw recommends. `ochost sandbox on --all` sandboxes every session, your main chat included.
 
 1. Turn it on:
 
    ```sh
-   ochost sandbox on        # writes "sandbox": "on" in oc-host.jsonc
+   ochost sandbox on        # writes "sandbox": "on" in oc-host.jsonc; --all writes "all"
    ochost deploy
    ochost restart
    ```
@@ -88,7 +114,6 @@ Facts:
 
 ## Not built
 
-- File storage on R2 through the gate.
 - A mode where the agent holds a Cloudflare API token. It would be opt-in.
 
 ## Next

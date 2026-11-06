@@ -189,7 +189,11 @@ export function makeUi(
       if (opts.verbose && !s.detail) return;
       const detail = shorten(s.detail ?? (last ?? "").replace(/^[\w-]+: /, ""), 52);
       const num = `[${String(s.n).padStart(String(s.total).length)}/${s.total}]`;
-      io.err.write(`${redact(`${num} ${s.label.padEnd(10)} ${detail}`.trimEnd())}  ${fmtElapsed(s.ms)}\n`);
+      const failed = s.detail === "failed" || /^failed\b/.test(s.detail ?? "");
+      // Glyphs on a TTY only; a log or a test sees the plain line.
+      const mark = io.err.isTTY ? (failed ? "\x1b[31m✗\x1b[0m " : "\x1b[32m✓\x1b[0m ") : "";
+      const time = io.err.isTTY ? `\x1b[2m${fmtElapsed(s.ms)}\x1b[0m` : fmtElapsed(s.ms);
+      io.err.write(`${mark}${redact(`${num} ${s.label.padEnd(10)} ${detail}`.trimEnd())}  ${time}\n`);
     },
     say: (l) => {
       clear();
@@ -265,12 +269,39 @@ export interface Prompter {
   askHidden(question: string): Promise<string>;
 }
 
+/**
+ * A token from a file's text: a bare token, or `KEY=value` lines (an env file). `keys` names the line to take,
+ * else the first `KEY=value` line. Quotes around the value go.
+ */
+export function tokenFromText(text: string, keys: string[] = []): string {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+  const kv = lines
+    .map((l) => /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(l))
+    .filter((m): m is RegExpExecArray => !!m);
+  if (!kv.length) return text.trim();
+  const hit = kv.find((m) => keys.includes(m[1] as string)) ?? kv[0];
+  return (hit?.[2] ?? "").trim().replace(/^["']|["']$/g, "");
+}
+
+/** `~` and `~/x` → the home directory. */
+export function expandHome(p: string, home = process.env.HOME ?? ""): string {
+  return p === "~" ? home : p.startsWith("~/") ? `${home}${p.slice(1)}` : p;
+}
+
+/** A question on the TTY: a blank line, the question on its own line, the answer after "> ". */
+export function promptText(question: string): string {
+  return `\n${question.trim()}\n> `;
+}
+
 /** Ask a question on the TTY. Returns the trimmed answer. */
 export async function ask(question: string): Promise<string> {
   const { createInterface } = await import("node:readline/promises");
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    return (await rl.question(question)).trim();
+    return (await rl.question(promptText(question))).trim();
   } finally {
     rl.close();
   }
@@ -279,6 +310,7 @@ export async function ask(question: string): Promise<string> {
 /** Read a secret from the TTY without echo. Ctrl-C aborts with exit 130. Piped stdin: one line. */
 export async function askHidden(question: string): Promise<string> {
   const stdin = process.stdin;
+  question = promptText(question);
   if (!stdin.isTTY) {
     process.stderr.write(question);
     const { createInterface } = await import("node:readline");

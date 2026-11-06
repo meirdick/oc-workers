@@ -255,8 +255,11 @@ export interface OcHostConfig {
   maintenance: { hour: number; maxUptimeHours?: number };
   /** Cold-path Telegram messages (docs/13-cold-reply.md). */
   telegram?: { wakeProgress?: "delete" | "ready" | "off" };
-  /** docs/12: agent exec and file tools in the SandboxSession container. Absent = off. */
-  sandbox?: "on" | "off";
+  /**
+   * docs/12: agent exec and file tools in the SandboxSession container. Absent = off. `on` sandboxes every session
+   * except your own main chat (OpenClaw mode non-main); `all` sandboxes every session.
+   */
+  sandbox?: "on" | "all" | "off";
   upgrade: { track: string; auto: boolean };
   alerts: { channel: "ntfy" | "webhook" | "none"; dedupeMinutes?: number; minSeverity?: string };
   llm: {
@@ -271,6 +274,8 @@ export interface OcHostConfig {
   chain?: { rebaseAfterHours?: number; rebaseAfterSnapshots?: number; tagWarn?: number };
   gens?: { churnPerDay?: number };
   storage?: { pruneAtMb?: number; refuseAtMb?: number };
+  /** docs/11 §8: file storage on R2 through the gate. */
+  files?: { capGb?: number; maxObjectMb?: number };
   cost?: { releaseBelowPct?: number };
   login?: {
     sessionDays?: number;
@@ -326,7 +331,7 @@ export function defaultConfigText(o: {
   "accountId": ${JSON.stringify(o.accountId)},${bucketLine}
   "instance": ${JSON.stringify(o.instance ?? DEFAULT_INSTANCE)},                    // vcpu/GiB/GB or {vcpu, memoryMib, diskMb}; floor 2/6/16 (D3)
   "timezone": ${JSON.stringify(o.timezone ?? defaultTimezone())},          // from the laptop; for proactive and maintenance
-  "sandbox": "off",                        // on | off: agent exec and file tools in a Cloudflare sandbox (docs/12)
+  "sandbox": "off",                        // off | on (every chat but your main one) | all: exec and file tools in a Cloudflare sandbox
   "sleep": {
     "mode": "auto",                        // auto | off
     "idleMinutes": 5,                      // doubles after a quick re-wake, up to idle.doubleCapMinutes. Each extra awake minute: $0.000984 at 2/6/20
@@ -349,6 +354,7 @@ export function defaultConfigText(o: {
   "chain": { "rebaseAfterHours": 24, "rebaseAfterSnapshots": 40, "tagWarn": 100 },
   "gens": { "churnPerDay": 10 },
   "storage": { "pruneAtMb": 1024, "refuseAtMb": 2048 },
+  "files": { "capGb": 5, "maxObjectMb": 100 },   // storage location r2 (R2, f/<inst>/): total and per-file cap; alert at 80 %
   "cost": { "releaseBelowPct": 80 },
   "login": {
     "sessionDays": 30,
@@ -408,7 +414,8 @@ export function validateConfig(raw: unknown): OcHostConfig {
   if (!s || (s.mode !== "auto" && s.mode !== "off")) fail("sleep.mode must be auto or off");
   if (!PROACTIVE_RE.test(String(s.proactive)))
     fail(`sleep.proactive ${JSON.stringify(s.proactive)} is not valid`);
-  if (c.sandbox !== undefined && c.sandbox !== "on" && c.sandbox !== "off") fail("sandbox must be on or off");
+  if (c.sandbox !== undefined && !["on", "all", "off"].includes(c.sandbox))
+    fail("sandbox must be on, all or off");
   const llm = c.llm;
   if (c.upgrade?.auto === true)
     fail(
@@ -505,7 +512,7 @@ export const MODEL_NAMES: Record<string, string> = {
  * merges the new render into the live config when the document's `ochost.renderVersion` is lower (render-config.ts).
  * ocsup removes the `ochost` key before it writes openclaw.json (OpenClaw rejects unknown root keys).
  */
-export const RENDER_VERSION = 1;
+export const RENDER_VERSION = 2; // 2: storage location r2 + plugin ochost-storage (docs/11 §8); model roles and thinking
 
 /** CapGate address inside the container. The only gate uid 1000 reaches. */
 export const CAP_URL = "http://15.0.0.3";
@@ -514,6 +521,21 @@ export const CAP_URL = "http://15.0.0.3";
  * baseUrl that is a public IP, and 15.0.0.3 is one to it; loopback passes. Same port as CAP_PROXY_PORT there.
  */
 export const FETCH_URL = "http://127.0.0.1:18791";
+/**
+ * docs/11 §8: ocsup's loopback forwarder to the ReplicaGate files key space (cap-proxy.mjs FILES_PROXY_PORT). The plugin
+ * ochost-storage signs with the per-gen key ocsup writes to /run/ocrt/files-key.json; no key is in this config.
+ */
+export const FILES_URL = "http://127.0.0.1:18792";
+export const FILES_LOCATION = "r2";
+/** Settings of storage location r2 (provider ochost-r2). Bucket: the install's bucket; prefix f/<inst> (no slash). */
+export function filesLocation(o: { bucket: string; inst: string }): Record<string, unknown> {
+  return {
+    provider: "ochost-r2",
+    settings: { endpoint: FILES_URL, bucket: o.bucket, prefix: `f/${o.inst}` },
+    // The bytes stay in the install's own bucket behind the gate; ocsup writes the marker for "none".
+    encryption: "none",
+  };
+}
 export const EMBED_MODEL = "@cf/baai/bge-m3";
 // aura-2-en: melotts stops on 2026-11-15 (Workers AI deprecation notice 2026-11-05).
 export const TTS_MODEL = "@cf/deepgram/aura-2-en";
@@ -529,9 +551,9 @@ const GATE_KEY = "capgate";
  * tools.media key names follow the OpenClaw docs read on 2026-11-01 (docs/research/agent-capabilities-research.md);
  * the live check in docs/11 §5 confirms them.
  */
-export function renderCapabilities(): Record<string, any> {
+export function renderCapabilities(files?: { bucket: string; inst: string }): Record<string, any> {
   const ai = `${CAP_URL}/ai/v1`;
-  return {
+  const out: Record<string, any> = {
     browser: {
       enabled: true,
       defaultProfile: "cf",
@@ -571,24 +593,106 @@ export function renderCapabilities(): Record<string, any> {
     },
     mcp: { servers: { "cloudflare-docs": { url: DOCS_MCP_URL, transport: "streamable-http" } } },
   };
+  // docs/11 §8: file storage. Needs the install's bucket and inst, so only callers that know them render it.
+  if (files) {
+    out.storage = { locations: { [FILES_LOCATION]: filesLocation(files) } };
+    out.plugins.entries["ochost-storage"] = { enabled: true, config: { location: FILES_LOCATION } };
+  }
+  return out;
 }
 
 /** `anthropic/<model>`: run on the binding with the provider key from the gateway BYOK store (docs/09). */
 export const isProviderModel = (id: string) => id.startsWith("anthropic/");
 
-/** One entry of the cfgw provider's model list. reasoning false: show `content` only (docs/09 quirks). */
+/** Cheap model for titles, recaps and compaction (docs/research/models-2026-11.md §3). */
+export const UTILITY_MODEL = "@cf/google/gemma-4-26b-a4b-it";
+
+/**
+ * Catalogue facts per model family (docs/research/models-2026-11.md §1 and the Workers AI input schemas).
+ * `efforts` is the reasoning_effort enum; empty = no reasoning control. Gemma has no reasoning_effort: the gate
+ * turns `none` into chat_template_kwargs.enable_thinking false (worker/src/gates/ai.ts).
+ */
+const MODEL_FACTS: [RegExp, { efforts: string[]; vision: boolean }][] = [
+  [/^@cf\/deepseek-ai\/deepseek-v4\.1-flash/, { efforts: ["none", "low", "high", "max"], vision: true }],
+  [/^@cf\/zai-org\/glm-5\.3$/, { efforts: ["low", "high", "max"], vision: false }],
+  [/^@cf\/google\/gemma-4/, { efforts: ["none", "low", "medium", "high"], vision: true }],
+  [/^@cf\/qwen\/qwen3\.8/, { efforts: [], vision: true }],
+];
+const factsOf = (id: string) => MODEL_FACTS.find(([re]) => re.test(id))?.[1];
+/** True when the model accepts effort `none` (GLM-5.3 cannot switch reasoning off). */
+export const canDisableThinking = (id: string) => !!factsOf(id)?.efforts.includes("none");
+
+/**
+ * One entry of the cfgw provider's model list. Workers AI models with an effort enum get reasoning true and the
+ * compat map, so OpenClaw sends reasoning_effort; vision models take images. Others (and anthropic/<model>) stay
+ * reasoning false, text only.
+ */
 export function modelEntry(id: string, contextWindow?: number | null): Record<string, unknown> {
   const provider = isProviderModel(id);
+  const f = provider ? undefined : factsOf(id);
+  const reasoning = !!f?.efforts.length;
   return {
     id,
     name:
       MODEL_NAMES[id] ??
       (provider ? `${id.slice(10)} (Anthropic, gateway key)` : `${id.split("/").pop()} (Workers AI)`),
-    reasoning: false,
-    input: ["text"],
+    reasoning,
+    input: f?.vision ? ["text", "image"] : ["text"],
+    ...(reasoning
+      ? {
+          compat: {
+            supportedReasoningEfforts: f?.efforts,
+            ...(f?.efforts.includes("none") ? { reasoningEffortMap: { off: "none" } } : {}),
+          },
+        }
+      : {}),
     contextWindow: Math.min(contextWindow || (provider ? 200_000 : 131_072), 262_144),
     maxTokens: 8192,
   };
+}
+
+const idOfRef = (ref: unknown): string | undefined =>
+  typeof ref === "string" && ref.startsWith("cfgw/") ? ref.slice(5) : undefined;
+
+/**
+ * Model roles of a doc (docs/research/models-2026-11.md §3): the main turn runs at thinking `low`; utility jobs
+ * (titles, recaps) and compaction run at `off` (`low` where the model cannot switch off). Keys already set stay,
+ * so an owner's choice survives a re-render. Every cfgw model a role uses gets a current entry. Without a cfgw
+ * provider and primary (--skip-ai, BYOK-only) the doc is returned as is.
+ */
+export function renderModelRoles(doc: Record<string, any>): Record<string, any> {
+  const main = idOfRef(doc.agents?.defaults?.model?.primary);
+  if (!doc.models?.providers?.cfgw || !main) return doc;
+  const out = structuredClone(doc);
+  const dd = out.agents.defaults;
+  dd.utilityModel ??= `cfgw/${UTILITY_MODEL}`;
+  dd.compaction ??= {};
+  dd.compaction.model ??= dd.utilityModel;
+  const utility = idOfRef(dd.utilityModel);
+  const compaction = idOfRef(dd.compaction.model);
+  const offOrLow = (id: string) => (canDisableThinking(id) ? "off" : "low");
+  if (compaction) dd.compaction.thinkingLevel ??= offOrLow(compaction);
+  const ids = new Set(
+    [main, ...((dd.model.fallbacks ?? []) as string[]).map(idOfRef), utility, compaction].filter(
+      (x): x is string => !!x,
+    ),
+  );
+  const prov = out.models.providers.cfgw;
+  prov.models ??= [];
+  for (const id of ids) {
+    const at = prov.models.findIndex((e: { id?: string }) => e.id === id);
+    const entry = modelEntry(id, at >= 0 ? prov.models[at].contextWindow : null);
+    if (at >= 0) prov.models[at] = entry;
+    else prov.models.push(entry);
+    if (!entry.reasoning) continue;
+    const quiet = id !== main && (id === utility || id === compaction);
+    dd.models ??= {};
+    dd.models[`cfgw/${id}`] ??= {};
+    const m = dd.models[`cfgw/${id}`];
+    m.params ??= {};
+    m.params.thinking ??= quiet ? offOrLow(id) : "low";
+  }
+  return out;
 }
 
 /**
@@ -596,10 +700,16 @@ export function modelEntry(id: string, contextWindow?: number | null): Record<st
  * cannot connect (M3 F9), so --skip-ai still posts a doc (empty). Managed keys (gateway.auth, trusted
  * proxy, publicOrigin) are rendered by the Control DO, not here. The gate capabilities are always in it.
  */
-export function renderOpenclawDoc(o: { model: string } | null): Record<string, unknown> {
-  const caps: Record<string, any> = { ...renderCapabilities(), ochost: { renderVersion: RENDER_VERSION } };
+export function renderOpenclawDoc(
+  o: { model: string } | null,
+  files?: { bucket: string; inst: string },
+): Record<string, unknown> {
+  const caps: Record<string, any> = {
+    ...renderCapabilities(files),
+    ochost: { renderVersion: RENDER_VERSION },
+  };
   if (!o) return caps;
-  return {
+  return renderModelRoles({
     ...caps,
     agents: { defaults: { ...caps.agents.defaults, model: { primary: `cfgw/${o.model}` } } },
     models: {
@@ -614,5 +724,5 @@ export function renderOpenclawDoc(o: { model: string } | null): Record<string, u
         },
       },
     },
-  };
+  });
 }

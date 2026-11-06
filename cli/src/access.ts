@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { applyChange } from "./cmd-util.ts";
 import { loadConfig } from "./config.ts";
 import { type AccessState, deployProject, projectPaths, readState, writeState } from "./deploy.ts";
+import { open } from "./open.ts";
 import {
   CliError,
   EXIT,
@@ -24,6 +25,7 @@ import {
   registerSecret,
   usage,
 } from "./ops-lib.ts";
+import { expandHome, tokenFromText } from "./ui.ts";
 import { deployCtx } from "./upgrade.ts";
 import { type CfClient, cfErrText, makeCf, makeWrangler, parseWhoami, wranglerBearer } from "./wrangler.ts";
 
@@ -32,6 +34,8 @@ export interface AccessHooks {
   deploy(ctx: OpsCtx, install: Install): Promise<void>;
   /** The Control UI origin changed: planned restart when running; asleep → the next wake applies it. */
   restart(ctx: OpsCtx): Promise<string>;
+  /** Does the Control DO report Access on this domain yet (GET /ops/doctor)? Tests answer at once. */
+  accessSeen?(ctx: OpsCtx, domain: string): Promise<boolean>;
 }
 
 export const realAccessHooks: AccessHooks = {
@@ -108,7 +112,10 @@ export async function access(ctx: OpsCtx, hooks: AccessHooks = realAccessHooks):
     let bearer: string | undefined;
     if (tokenFile) {
       try {
-        bearer = readFileSync(tokenFile, "utf8").trim();
+        bearer = tokenFromText(readFileSync(expandHome(tokenFile), "utf8"), [
+          "CF_ACCESS_TOKEN",
+          "CLOUDFLARE_API_TOKEN",
+        ]);
       } catch {
         throw new CliError(`cannot read ${tokenFile}`, "pass --token-file <file with the API token>");
       }
@@ -123,6 +130,12 @@ export async function access(ctx: OpsCtx, hooks: AccessHooks = realAccessHooks):
     );
     // A token with Apps and Policies only cannot read the org: --team names it.
     const noOrgScope = org.status === 401 || org.status === 403;
+    if (noOrgScope && !team && tokenFile)
+      throw new CliError(
+        "the token can edit Access apps but cannot read the Zero Trust organization, so the team name is unknown",
+        "rerun with --team <team>.cloudflareaccess.com (Zero Trust > Settings > Custom Pages shows it), or add Access: Organizations Read to the token",
+        EXIT.manual,
+      );
     if (noOrgScope && !team) throw manual(domain, email, "this login has no Access scope");
     team = team ?? org.j.result?.auth_domain;
     if ((!ok(org) && !noOrgScope) || !team)
@@ -153,8 +166,34 @@ export async function access(ctx: OpsCtx, hooks: AccessHooks = realAccessHooks):
     await writeState(paths, state);
     throw e;
   }
+  await waitForDo(ctx, hooks, next.domain);
   await restartFor(ctx, hooks);
   return verify(ctx, next);
+}
+
+/**
+ * A deploy changes the Worker at once, but the Control DO that builds the boot plan picks up new code and vars up to
+ * 5 min later. A restart before that boots the gateway with the old origin ("Browser origin not allowed" in the
+ * Control UI). Wait until the DO reports the domain, up to 6 min.
+ */
+async function waitForDo(ctx: OpsCtx, hooks: AccessHooks, domain: string): Promise<void> {
+  const seen = hooks.accessSeen ?? realAccessSeen;
+  for (let i = 0; i < 36; i++) {
+    if (await seen(ctx, domain)) return;
+    if (i === 0) ctx.out.step("access: waiting for the Control DO to see the new domain (up to 5 min)");
+    await ctx.sleep(10_000);
+  }
+  ctx.out.warn("the Control DO has not seen the domain yet — fix: ochost restart in a few minutes");
+}
+
+async function realAccessSeen(ctx: OpsCtx, domain: string): Promise<boolean> {
+  try {
+    const r = await opsClient(ctx).call("GET", "/ops/doctor", undefined, { timeoutMs: 30_000 });
+    const rows = (r.body as { connected?: { name: string; detail?: string }[] }).connected ?? [];
+    return rows.some((x) => x.name === "access" && (x.detail ?? "").includes(domain));
+  } catch {
+    return false;
+  }
 }
 
 function manual(domain: string, email: string, why: string): CliError {
@@ -253,6 +292,7 @@ async function verify(ctx: OpsCtx, a: AccessState): Promise<number> {
         (loc.includes(a.team) || loc.includes("/cdn-cgi/access/"))
       ) {
         done(ctx, a, true);
+        if (!ctx.out.json) await loginLink(ctx);
         return EXIT.ok;
       }
       seen = `HTTP ${r.status}${loc ? ` to ${loc.slice(0, 80)}` : ""}`;
@@ -275,9 +315,18 @@ function done(ctx: OpsCtx, a: AccessState, verified: boolean) {
       [
         `${verified ? "access on" : "access set, not verified"}: https://${a.domain}`,
         `team ${a.team}; allow ${a.email ?? "(dashboard policy)"}; workers.dev: ${a.workersDev === "ops" ? "webhooks and /ops" : "webhooks only"}`,
-        "next: ochost open (the link goes through Access, then the owner login)",
       ].join("\n"),
     );
+}
+
+/** After Access is on: a single-use login link (through Access, then the owner cookie), like `ochost open`. */
+async function loginLink(ctx: OpsCtx): Promise<void> {
+  try {
+    ctx.out.line("login link (single use, 5 min; ochost open makes another):");
+    await open(ctx);
+  } catch (e) {
+    ctx.out.warn(`no login link: ${(e as Error).message.slice(0, 80)} — fix: ochost open`);
+  }
 }
 
 function status(ctx: OpsCtx, a: AccessState): number {

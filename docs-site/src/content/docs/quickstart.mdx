@@ -37,6 +37,15 @@ Check [Requirements](/requirements/). You need:
     ochost init
     ```
     `init` asks for no AI token. The model runs on your account through the Worker's Workers AI binding.
+
+    After the install is up, `init` asks two questions. Enter skips each one:
+
+    - Telegram: paste the bot token from @BotFather (see [Add Telegram](#add-telegram)).
+    - Cloudflare Access: a hostname on your zone, such as `oc.example.com`.
+
+    Alerts to your phone are optional; `ochost alerts setup` adds them later.
+
+    The same as flags, for a script or a rerun: `ochost init --telegram-owner <id> --telegram-token-file <file> --sandbox on --alerts ntfy --access-domain oc.example.com`.
   </Step>
   <Step title="Open the Control UI">
     At the end, `init` prints a summary:
@@ -107,7 +116,7 @@ A second `ochost init` changes nothing that is current. It can wake a sleeping i
 
 1. In Telegram, open a chat with @BotFather. This is Telegram's own bot for making bots.
 2. Send `/newbot` and follow the steps. BotFather gives you a bot token.
-3. Run `ochost channels add telegram`. Paste the token. The input is hidden.
+3. Run `ochost channels add telegram`. Paste the token. The input is hidden. (`init` offers this step; if you took it, skip to 4.)
 4. In Telegram, open your bot and send it a text message.
 5. The bot replies with a pairing code. Run `ochost pairing approve telegram <code>`.
 

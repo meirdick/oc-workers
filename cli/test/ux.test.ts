@@ -173,3 +173,19 @@ describe("wrangler noise", () => {
     expect(envs[1]?.WRANGLER_LOG).toBe("error");
   });
 });
+
+describe("token files", () => {
+  it("tokenFromText: a bare token, or KEY=value lines with the named key first", async () => {
+    const { tokenFromText, expandHome } = await import("../src/ui.ts");
+    expect(tokenFromText("  123:abc \n")).toBe("123:abc");
+    expect(tokenFromText("TELEGRAM_BOT_TOKEN=123:abc\nTELEGRAM_OWNER_ID=5\n", ["TELEGRAM_BOT_TOKEN"])).toBe(
+      "123:abc",
+    );
+    expect(tokenFromText('# c\nexport CF_ACCESS_TOKEN="tok"\n', ["CF_ACCESS_TOKEN"])).toBe("tok");
+    expect(tokenFromText("OTHER=x\nTOKEN=y", ["TOKEN"])).toBe("y");
+    expect(tokenFromText("OTHER=x", ["TOKEN"])).toBe("x"); // no named key: the first line
+    expect(expandHome("~/a/b", "/home/u")).toBe("/home/u/a/b");
+    expect(expandHome("~", "/home/u")).toBe("/home/u");
+    expect(expandHome("/x", "/home/u")).toBe("/x");
+  });
+});

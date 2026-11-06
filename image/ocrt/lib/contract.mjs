@@ -791,6 +791,36 @@ export function replicaAccess(props, op, key, prefixParam) {
     : { allow: false, status: 403, why: "prefix", scope: "read" };
 }
 
+/**
+ * File storage (docs/11 §8): the OpenClaw storage location `r2` lives under f/<inst>/, stable across gens. Same
+ * per-gen key as the replica. Ops: Put, Get, Head, Delete, ListObjectsV2. No multipart: the ochost-storage plugin
+ * sends one PUT per object (per-object cap, settings files.maxObjectMb).
+ */
+export const filesPrefix = (inst) => `f/${inst}/`;
+export const FILES_OPS = Object.freeze([
+  "PutObject",
+  "GetObject",
+  "HeadObject",
+  "DeleteObject",
+  "ListObjectsV2",
+]);
+/** A request in the files key space: a key, or a list prefix, under f/. */
+export const isFilesTarget = (op, key, prefixParam) =>
+  (op === "ListObjectsV2" ? prefixParam || "" : key || "").startsWith("f/");
+
+/** Gate decision for one files request (pure). Returns {allow, status?, why?, scope}. */
+export function filesAccess(props, op, key, prefixParam) {
+  const spec = S3_OPS.find((o) => o.op === op);
+  if (!spec || !FILES_OPS.includes(op)) return { allow: false, status: 501, why: "op" };
+  const target = op === "ListObjectsV2" ? prefixParam || "" : key || "";
+  const own = filesPrefix(props.inst);
+  if (!target.startsWith(own) || (op !== "ListObjectsV2" && target.length === own.length))
+    return { allow: false, status: 403, why: "prefix", scope: spec.scope };
+  if (spec.scope === "write" && props.mode !== "prod")
+    return { allow: false, status: 403, why: "mode", scope: "write" };
+  return { allow: true, scope: spec.scope };
+}
+
 /** Seed classes (amend §1.6 S1). l0SeedBytes = bytes of the level-0 key with minTxid 1 in this gen. */
 export function seedClass(parsed, bytes, state) {
   if (!parsed) return "other";

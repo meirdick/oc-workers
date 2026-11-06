@@ -152,6 +152,8 @@ export interface BootPlan {
   wakeIgnore?: string[];
   /** docs/12: true → ocsup renders the OpenClaw sandbox keys (backend ochost at SandboxGate). */
   sandbox?: boolean;
+  /** OpenClaw sandbox mode: `non-main` (default: every session but the owner's main chat) or `all`. */
+  sandboxMode?: "non-main" | "all";
   /** Active Control UI origin (custom domain when Access is on, else workers.dev) → gateway.publicOrigin. */
   publicOrigin?: string;
   /** Every origin the Control UI may load from → gateway.controlUi.allowedOrigins. */

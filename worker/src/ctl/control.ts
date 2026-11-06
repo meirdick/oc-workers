@@ -2,6 +2,7 @@
 // wraps this class; everything here runs on node:sqlite in vitest.
 
 import type { Severity } from "../core/contract";
+import { filesPrefix } from "../core/contract";
 import type {
   BeginBootArgs,
   BeginBootResult,
@@ -12,6 +13,7 @@ import type {
   WakeReason,
 } from "../core/types";
 import type { GateLedger } from "../gates/ledger";
+import { filesProbe } from "../gates/replica";
 import { ADAPTERS, adapterByRoute } from "./adapters";
 import {
   alert,
@@ -1135,11 +1137,38 @@ export class ControlCore {
         caps: () => this.ledger?.capsView() ?? null,
         sink: () => sinkInfo(this.c),
         hop: p?.hop ?? (async () => ({ status: 404, ms: 0 })),
+        files: () => filesProbe(this.c.bucket, this.c.inst, this.c.now),
+        filesView: () => this.ledger?.filesView() ?? null,
         sandbox: p?.sandbox ?? (async () => null),
         env: p?.env ?? { access: null, gateway: "" },
       },
       o,
     );
+  }
+
+  /**
+   * docs/11 §8 file storage. GET: usage against the cap. POST /ops/files/purge (`ochost destroy --delete-data`):
+   * delete up to 10 000 objects under f/<inst>/ per call; `more` says call again.
+   */
+  private async opsFiles(r: OpsReq): Promise<OpsRes> {
+    const c = this.c;
+    if (!this.ledger) return { status: 503, body: { error: "no-ledger" } };
+    if (r.method === "GET" && !r.sub[0]) return { status: 200, body: this.ledger.filesView() };
+    if (r.method !== "POST" || r.sub[0] !== "purge") return { status: 404, body: { error: "not found" } };
+    let deleted = 0;
+    for (let i = 0; i < 10; i++) {
+      const l = await c.bucket.list({ prefix: filesPrefix(c.inst), limit: 1000 });
+      const keys = l.objects.map((o) => o.key);
+      if (keys.length) await c.bucket.delete(keys);
+      this.ledger.filesForget(keys);
+      deleted += keys.length;
+      if (!l.truncated) {
+        this.ledger.filesForget(null);
+        this.ring("files", "purge", { deleted });
+        return { status: 200, body: { ok: true, deleted, more: false } };
+      }
+    }
+    return { status: 200, body: { ok: true, deleted, more: true } };
   }
 
   /** /ops/* actions that the Control DO serves (ops.ts does auth and routing; spec §19.2). */
@@ -1361,7 +1390,8 @@ export class ControlCore {
         return opsPairing(c, r, this.pairingDeps());
       case "caps": {
         if (!this.ledger) return { status: 503, body: { error: "no-ledger" } };
-        if (r.method === "GET") return { status: 200, body: this.ledger.capsView() };
+        if (r.method === "GET")
+          return { status: 200, body: { ...this.ledger.capsView(), files: this.ledger.filesView() } };
         if (r.method !== "POST") return { status: 404, body: { error: "not found" } };
         try {
           return { status: 200, body: this.ledger.capsSet(r.body) };
@@ -1369,6 +1399,8 @@ export class ControlCore {
           return { status: 400, body: { error: e instanceof Error ? e.message : String(e) } };
         }
       }
+      case "files":
+        return this.opsFiles(r);
       case "telegram-int":
         return telegramInternal(c, r);
       case "soak-plan":

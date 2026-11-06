@@ -101,10 +101,30 @@ describe("ownerPanel rows", () => {
       "archive age",
       "alerts",
       "dead-man",
+      "file storage",
     ]);
+    expect(by(p.checks, "file storage")).toMatchObject({
+      result: "WARN",
+      detail: "off (no storage location r2)",
+    });
+    expect(p.files).toBeNull();
     expect(by(p.checks, "webhook (Telegram)").detail).toBe("set, 2 pending");
     expect(p.ok).toBe(true);
     expect(p.warns).toBeGreaterThan(0);
+  });
+
+  it("file storage on: prefix and bytes for the Setup row; at 85 % WARN with caps set storage", async () => {
+    const { w, panel } = await setup({
+      doc: doc({ storage: { locations: { r2: { provider: "ochost-r2", settings: { prefix: "f/oc-x" } } } } }),
+    });
+    // 4.25 GB of the default 5 GB, counted by the ledger.
+    (w.core as any).ledger.run("INSERT INTO files_obj (key, bytes, at) VALUES ('f/oc-x/a', 4250000000, 1)");
+    const p = await panel({ fresh: true });
+    expect(p.files).toEqual({ prefix: "f/oc-x/", used: 4.25e9, limit: 5e9 });
+    expect(by(p.connected, "file storage")).toMatchObject({
+      result: "WARN",
+      fix: "ochost caps set storage 10",
+    });
   });
 
   it("colours and fix lines: wrong webhook FAIL, hop 400 gateway FAIL, 429 WARN, high alert FAIL, replica WARN, old archive FAIL", async () => {

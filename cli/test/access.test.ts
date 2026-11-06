@@ -23,6 +23,7 @@ let deployFails = false;
 let order: string[];
 let restartFails = false;
 const hooks: AccessHooks = {
+  accessSeen: async () => true,
   async deploy(ctx) {
     if (deployFails) throw new Error("deploy boom");
     const st = JSON.parse(readFileSync(join(ctx.dir, ".oc-host", "state.json"), "utf8"));

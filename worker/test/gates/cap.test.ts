@@ -607,6 +607,77 @@ describe("/ai/v1 through the Workers AI binding", () => {
     expect(t.used("neurons")).toBeGreaterThan(0);
   });
 
+  it("chat: reasoning_effort reaches env.AI; Gemma gets enable_thinking instead", async () => {
+    const t = setup();
+    await t.post("/ai/v1/chat/completions", chatBody({ reasoning_effort: "low" }));
+    expect((t.aiCalls[0] as AiCall).input.reasoning_effort).toBe("low");
+    const gemma = "@cf/google/gemma-4-26b-a4b-it";
+    await t.post("/ai/v1/chat/completions", chatBody({ model: gemma, reasoning_effort: "none" }));
+    await t.post("/ai/v1/chat/completions", chatBody({ model: gemma, reasoning_effort: "high" }));
+    expect((t.aiCalls[1] as AiCall).input).toEqual({
+      messages: [{ role: "user", content: "ping" }],
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect((t.aiCalls[2] as AiCall).input.chat_template_kwargs).toEqual({ enable_thinking: true });
+    expect((t.aiCalls[2] as AiCall).input.reasoning_effort).toBeUndefined();
+  });
+
+  it("chat: reasoning in a non-streamed answer keeps the OpenAI shape (thinking is renamed)", async () => {
+    const t = setup();
+    const msg = (extra: Record<string, unknown>) => ({
+      choices: [
+        { index: 0, message: { role: "assistant", content: "pong", ...extra }, finish_reason: "stop" },
+      ],
+      usage: { prompt_tokens: 5, completion_tokens: 2, neurons: 1 },
+    });
+    type Out = { choices: { message: Record<string, unknown> }[] };
+    const ask = async () =>
+      ((await (await t.post("/ai/v1/chat/completions", chatBody())).json()) as Out).choices[0]?.message;
+    t.setAi(() => msg({ reasoning_content: "rc" }));
+    expect(await ask()).toEqual({ role: "assistant", content: "pong", reasoning_content: "rc" });
+    t.setAi(() => msg({ reasoning: "r" }));
+    expect(await ask()).toEqual({ role: "assistant", content: "pong", reasoning: "r" });
+    t.setAi(() => msg({ thinking: "th" }));
+    expect(await ask()).toEqual({ role: "assistant", content: "pong", reasoning_content: "th" });
+    t.setAi(() => ({ response: "pong", thinking: "th2", usage: { prompt_tokens: 1, completion_tokens: 1 } }));
+    expect(await ask()).toEqual({ role: "assistant", content: "pong", reasoning_content: "th2" });
+    t.setAi(() => ({ reasoning_content: "only", response: "" }));
+    expect((await ask())?.reasoning_content).toBe("only");
+  });
+
+  it("chat stream: reasoning deltas pass through; thinking and legacy reasoning chunks become reasoning_content", async () => {
+    const t = setup();
+    const oai = (delta: Record<string, unknown>) => ({ choices: [{ index: 0, delta }] });
+    t.setAi(() =>
+      sse(
+        oai({ role: "assistant", reasoning_content: "a" }),
+        oai({ reasoning: "b" }),
+        oai({ thinking: "c" }),
+        { reasoning_content: "d" },
+        { thinking: "e", response: "hi" },
+        oai({ content: "!" }),
+        "data: [DONE]\n\n",
+      ),
+    );
+    const text = await readAll(await t.post("/ai/v1/chat/completions", chatBody({ stream: true })));
+    const deltas = text
+      .split("\n\n")
+      .filter((x) => x.startsWith("data: {"))
+      .map(
+        (x) =>
+          (JSON.parse(x.slice(6)) as { choices: { delta: Record<string, unknown> }[] }).choices[0]?.delta,
+      );
+    expect(deltas).toEqual([
+      { role: "assistant", reasoning_content: "a" },
+      { reasoning: "b" },
+      { reasoning_content: "c" },
+      { role: "assistant", reasoning_content: "d" },
+      { reasoning_content: "e", content: "hi" },
+      { content: "!" },
+    ]);
+    expect(text.endsWith("data: [DONE]\n\n")).toBe(true);
+  });
+
   it("chat errors: capacity → 429 with retry-after, bad input → 400, other → 502; nothing charged", async () => {
     const t = setup();
     const cases: [string, number][] = [

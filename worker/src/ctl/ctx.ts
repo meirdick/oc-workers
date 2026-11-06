@@ -40,6 +40,7 @@ export interface Settings {
   chain: { rebaseAfterHours: number; rebaseAfterSnapshots: number; tagWarn: number };
   gens: { churnPerDay: number };
   storage: { pruneAtMb: number; refuseAtMb: number };
+  files: { capGb: number; maxObjectMb: number };
   cost: { releaseBelowPct: number };
   login: {
     sessionDays: number;
@@ -63,7 +64,7 @@ export interface Settings {
   /** Path B of §12.4 (gate records mark rows replicated). Off until T7b item 9. */
   inboxReplicatedByGate: boolean;
   /** docs/12: agent exec and file tools in the SandboxSession container. Default off. Env-owned (deploy). */
-  sandbox?: "on" | "off";
+  sandbox?: "on" | "all" | "off";
 }
 
 /** Settings built from the tunables table (core/tunables.ts defaults) plus the env-only fields. */

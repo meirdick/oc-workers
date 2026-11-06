@@ -3,8 +3,10 @@
 // Re-run safe: each step checks before it acts; a second run with nothing changed makes no deploy, no
 // secret change and no restart. State goes to .oc-host/state.json after each step.
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { existsSync, rmSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { chooseGateway, gateEndpoint, gateSmoke } from "./ai-gateway.ts";
 import {
   bucketOf,
@@ -29,6 +31,7 @@ import {
   type State,
   writeState,
 } from "./deploy.ts";
+import { askPost, materializeToken, postOptionsOf, postSteps, runPost } from "./init-post.ts";
 import {
   AI_SECRET,
   planSecrets,
@@ -106,6 +109,8 @@ export interface InitOptions {
   fakeTelegram?: boolean;
   /** S1.11: the owner's Telegram user id; its first DM is approved without a code. */
   telegramOwner?: string;
+  /** docs/20 §1: the sandbox setting goes into oc-host.jsonc before the first deploy. */
+  sandbox?: "on" | "all" | "off";
 }
 
 export interface InitProbes {
@@ -220,7 +225,16 @@ export function plan(o: InitOptions, p: InitProbes): InitStep[] {
       if (p.interactive) steps.push({ kind: "r2-enable" });
       else fails.push(r2NotEnabled());
     }
-    if (p.worker !== "unknown" && p.worker.exists && !p.local.state) {
+    if (p.worker !== "unknown" && p.worker.exists && !p.local.state && !p.worker.vars?.OC_INST) {
+      // A Worker of that name that is not ours (no OC_INST var): never adopt it.
+      fails.push(
+        new CliError(
+          `a Worker named ${o.name} exists on this account, and it is not an oc-host install`,
+          `rerun with --name <other>, or delete it: npx wrangler delete --name ${o.name}`,
+          EXIT.manual,
+        ),
+      );
+    } else if (p.worker !== "unknown" && p.worker.exists && !p.local.state) {
       if (o.adopt) steps.push({ kind: "adopt", confirm: false });
       else if (p.interactive) steps.push({ kind: "adopt", confirm: true });
       else
@@ -429,12 +443,16 @@ async function saveStep(p: ProjectPaths, patch: Partial<State>): Promise<State> 
 async function updateConfigFile(
   path: string,
   c: OcHostConfig,
-  patch: { gateway?: string; model?: string; instance?: string },
+  patch: { gateway?: string; model?: string; instance?: string; sandbox?: "on" | "all" | "off" },
 ) {
   let text = await readFile(path, "utf8");
   let changed = false;
   if (patch.instance && patch.instance !== c.instance) {
     text = setTopLevelJsonc(text, "instance", patch.instance);
+    changed = true;
+  }
+  if (patch.sandbox && patch.sandbox !== (c.sandbox ?? "off")) {
+    text = setTopLevelJsonc(text, "sandbox", patch.sandbox);
     changed = true;
   }
   const llm = { ...c.llm };
@@ -609,6 +627,7 @@ export async function runInit(ctx: Ctx, o: InitOptions, steps: InitStep[], g: Ga
               instance: o.instance,
               gateway: o.gateway,
               model: o.model,
+              sandbox: o.sandbox,
             })
           ) {
             config = await loadConfig(p.config);
@@ -773,6 +792,7 @@ export async function runInit(ctx: Ctx, o: InitOptions, steps: InitStep[], g: Ga
           const cfg = config as OcHostConfig;
           const doc = renderOpenclawDoc(
             ai || (!o.skipAi && state.gateway) ? { model: ai?.model ?? cfg.llm.primary } : null,
+            { bucket: bucketOf(cfg), inst: cfg.inst },
           );
           const sha = sha256(JSON.stringify(doc));
           const ops = makeOps(ctx, url, controlToken);
@@ -1087,7 +1107,15 @@ export function initOptions(ctx: Ctx, existingName?: string): InitOptions {
     fakeTelegram:
       typeof ctx.args.flags["fake-telegram"] === "boolean" ? ctx.args.flags["fake-telegram"] : undefined,
     telegramOwner: telegramOwnerOf(f("telegram-owner")),
+    sandbox: sandboxOf(f("sandbox")),
   };
+}
+
+/** --sandbox on|all|off (docs/12; `on` = every session but the owner's main chat). */
+export function sandboxOf(v: string | undefined): "on" | "all" | "off" | undefined {
+  if (v === undefined) return undefined;
+  if (v === "on" || v === "all" || v === "off") return v;
+  throw new CliError(`--sandbox ${v} is not on, all or off`, "pass --sandbox on", EXIT.usage);
 }
 
 /** S1.11: --telegram-owner <numeric Telegram user id>. */
@@ -1115,6 +1143,7 @@ export async function initCommand(ctx: Ctx): Promise<number> {
     } catch {}
   }
   const o = initOptions(ctx, existingName);
+  const post0 = postOptionsOf(ctx);
   ctx.ui.step(`ochost init in ${ctx.dir} (Worker ${o.name})`, "init");
   const t0 = ctx.now();
   const g = await gatherProbes(ctx, o);
@@ -1122,5 +1151,30 @@ export async function initCommand(ctx: Ctx): Promise<number> {
   const steps = plan(o, g.probes);
   const r = await runInit(ctx, o, steps, g);
   ctx.ui.result(r);
+  // docs/20 §1: the setup the owner would run next, from flags, or one question each on a fresh install only
+  // (U5: a rerun never prompts).
+  const fresh = !g.probes.local.state;
+  const post = fresh ? await askPost(ctx, post0, r.fakeTelegram) : post0;
+  const { o: withFile, cleanup } = await materializeToken(post, {
+    exists: existsSync,
+    writeTemp: async (text) => {
+      const dir = await mkdtemp(join(tmpdir(), "ochost-"));
+      const file = join(dir, "telegram.env");
+      await writeFile(file, text, { mode: 0o600 });
+      return file;
+    },
+    remove: (f) => rmSync(dirname(f), { recursive: true, force: true }),
+  });
+  try {
+    const list = postSteps(withFile, r.fakeTelegram);
+    if (list.length) {
+      const { failed } = await runPost(ctx, list);
+      if (withFile.accessDomain && !failed.includes("access"))
+        ctx.ui.out(`Console: https://${withFile.accessDomain} (behind Cloudflare Access)`);
+      if (failed.length) ctx.ui.out(`Not finished: ${failed.join(", ")}. Run the command printed above.`);
+    }
+  } finally {
+    cleanup();
+  }
   return 0;
 }

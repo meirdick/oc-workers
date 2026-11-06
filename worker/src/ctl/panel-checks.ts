@@ -158,6 +158,51 @@ export function checkHop(doc: any, h: HopInfo | null): Check {
   );
 }
 
+/** The newest file storage probe (PUT, GET, DELETE of 1 byte under f/<inst>/), cached one minute. */
+export interface FilesProbe {
+  at: number;
+  ok: boolean;
+  ms: number;
+  error?: string;
+}
+
+/** Bytes, decimal: 1.2 GB, 340 MB, 12 kB. */
+export function bytesStr(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  if (n >= 1e3) return `${Math.round(n / 1e3)} kB`;
+  return `${n} B`;
+}
+
+/**
+ * Capability row "file storage" (docs/11 §8): storage location r2 on the install's R2 bucket through the gate.
+ * Off when the config has no location r2 of provider ochost-r2. FAIL when the probe fails; the cap colors the rest.
+ */
+export function checkFiles(
+  doc: any,
+  p: FilesProbe | null,
+  v: { used: number; limit: number } | null,
+  next: number,
+): Check {
+  const name = "file storage";
+  if (doc?.storage?.locations?.r2?.provider !== "ochost-r2")
+    return warn(name, "off (no storage location r2)", "ochost config render, then ochost restart");
+  if (!p) return warn(name, "not checked yet", "ochost doctor (it checks now)");
+  if (!p.ok)
+    return fail(
+      name,
+      `probe failed: ${p.error ?? "unknown"}`,
+      "ochost logs --source ctl; check the R2 bucket binding (ochost deploy)",
+    );
+  const use = v ? `; ${bytesStr(v.used)} of ${bytesStr(v.limit)} used` : "";
+  const detail = `on, location r2, put+get+delete ${p.ms} ms${use}`;
+  const pct = v && v.limit > 0 ? v.used / v.limit : 0;
+  const fix = `ochost caps set storage ${next}`;
+  if (pct >= 1) return fail(name, `${detail}; writes are refused`, fix);
+  if (pct >= 0.8) return warn(name, detail, fix);
+  return pass(name, detail);
+}
+
 export function checkReplica(s: any): Check {
   const why: string[] = [];
   if (s?.rpo === "seeding") why.push("replica seeding");
@@ -259,6 +304,7 @@ const ALERT_FIX: [RegExp, string][] = [
   [/webhook|telegram/, "ochost logs --source ocsup; ochost restart"],
   [/^sbx-/, "ochost sandbox status; ochost logs --source ctl"],
   [/^cap-|budget/, "ochost caps"],
+  [/^storage-cap/, "ochost caps; ochost caps set storage <n>, or delete files"],
   [/gate|replica|r2/, "ochost logs --source gate"],
   [/archive|drill/, "ochost backup list; ochost logs --source ctl"],
   [/^upgrade-regression/, "ochost upgrade rollback"],

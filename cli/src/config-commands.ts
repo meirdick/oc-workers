@@ -24,6 +24,7 @@ import {
   wantRestart,
 } from "./cmd-util.ts";
 import { parseJsonc, RENDER_VERSION, validateConfig, workerSettings } from "./config.ts";
+import { bucketOf } from "./destroy.ts";
 import { currentConfig, proposeConfig } from "./model.ts";
 import {
   CliError,
@@ -112,7 +113,7 @@ function workingCopyText(ver: number, doc: unknown): string {
  * the Worker's settings document and oc-host.jsonc change together, and the Worker applies it at its next op.
  * `config settings` shows the document, the effective values and the versions.
  */
-async function settingsCommand(ctx: OpsCtx, verb: string): Promise<number> {
+export async function settingsCommand(ctx: OpsCtx, verb: string): Promise<number> {
   const ops = opsClient(ctx);
   const path = ctx.args.positionals[1];
   const spec = path ? specOfFile(path) : undefined;
@@ -228,7 +229,8 @@ export async function config(ctx: OpsCtx): Promise<number> {
     await lo.post("/ops/render-check", { renderVersion: RENDER_VERSION }).catch(() => undefined);
     let r: Awaited<ReturnType<typeof renderIntoConfig>>;
     try {
-      r = await renderIntoConfig(lo, { dryRun });
+      const i = loadInstall(ctx);
+      r = await renderIntoConfig(lo, { dryRun, files: { bucket: bucketOf(i), inst: i.inst } });
     } catch (e) {
       throw new CliError(String((e as Error).message), "ochost config pull, then ochost config render");
     }

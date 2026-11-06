@@ -1,7 +1,7 @@
 // `ochost config render` and the render step of `ochost deploy`: old installs keep the capability keys they were
 // created with. Merge the CLI's current renderCapabilities() into the live config as a new version.
 // Render keys win, every other key stays. The document records `ochost.renderVersion` (cli/src/config.ts).
-import { RENDER_VERSION, renderCapabilities } from "./config.ts";
+import { RENDER_VERSION, renderCapabilities, renderModelRoles } from "./config.ts";
 
 /** What the merge needs from the Worker: GET and POST of /ops/config (an ops client or a plain fetch). */
 export interface ConfigIo {
@@ -31,9 +31,12 @@ export interface RenderDiff {
 }
 
 /** Pure: the doc with the current render merged in, and which top-level keys it added or changed. */
-export function mergeRender(doc: Record<string, any>): { doc: Record<string, any>; diff: RenderDiff } {
-  const render = { ...renderCapabilities(), ochost: { renderVersion: RENDER_VERSION } };
-  const next = deepMerge(doc, render) as Record<string, any>;
+export function mergeRender(
+  doc: Record<string, any>,
+  files?: { bucket: string; inst: string },
+): { doc: Record<string, any>; diff: RenderDiff } {
+  const render = { ...renderCapabilities(files), ochost: { renderVersion: RENDER_VERSION } };
+  const next = renderModelRoles(deepMerge(doc, render) as Record<string, any>);
   const diff: RenderDiff = { added: [], changed: [], same: [] };
   for (const k of Object.keys(next).sort()) {
     if (!(k in doc)) diff.added.push(k);
@@ -59,7 +62,7 @@ export interface RenderResult {
  */
 export async function renderIntoConfig(
   io: ConfigIo,
-  o: { dryRun?: boolean; onlyIfOlder?: boolean } = {},
+  o: { dryRun?: boolean; onlyIfOlder?: boolean; files?: { bucket: string; inst: string } } = {},
 ): Promise<RenderResult> {
   const empty: RenderDiff = { added: [], changed: [], same: [] };
   const l = await io.get("/ops/config");
@@ -73,7 +76,7 @@ export async function renderIntoConfig(
   const docRenderVersion = renderVersionOf(doc);
   if (o.onlyIfOlder && docRenderVersion >= RENDER_VERSION)
     return { action: "none", from, ver: from, docRenderVersion, diff: empty };
-  const m = mergeRender(doc);
+  const m = mergeRender(doc, o.files);
   if (o.dryRun) return { action: "dry", from, ver: from, docRenderVersion, diff: m.diff };
   const r = await io.post("/ops/config", { doc: m.doc, baseVer: from });
   if (r.status === 409)

@@ -7,6 +7,7 @@ import { sourceOf } from "../src/logs.ts";
 import { parseArgs, redact, registerSecret, stripJsonc } from "../src/ops-lib.ts";
 import { setBlockKey, validProactive } from "../src/sleep.ts";
 import { alternatives, costRange, sleepState, vmLine } from "../src/status.ts";
+import { wranglerCommand } from "../src/wrangler.ts";
 import { FakeOps, fakeClock, fakeRunner, installDir, OWNER, run, statusBody, T0 } from "./ops-fake.ts";
 
 let f: FakeOps;
@@ -600,15 +601,7 @@ describe("auth", () => {
     const r = await run("auth", ["rotate", "--control", "--dir", dir], { run: fr.run });
     expect(r.code).toBe(0);
     const put = fr.calls[0];
-    expect(put?.args).toEqual([
-      "--no-install",
-      "wrangler",
-      "secret",
-      "put",
-      "CONTROL_TOKEN",
-      "--name",
-      "oc-m5-test",
-    ]);
+    expect(put?.args.slice(-5)).toEqual(["secret", "put", "CONTROL_TOKEN", "--name", "oc-m5-test"]);
     expect(put?.input).toMatch(/^[0-9a-f]{64}$/);
     const p = join(dir, ".oc-host", "control-token");
     expect(readFileSync(p, "utf8").trim()).toBe(put?.input);
@@ -836,7 +829,8 @@ describe("destroy", () => {
     const fr = fakeRunner(answer);
     const r = await run("destroy", ["--dir", dir, "--yes"], { run: fr.run });
     expect(r.code).toBe(0);
-    const dels = fr.calls.filter((c) => c.args.includes("delete")).map((c) => c.args.slice(2).join(" "));
+    const pre = wranglerCommand()[1].length; // the pinned wrangler prefix (bin path, or npx args)
+    const dels = fr.calls.filter((c) => c.args.includes("delete")).map((c) => c.args.slice(pre).join(" "));
     expect(dels).toEqual([
       "delete oc-m5-test --force",
       "containers delete app1",
@@ -856,6 +850,44 @@ describe("destroy", () => {
     });
     expect(r.code).toBe(0);
     expect(fr.calls.some((c) => c.args.join(" ").includes("r2 bucket delete oc-host-a1b2c3"))).toBe(true);
+  });
+
+  it("--delete-data purges file storage f/<inst>/ through the Worker first, until done; without it files stay", async () => {
+    let left = 2500;
+    const order: string[] = [];
+    f.routes.push((q) => {
+      if (q.path !== "/ops/files/purge" || q.method !== "POST") return undefined;
+      order.push("purge");
+      const n = Math.min(left, 1000);
+      left -= n;
+      return { status: 200, body: { ok: true, deleted: n, more: left > 0 } };
+    });
+    const fr = fakeRunner((c) => {
+      if (c.args.includes("delete")) {
+        const pre = wranglerCommand()[1].length;
+        order.push(c.args.slice(pre, pre + 2).join(" "));
+      }
+      return answer(c);
+    });
+    const dry = await run("destroy", ["--dir", dir, "--dry-run", "--delete-data"], { run: fr.run });
+    expect(dry.err).toMatch(/plan: delete file storage f\/a1b2c3\/ \(storage location r2\)/);
+    const r = await run("destroy", ["--dir", dir, "--yes", "--delete-data", "--bucket", "oc-host-a1b2c3"], {
+      run: fr.run,
+    });
+    expect(r.code).toBe(0);
+    expect(r.err).toMatch(/done: file storage f\/a1b2c3\/, 2500 object\(s\)/);
+    expect(order.slice(0, 4)).toEqual(["purge", "purge", "purge", "delete oc-m5-test"]);
+    expect(left).toBe(0);
+  });
+
+  it("without --delete-data no purge runs and the plan keeps the files", async () => {
+    const fr = fakeRunner(answer);
+    const r = await run("destroy", ["--dir", dir, "--yes"], { run: fr.run });
+    expect(r.code).toBe(0);
+    expect(r.err).toMatch(
+      /plan: keep bucket oc-host-a1b2c3 \(data, file storage f\/a1b2c3\/ and install marker\)/,
+    );
+    expect(f.calls("POST", "/ops/files/purge")).toHaveLength(0);
   });
 });
 

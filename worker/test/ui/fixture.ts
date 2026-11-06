@@ -89,6 +89,11 @@ function panelOf(fx: Fx, now: number): Panel {
         detail: `on; ${ws} of 100 today`,
         ...(fx === "running" ? { fix: "ochost caps set websearch 200" } : {}),
       },
+      {
+        name: "file storage",
+        result: "PASS",
+        detail: `on, location r2, put+get+delete 41 ms; 312 MB of 5.0 GB used${cached}`,
+      },
       { name: "browser and web fetch", result: "PASS", detail: "on; 40s of 3600s today; 31 of 2000 today" },
       {
         name: "media",
@@ -167,6 +172,7 @@ function panelOf(fx: Fx, now: number): Panel {
       ],
       nextMaintenanceAt: now + 15 * H,
     },
+    files: { prefix: "f/oc-meir/", used: 312e6, limit: 5e9 },
     channels: {
       wake: { userIds: ["51234987"], groupChatIds: [] },
       pairing: fx === "running" ? [{ code: "k7m2qa", id: "88213", name: "Dana", count: 2, held: 1 }] : [],

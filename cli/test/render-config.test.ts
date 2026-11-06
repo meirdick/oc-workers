@@ -81,6 +81,17 @@ describe("config render and deploy", () => {
     expect(posts[0].baseVer).toBe(3);
     expect(posts[0].doc.ochost.renderVersion).toBe(RENDER_VERSION);
     expect(posts[0].doc.plugins.entries.firecrawl.config.webFetch.baseUrl).toBe(FETCH_URL);
+    // docs/11 §8: storage location r2 on the install's own bucket, its own prefix, no credential in the doc
+    expect(posts[0].doc.storage.locations.r2).toEqual({
+      provider: "ochost-r2",
+      settings: { endpoint: "http://127.0.0.1:18792", bucket: "oc-host-a1b2c3", prefix: "f/a1b2c3" },
+      encryption: "none",
+    });
+    expect(posts[0].doc.plugins.entries["ochost-storage"]).toEqual({
+      enabled: true,
+      config: { location: "r2" },
+    });
+    expect(JSON.stringify(posts[0].doc)).not.toMatch(/accessKeyId|secretAccessKey|ocrt-g/);
     expect(r.out).toMatch(/config version 4 \(was 3\): added .*ochost.*; changed .*plugins/);
     expect(r.out).toMatch(/ochost restart applies it now/);
     const again = await run("config", ["render", "--dir", dir]);
@@ -102,9 +113,12 @@ describe("config render and deploy", () => {
       ui: { warn: (s: string) => warns.push(s) },
       fetch: (u: string, init?: RequestInit) => fetch(u, init),
     } as any;
-    const r = await renderStep(ctx, f.url, OWNER);
+    const r = await renderStep(ctx, f.url, OWNER, { bucket: "oc-host-a1b2c3", inst: "a1b2c3" });
     expect(r?.action).toBe("merged");
-    expect(warns[0]).toMatch(/config render 0 -> 1: new config version 4 .*fix: ochost restart/);
+    expect(warns[0]).toMatch(
+      new RegExp(`config render 0 -> ${RENDER_VERSION}: new config version 4 .*fix: ochost restart`),
+    );
+    expect(posts[0].doc.storage.locations.r2.settings.prefix).toBe("f/a1b2c3");
     expect(posts).toHaveLength(1);
     const r2 = await renderStep(ctx, f.url, OWNER);
     expect(r2?.action).toBe("none");

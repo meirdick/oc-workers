@@ -24,8 +24,10 @@ The binding routes the call through an AI Gateway, which gives logs and spend li
 - Some models (gpt-oss-120b, llama-3.3-70b, qwen3-30b) refuse an assistant message with `content: null`. OpenClaw sends that on a tool call. The gate changes it to an empty string.
 
 ```sh
+ochost model                 # the model of each role
 ochost model list            # Workers AI models with tool calls; uses your wrangler login
 ochost model set <id>        # new primary model; --fallback <id> adds a fallback
+ochost model set --role utility <id>     # utility or compaction model
 ochost model bench           # agent turns with tool calls through the gate
 ochost ai-gateway setup      # choose the gateway; model test through the gate
 ```
@@ -48,6 +50,20 @@ Do this once in the dashboard. The AI Gateway API needs a token that `init` does
 <Render file="gateway-key-steps" />
 
 Cloudflare uses only a key with the alias `default` on this path. Without a key, the call falls back to Unified Billing (Cloudflare credit), or fails if the gateway has **Require provider credentials** on. The gateway needs authentication on, which the auto-made `default` has. The gate does not count Claude calls in neurons, only as requests. Set a spend limit on the gateway in the dashboard.
+
+## Thinking and the utility model
+
+Reasoning models think before they answer. This costs time and neurons. oc-workers sets the level for you:
+
+- The main model runs at thinking `low`.
+- The utility model runs at `off`. OpenClaw uses it for titles, recaps and narration.
+- The compaction model also runs at `off`. It writes the summary when a chat gets long.
+
+The default utility and compaction model is `@cf/google/gemma-4-26b-a4b-it`. Change it with `ochost model set --role utility <id>` or `--role compaction <id>`. GLM-5.3 cannot switch thinking off, so it runs at `low`.
+
+`ochost model set` refuses a model that has a deprecation date. This check needs an AI token (`--ai-token-file`). Without a token, it prints a warning.
+
+Run `ochost config render` and `ochost restart` to apply this to an older install. `ochost model bench --role utility` tests the model of one role at the effort that role uses.
 
 ## Benchmark
 

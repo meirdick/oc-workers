@@ -495,7 +495,7 @@ export async function deployCommand(ctx: Ctx): Promise<number> {
   ctx.ui.result({ ok: true, url: state.url, action: r.action, attempts: r.attempts, ms: r.ms });
   ctx.ui.out(r.action === "none" ? "nothing to deploy" : `deployed ${state.url}`);
   await warnTokenEra(ctx, url, String(token));
-  await renderStep(ctx, url, String(token));
+  await renderStep(ctx, url, String(token), { bucket: bucketOf(config), inst: config.inst });
   await pruneStep(ctx, url, String(token));
   return 0;
 }
@@ -526,7 +526,12 @@ export async function pruneStep(ctx: Ctx, url: string, token: string): Promise<v
  * (render keys win, owner keys stay; cli/src/render-config.ts). The running gateway keeps the old config until the
  * next start, so say so. Best effort: a failure warns and never fails the deploy.
  */
-export async function renderStep(ctx: Ctx, url: string, token: string): Promise<RenderResult | null> {
+export async function renderStep(
+  ctx: Ctx,
+  url: string,
+  token: string,
+  files?: { bucket: string; inst: string },
+): Promise<RenderResult | null> {
   const call = async (method: string, path: string, body?: unknown) => {
     const res = await ctx.fetch(`${url}${path}`, {
       method,
@@ -549,7 +554,7 @@ export async function renderStep(ctx: Ctx, url: string, token: string): Promise<
     await call("POST", "/ops/render-check", { renderVersion: RENDER_VERSION }).catch(() => undefined);
     const r = await renderIntoConfig(
       { get: (p) => call("GET", p), post: (p, b) => call("POST", p, b) },
-      { onlyIfOlder: true },
+      { onlyIfOlder: true, files },
     );
     if (r.action === "merged")
       ctx.ui.warn(

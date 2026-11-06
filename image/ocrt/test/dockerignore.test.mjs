@@ -13,4 +13,8 @@ describe("image/.dockerignore", () => {
     assert.ok(lines.includes("!ocrt/plugins/"));
     assert.ok(fs.existsSync(new URL("../plugins/ochost-sandbox/openclaw.plugin.json", import.meta.url)));
   });
+  it("lets the ochost-storage plugin into the build context (Dockerfile COPY plugins/ochost-storage/)", () => {
+    assert.ok(lines.includes("!plugins/ochost-storage/"));
+    assert.ok(fs.existsSync(new URL("../../plugins/ochost-storage/openclaw.plugin.json", import.meta.url)));
+  });
 });

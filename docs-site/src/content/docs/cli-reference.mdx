@@ -40,11 +40,11 @@ An error is one line: `Failed: <you see> — fix: <do this>`. A warning is `WARN
 
 | Command | Flags | Does |
 |---|---|---|
-| `init [dir]` | `--account-id <id>`, `--name <name>`, `--subdomain <name>`, `--adopt`, `--gateway <id>` (`none` = no gateway), `--ai-token-file <file>` (optional), `--model <id>`, `--instance <v/G/D>`, `--bucket <name>`, `--skip-ai`, `--no-open`, `--accept-loss`, `--verbose`, `--fake-telegram`, `--telegram-owner <id>` | Set up an install end to end. Safe to rerun. `--telegram-owner` records your Telegram user id: your first direct message to the bot is approved without a pairing code. |
+| `init [dir]` | `--account-id <id>`, `--name <name>`, `--subdomain <name>`, `--adopt`, `--gateway <id>` (`none` = no gateway), `--ai-token-file <file>` (optional), `--model <id>`, `--instance <v/G/D>`, `--bucket <name>`, `--skip-ai`, `--no-open`, `--accept-loss`, `--verbose`, `--fake-telegram`, `--telegram-owner <id>`, `--telegram-token-file <file>`, `--sandbox on\|all\|off`, `--alerts ntfy\|webhook`, `--alerts-url <https URL>`, `--access-domain <host>`, `--access-token-file <file>` | Set up an install end to end. Safe to rerun. `--telegram-owner` records your Telegram user id: your first direct message to the bot is approved without a pairing code. The last five flags run the setup after the install: Telegram, alerts, Access. On a fresh interactive install, `init` asks for Telegram and Access; Enter skips. Alerts are flags only. |
 | `deploy` | `--force`, `--require-archive` | Re-render `.oc-host/wrangler.jsonc` and deploy when the deploy hash changed. A live install gets a pre-upgrade archive first. |
 | `destroy` | `--dry-run`, `--yes`, `--delete-data`, `--bucket <name>` | Delete the Worker, the runtime and sandbox container apps and their image tags. Keeps the R2 bucket unless `--delete-data`. |
 
-Defaults for `init`: Worker name `oc-workers`; instance `2/6/20` (vCPU, GiB, GB; the floor is `2/6/16`, the maximum is 4 vCPU, 12 GiB, 20 GB); model `@cf/deepseek-ai/deepseek-v4.1-flash-1017`; gateway `default`; bucket `oc-workers-<inst>`.
+Defaults for `init`: Worker name `oc-host`; instance `2/6/20` (vCPU, GiB, GB; the floor is `2/6/16`, the maximum is 4 vCPU, 12 GiB, 20 GB); model `@cf/deepseek-ai/deepseek-v4.1-flash-1017`; gateway `default`; bucket `oc-host-<inst>`.
 
 `--adopt` manages an existing install from this directory. It makes a new owner token and changes no image. `--accept-loss` allows a fresh install over existing data. `--skip-ai` installs with no model.
 
@@ -114,7 +114,7 @@ Config and secret changes apply when the gateway starts: at the next wake, or no
 | `caps` | | Show the daily budgets. |
 | `caps set <browser\|neurons\|requests\|websearch\|exec\|sandbox> <n>` | | Set one budget. |
 | `sandbox [status]` | | Sandbox state, last backup, exec and sandbox budgets. |
-| `sandbox on\|off` | | Write `sandbox` in `oc-host.jsonc`. Then `ochost deploy` and `ochost restart`. |
+| `sandbox on\|off` | `--all` | Write `sandbox` in `oc-host.jsonc`: `on` sandboxes every session but your main chat, `on --all` every session. Then `ochost deploy` and `ochost restart`. |
 | `sandbox sleep` | | Back up the sandbox workspace and stop it. |
 
 ## Access and alerts

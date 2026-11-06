@@ -200,6 +200,8 @@ export class World {
       unsigned?: boolean;
       /** Declared x-amz-content-sha256 (overrides the mode). */
       payload?: string;
+      /** Signed host (default the replica proxy; the files forwarder is 127.0.0.1:18792). */
+      host?: string;
     } = {},
   ): Promise<Response> {
     const gen = o.keyGen ?? this.props.gen;
@@ -225,7 +227,7 @@ export class World {
       : signRef({
           method,
           target,
-          host: "127.0.0.1:18790",
+          host: o.host ?? "127.0.0.1:18790",
           keyId: `ocrt-g${gen}-${iid}`,
           secret,
           payloadHash: payload,

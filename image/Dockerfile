@@ -73,6 +73,8 @@ RUN set -eux; mkdir -p /tmp/ch; cd /tmp/ch; \
   test -d /opt/oc-plugins/slack/node_modules/@slack/bolt; test -d /opt/oc-plugins/sms/node_modules/zod; \
   rm -rf /tmp/ch
 COPY plugins/cf-web-search/ /opt/oc-bundled/cf-web-search/
+# docs/11 §8: storage provider ochost-r2 and the file_store tool (R2 through the gate). Plain ESM, no dependency.
+COPY plugins/ochost-storage/ /opt/oc-bundled/ochost-storage/
 COPY ocrt/ /opt/ocrt/
 COPY probe.sh /opt/ocrt/probe.sh
 COPY native/nodump.c /tmp/nodump.c
@@ -95,7 +97,7 @@ COPY --from=tools /out/sbin/nft /usr/sbin/nft
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /opt/ocrt /opt/ocrt
 COPY --from=tools /opt/oc-plugins /opt/oc-plugins
-# firecrawl and cf-web-search are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
+# firecrawl, cf-web-search and ochost-storage are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
 COPY --from=tools /opt/oc-bundled/ /app/dist/extensions/
 COPY --from=tools /opt/oc-nm/ /app/node_modules/
 USER root

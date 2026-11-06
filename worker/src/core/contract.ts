@@ -73,6 +73,18 @@ export const replicaAccess = C.replicaAccess as (
   key: string | null,
   prefix?: string | null,
 ) => { allow: boolean; status?: number; why?: string; scope?: string; checkEach?: string };
+export const filesPrefix = C.filesPrefix as (inst: string) => string;
+export const isFilesTarget = C.isFilesTarget as (
+  op: string,
+  key: string | null,
+  prefix?: string | null,
+) => boolean;
+export const filesAccess = C.filesAccess as (
+  props: { inst: string; mode: string },
+  op: string,
+  key: string | null,
+  prefix?: string | null,
+) => { allow: boolean; status?: number; why?: string; scope?: string };
 export const seedClass = C.seedClass as (
   parsed: LtxKey | null,
   bytes: number,

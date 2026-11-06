@@ -38,6 +38,11 @@ const PANEL: Panel = {
       detail: "on; 85 of 100 today",
       fix: "ochost caps set websearch 200",
     },
+    {
+      name: "file storage",
+      result: "PASS",
+      detail: "on, location r2, put+get+delete 38 ms; 1.2 GB of 5.0 GB used",
+    },
     { name: "alerts sink", result: "FAIL", detail: "not configured", fix: "ochost alerts setup" },
   ],
   alerts: {
@@ -88,6 +93,7 @@ const PANEL: Panel = {
     ],
     nextMaintenanceAt: NOW + 3_600_000,
   },
+  files: { prefix: "f/oc-demo/", used: 1.2e9, limit: 5e9 },
   channels: {
     wake: { userIds: ["999"], groupChatIds: [] },
     pairing: [{ code: "abc234", id: "777", name: "Zed <b>", count: 2, held: 1 }],
@@ -291,6 +297,9 @@ describe("owner panel page", () => {
     expect(su).toContain('name="code" value="abc234"');
     expect(su).toContain('name="verb" value="websearch"');
     expect(su).toContain('name="from" value="100"');
+    expect(su).toMatch(
+      /<td class="nm">File storage<\/td><td class="w"><span class="st"><span class="dot ok"[\s\S]*?On, prefix f\/oc-demo\/, 1\.2 GB of 5\.0 GB used<\/span><\/span><\/td><td class="cm">.*?<code>ochost caps set storage &lt;n&gt;<\/code>/,
+    );
 
     // Overview, health: status as a dot and a word, fix lines; Setup's rows are not repeated. Cost: the strip, the
     // guard (holding: a warning dot and the fix line), the daily budgets as meters (bars as classes).
@@ -298,6 +307,7 @@ describe("owner panel page", () => {
       /<td class="nm">web search<\/td><td class="tm"><span class="st"><span class="dot warn" aria-hidden="true"><\/span><span>Warning<\/span>.*Fix: <code>ochost caps set websearch 200<\/code>/,
     );
     expect(ov).not.toContain(">alerts sink<");
+    expect(ov).toContain("on, location r2, put+get+delete 38 ms; 1.2 GB of 5.0 GB used");
     expect(ov).toContain('<i class="w17"></i>');
     expect(ov).toContain("Cost guard is holding the install awake");
     expect(ov).toContain("Fix: <code>ochost sleep status</code>");

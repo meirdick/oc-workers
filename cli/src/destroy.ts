@@ -3,6 +3,8 @@
 // M7 live F5: the sandbox app and its image tags were left behind) and their registry images. Keeps
 // the bucket oc-host-<inst> and its install marker unless --delete-data (asks the bucket name back).
 // guess: deleting the Worker leaves the container app and images, so they are deleted one by one.
+// docs/11 §8: --delete-data first deletes the file storage objects f/<inst>/ through the Worker (POST /ops/files/purge),
+// while the Worker still exists; without --delete-data they stay in the bucket with the archives and the replica.
 // `images list --filter` takes no `^` anchor (live 2026-11-01: `^name-` matched nothing); the prefix is checked here.
 import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -17,6 +19,7 @@ import {
   loadInstall,
   type OpsCtx,
   oneLine,
+  opsClient,
   redact,
   STATE_DIR,
   wrangler,
@@ -36,6 +39,7 @@ export interface DestroyPlan {
   sandboxApp: { id: string; name: string } | null;
   images: string[];
   bucket: string;
+  inst: string;
   deleteData: boolean;
 }
 
@@ -71,7 +75,7 @@ export async function planDestroy(ctx: OpsCtx, i: Install, deleteData: boolean):
       ...repos.filter((r) => r.name.startsWith(prefix)).flatMap((r) => r.tags.map((t) => `${r.name}:${t}`)),
     );
   }
-  return { worker: i.name, app, sandboxApp, images, bucket: bucketOf(i), deleteData };
+  return { worker: i.name, app, sandboxApp, images, bucket: bucketOf(i), inst: i.inst, deleteData };
 }
 
 export function planLines(p: DestroyPlan): string[] {
@@ -80,9 +84,10 @@ export function planLines(p: DestroyPlan): string[] {
     p.app ? `delete container app ${p.app.name} (${p.app.id})` : "no container app found",
     ...(p.sandboxApp ? [`delete container app ${p.sandboxApp.name} (${p.sandboxApp.id})`] : []),
     `delete ${p.images.length} registry image tag(s)`,
+    ...(p.deleteData ? [`delete file storage f/${p.inst}/ (storage location r2)`] : []),
     p.deleteData
       ? `delete bucket ${p.bucket} and all install data`
-      : `keep bucket ${p.bucket} (data and install marker)`,
+      : `keep bucket ${p.bucket} (data, file storage f/${p.inst}/ and install marker)`,
   ];
 }
 
@@ -121,6 +126,25 @@ export async function destroy(ctx: OpsCtx): Promise<number> {
     else failed.push(`${what}: ${oneLine(redact(r.stderr || r.stdout)).slice(0, 160)}`);
     ctx.out.step(`${r.code === 0 ? "done" : "FAILED"}: ${what}`);
   };
+  // File storage first: the purge runs in the Worker (R2 binding), so it must happen before the Worker goes.
+  if (deleteData) {
+    const what = `file storage f/${p.inst}/`;
+    try {
+      const ops = opsClient(ctx, i);
+      let n = 0;
+      for (let k = 0; k < 100; k++) {
+        const r = await ops.call("POST", "/ops/files/purge", {}, { allow: [200, 404], timeoutMs: 120_000 });
+        if (r.status === 404) break; // a Worker older than docs/11 §8 has no files
+        n += Number(r.body?.deleted ?? 0);
+        if (!r.body?.more) break;
+      }
+      done.push(`${what} (${n} object(s))`);
+      ctx.out.step(`done: ${what}, ${n} object(s)`);
+    } catch (e) {
+      failed.push(`${what}: ${oneLine(redact(String((e as Error).message ?? e))).slice(0, 160)}`);
+      ctx.out.step(`FAILED: ${what}`);
+    }
+  }
   await step(`Worker ${p.worker}`, ["delete", p.worker, "--force"], "y\n");
   for (const a of [p.app, p.sandboxApp])
     if (a) await step(`container app ${a.name}`, ["containers", "delete", a.id], "y\n");

@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { causeChain, rootCause } from "./ui.ts";
-import { jsonFormatEnv, QUIET_ENV } from "./wrangler.ts";
+import { jsonFormatEnv, QUIET_ENV, wranglerCommand } from "./wrangler.ts";
 
 // ---------------------------------------------------------------- errors and redaction
 
@@ -613,9 +613,10 @@ export function opsError(method: string, path: string, r: { status: number; body
 
 // ---------------------------------------------------------------- wrangler
 
-/** `npx wrangler <args>` with the account of the install. */
+/** The pinned wrangler (the package's own copy, else npx) with the account of the install. */
 export function wrangler(ctx: OpsCtx, install: Install, args: string[], input?: string): Promise<RunResult> {
-  return ctx.run("npx", ["--no-install", "wrangler", ...args], {
+  const [cmd, pre] = wranglerCommand();
+  return ctx.run(cmd, [...pre, ...args], {
     input,
     cwd: ctx.dir,
     env: {

@@ -36,8 +36,12 @@ export class ControlApi implements ControlForRuntime {
       now: c.now,
       budgetScale: c.timers.budgetScale,
       archive: () => cfgOf(c),
-      sandbox: () => c.settings().sandbox === "on",
+      sandbox: () => c.settings().sandbox === "on" || c.settings().sandbox === "all",
       storage: () => storageLimits(c),
+      files: () => {
+        const f = c.settings().files;
+        return { cap: f.capGb * 1e9, objectMax: f.maxObjectMb * 1e6 };
+      },
     });
     this.ledger.migrate();
     this.core.ledger = this.ledger;

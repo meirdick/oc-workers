@@ -59,6 +59,9 @@ export const SPECS: readonly Spec[] = Object.freeze([
   int("gens.churnPerDay", 10, 1, 200),
   int("storage.pruneAtMb", 1024, 64, 8192),
   int("storage.refuseAtMb", 2048, 128, 9000),
+  // docs/11 §8: file storage on R2 (f/<inst>/). Decimal units. 100 MB: the Worker request body limit (Free, Pro).
+  int("files.capGb", 5, 1, 10_000),
+  int("files.maxObjectMb", 100, 1, 100),
   int("cost.releaseBelowPct", 80, 10, 99),
   int("login.sessionDays", 30, 1, 365),
   int("login.maxSessions", 20, 1, 200),

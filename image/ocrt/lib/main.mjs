@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Archiver, ensureUid1000Dir } from "./archive.mjs";
 import { BIN, hardenPath } from "./bins.mjs";
-import { capTarget, startCapProxy } from "./cap-proxy.mjs";
+import { capTarget, FILES_PROXY_PORT, FILES_TARGET, startCapProxy } from "./cap-proxy.mjs";
 import { setupCgroups } from "./cgroups.mjs";
 import { EXIT, exitCodeFor, GATE, genPrefix, OCSUPCTL_SOCK, PV, parseLtxKey } from "./contract.mjs";
 import { restoreCreds } from "./creds-restore.mjs";
@@ -16,6 +16,7 @@ import { startCtlServer } from "./ctl.mjs";
 import { DiskWatch, isDiskFull } from "./diskwatch.mjs";
 import { drain } from "./drain.mjs";
 import { applyFault, takeFaults } from "./faults.mjs";
+import { ensureFilesMarker, FILES_KEY_NAME, writeFilesKey } from "./files.mjs";
 import { createGate } from "./gate.mjs";
 import {
   buildCommand,
@@ -149,6 +150,7 @@ export async function main() {
   let ctl = null;
   let proxy = null;
   let capProxy = null;
+  let filesProxy = null;
   let CG = {};
   let hb = null;
   let guard = null;
@@ -205,6 +207,7 @@ export async function main() {
     ctl?.close();
     proxy?.close();
     capProxy?.close();
+    filesProxy?.close();
     process.exit(code);
   }
   const fail = (reason, detail, out) => finish(exitCodeFor(reason), reason, { detail, out });
@@ -1282,6 +1285,22 @@ export async function main() {
 
   // docs/11 §7: OpenClaw wants the firecrawl baseUrl private; the plugin gets this loopback port. OCRT_CAP_TARGET: test envs.
   capProxy = startCapProxy({ target: capTarget(SRC.OCRT_CAP_TARGET), log });
+
+  // docs/11 §8 file storage: the ochost-storage plugin (uid 1000) talks S3 to the gate's files key space through a
+  // second loopback port, signed with this gen's key from the key file. Best effort: a failure never blocks the boot.
+  filesProxy = startCapProxy({
+    port: FILES_PROXY_PORT,
+    target: capTarget(SRC.OCRT_FILES_TARGET, FILES_TARGET),
+    log,
+  });
+  try {
+    writeFilesKey(path.join(C.runDir, FILES_KEY_NAME), s3);
+  } catch (e) {
+    log("files-key-error", { err: String(e) });
+  }
+  void ensureFilesMarker({ ...s3, bucket: plan?.replica?.bucket || s3.bucket }, C.inst)
+    .then((r) => log("files-marker", { r }))
+    .catch((e) => log("files-marker", { r: `error ${e?.cause?.code || e}` }));
 
   const planRels = (plan.dbs || []).map((d) => d.db);
   // F1: every restore step shares one deadline inside the DO's restore budget. A step past it ends the boot

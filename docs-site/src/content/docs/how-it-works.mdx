@@ -16,7 +16,7 @@ One install on your account is:
 - one Runtime DO for each epoch (one image plus one Worker code version). The Runtime DO owns the container;
 - one container, 2 vCPU, 6 GiB memory, 20 GB disk by default, that runs OpenClaw;
 - one sandbox container for agent tools, only when `sandbox` is on;
-- one R2 bucket, `oc-workers-<inst>` by default.
+- one R2 bucket, `oc-host-<inst>` by default.
 
 The Worker is `oc-host` by default. Its URL is `https://<name>.<subdomain>.workers.dev`. With [Cloudflare Access](/security/#cloudflare-access) on, the URL is your custom domain.
 

@@ -143,6 +143,17 @@ describe("plan()", () => {
     ).toEqual({ kind: "adopt", confirm: true });
   });
 
+  it("a Worker of that name that is not an oc-host install: exit 3 with --name or delete, never adopt", () => {
+    const worker = { exists: true, vars: { SOME_OTHER: "x" } };
+    for (const o of [opts(), opts({ adopt: true }), opts({ nonInteractive: false })]) {
+      const a = plan(o, probes({ worker, interactive: !o.nonInteractive }));
+      expect((a[0] as { error: { message: string } }).error.message).toMatch(
+        /not an oc-host install.*--name <other>/,
+      );
+      expect(a.find((s) => s.kind === "adopt")).toBeUndefined();
+    }
+  });
+
   it("R2 off: interactive waits for Enter; non-interactive exits 3", () => {
     expect(plan(opts(), probes({ r2: false, interactive: true })).some((s) => s.kind === "r2-enable")).toBe(
       true,
@@ -650,7 +661,15 @@ describe("runInit end to end (fake wrangler + fake fetch)", () => {
   it("--skip-ai posts an empty config doc (F9)", async () => {
     expect(await initCommand(ctxFor(["--name", "oc-m5-test", "--skip-ai", "--non-interactive"]))).toBe(0);
     // --skip-ai: the gate capabilities only, no model provider
-    expect(w.configs[0]?.doc).toEqual({ ...renderCapabilities(), ochost: { renderVersion: RENDER_VERSION } });
+    // storage location r2 on the install's bucket, prefix f/<inst> (docs/11 §8)
+    const r2 = (w.configs[0]?.doc as any)?.storage?.locations?.r2;
+    const inst = /^f\/([0-9a-f]{6})$/.exec(r2?.settings?.prefix)?.[1] as string;
+    expect(inst).toBeTruthy();
+    expect(r2.settings.bucket).toBe(`oc-host-${inst}`);
+    expect(w.configs[0]?.doc).toEqual({
+      ...renderCapabilities({ bucket: `oc-host-${inst}`, inst }),
+      ochost: { renderVersion: RENDER_VERSION },
+    });
     expect(JSON.stringify(w.configs[0]?.doc)).not.toContain("cfgw");
     expect(w.secrets.has("OC_SECRET_OC_CF_AI_TOKEN")).toBe(false);
     expect(w.gate).toEqual([]); // no model, no hop

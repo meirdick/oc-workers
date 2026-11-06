@@ -62,7 +62,7 @@ describe("renderOpenclawDoc", () => {
     expect(p.baseUrl).toBe("http://15.0.0.3/ai/v1");
     expect(p.apiKey).toBe("capgate");
     expect(p.headers).toBeUndefined();
-    expect(p.models.map((m: { id: string }) => m.id)).toEqual(["@cf/a/b"]);
+    expect(p.models.map((m: { id: string }) => m.id)).toEqual(["@cf/a/b", "@cf/google/gemma-4-26b-a4b-it"]);
     expect(d.browser.profiles.cf).toBeDefined();
     const s = JSON.stringify(d);
     expect(s).not.toMatch(/OC_CF_AI_TOKEN|cf-aig-authorization|gateway\.ai\.cloudflare\.com|\$\{/);
@@ -190,11 +190,39 @@ describe("ochost caps", () => {
     expect(r.out).toMatch(/neurons\s+5000\s+10000\s+50/);
   });
 
+  it("shows the file storage cap when the Worker reports it (docs/11 §8)", async () => {
+    f.routes.unshift((r) =>
+      r.path === "/ops/caps"
+        ? {
+            status: 200,
+            body: { ...view(), files: { used: 4.1e9, limit: 5e9, objects: 12, objectMax: 100e6, pct: 0.82 } },
+          }
+        : undefined,
+    );
+    const r = await run("caps", ["--dir", dir]);
+    expect(r.out).toMatch(
+      /files\s+4\.10GB of 5\.00GB \(82%\), 12 object\(s\), max 100MB each; ochost caps set storage <n>/,
+    );
+  });
+
   it("set raises one verb and posts only that verb", async () => {
     const r = await run("caps", ["set", "neurons", "50000", "--dir", dir]);
     expect(r.code).toBe(0);
     expect(f.calls("POST", "/ops/caps")[0]?.body).toEqual({ neurons: 50000 });
     expect(r.out).toMatch(/neurons\s+25000\s+50000/);
+  });
+
+  it("set storage writes the setting files.capGb, not a daily budget", async () => {
+    f.routes.unshift((r) =>
+      r.method === "PUT" && r.path === "/ops/settings"
+        ? { status: 200, body: { ver: 4, changed: true } }
+        : undefined,
+    );
+    const r = await run("caps", ["set", "storage", "20", "--dir", dir]);
+    expect(r.code).toBe(0);
+    expect(f.calls("PUT", "/ops/settings")[0]?.body).toEqual({ set: { "files.capGb": 20 }, source: "cli" });
+    expect(f.calls("POST", "/ops/caps")).toHaveLength(0);
+    expect((await run("caps", ["set", "storage", "2.5", "--dir", dir])).code).not.toBe(0);
   });
 
   it("set rejects an unknown verb or a bad number before any request", async () => {

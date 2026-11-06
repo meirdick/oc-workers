@@ -17,12 +17,14 @@ import {
   checkArchive,
   checkBudget,
   checkDeadman,
+  checkFiles,
   checkHop,
   checkReplica,
   checkState,
   checkWebhook,
   checkWebhookLive,
   dur,
+  type FilesProbe,
   fail,
   gatewayOf,
   type HopInfo,
@@ -47,6 +49,10 @@ export interface PanelDeps {
   sink(): Sink;
   /** One chat call through the gate. Never throws. */
   hop(model: string): Promise<{ status: number; ms: number; error?: string }>;
+  /** File storage probe: PUT, GET, DELETE of 1 byte under f/<inst>/ (gates/replica.ts filesProbe). Never throws. */
+  files?(): Promise<{ ok: boolean; ms: number; error?: string }>;
+  /** File storage usage against files.capGb (ledger filesView). */
+  filesView?(): { used: number; limit: number } | null;
   /** SandboxSession state; null when the binding is absent. Never starts it. */
   sandbox(): Promise<Record<string, any> | null>;
   env: { access: { domain: string | null; team: string | null } | null; gateway: string };
@@ -108,6 +114,8 @@ export interface Panel {
     row: Check;
   }[];
   backups: { rows: Check[]; nextMaintenanceAt: number | null };
+  /** docs/11 §8: storage location r2 (null: off, no location in the config). Bytes from the ledger. */
+  files: { prefix: string; used: number; limit: number } | null;
   channels: {
     wake: { userIds: string[]; groupChatIds: string[] };
     pairing: { code: string; id: string; name: string; count: number; held: number }[];
@@ -199,6 +207,13 @@ export async function ownerPanel(
       c.db.setMeta("panelWebhook", wh);
     }
   }
+  // File storage: R2 only, no container, so it runs asleep too (cached one minute; doctor sends fresh=1).
+  const filesOn = doc?.storage?.locations?.r2?.provider === "ochost-r2";
+  let fp = c.db.metaJson<FilesProbe | null>("panelFiles", null);
+  if (filesOn && d.files && (!fp || o.fresh === true || now - fp.at >= PROBE_TTL_MS)) {
+    fp = { at: now, ...(await d.files()) };
+    c.db.setMeta("panelFiles", fp);
+  }
   const stale = (at: number | null | undefined, row: Check): Check =>
     !awake && at && o.fresh !== true
       ? { ...row, detail: `${row.detail} (cached ${dur(now - at)} ago, install asleep)` }
@@ -212,7 +227,10 @@ export async function ownerPanel(
   checks.push(checkWebhook(o.origin, doc, s));
   const live = checkWebhookLive(o.origin, wh);
   if (live) checks.push(stale(wh?.at, live));
+  const fv = d.filesView?.() ?? null;
+  const filesRow = checkFiles(doc, fp, fv, Math.min(10_000, Math.ceil(((fv?.limit ?? 5e9) / 1e9) * 2)));
   checks.push(hopRow, checkReplica(s), checkArchive(archive, state), checkAlerts(s, sink), checkDeadman(s));
+  if (doc) checks.push(filesRow);
   const fails = checks.filter((x) => x.result === "FAIL").length;
   const warns = checks.filter((x) => x.result === "WARN").length;
 
@@ -273,6 +291,7 @@ export async function ownerPanel(
   });
   connected.push(
     capRow("web search", onOff(doc?.tools?.web?.search?.provider), "", ["websearch"], initFix),
+    filesRow,
     capRow(
       "browser and web fetch",
       onOff(doc?.browser?.enabled) && onOff(doc?.tools?.web?.fetch?.provider),
@@ -284,7 +303,7 @@ export async function ownerPanel(
       ? { ...pass("media", media), detail: `${media}; ${use("neurons")} neurons` }
       : warn("media", media, initFix),
   );
-  const sbxOn = c.settings().sandbox === "on";
+  const sbxOn = c.settings().sandbox === "on" || c.settings().sandbox === "all";
   const sbx = sbxOn ? await d.sandbox().catch(() => null) : null;
   if (!sbxOn) connected.push({ ...pass("sandbox", "off (opt-in)"), fix: "ochost sandbox on" });
   else {
@@ -532,6 +551,14 @@ export async function ownerPanel(
     alerts: { open, closed, doctorTail },
     budgets,
     backups,
+    files:
+      doc?.storage?.locations?.r2?.provider === "ochost-r2"
+        ? {
+            prefix: `${String(doc.storage.locations.r2.settings?.prefix ?? `f/${c.inst}`)}/`,
+            used: fv?.used ?? 0,
+            limit: fv?.limit ?? 0,
+          }
+        : null,
     channels: {
       wake: { userIds: w?.userIds ?? [], groupChatIds: w?.groupChatIds ?? [] },
       pairing,

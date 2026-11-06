@@ -45,6 +45,8 @@ const ROUTES = new Set([
   "telegram",
   // D14 CapGate budgets: GET reads, POST raises (owner only).
   "caps",
+  // docs/11 §8: GET file storage usage; POST /ops/files/purge deletes f/<inst>/ (ochost destroy --delete-data).
+  "files",
   // docs/12: GET sandbox state and budgets; POST /ops/sandbox/sleep backs up and stops it.
   "sandbox",
   // Owner panel: GET /ops/doctor is the panel JSON (ctl/panel.ts); POST /ops/upgrade-check records `ochost upgrade check`.
