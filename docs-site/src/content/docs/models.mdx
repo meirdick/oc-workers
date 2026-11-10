@@ -5,23 +5,21 @@ sidebar:
   order: 4
 ---
 
-This page says which model runs by default, how a model call reaches it, and how to change it.
-
 ## The default
 
-The default model is `@cf/deepseek-ai/deepseek-v4.1-flash-1017`. It runs on Workers AI. Your Cloudflare account pays for it, not a provider key. Workers AI usage settles at the end of the month. The benchmark below uses $0.011 per 1000 neurons.
+The default model is `@cf/deepseek-ai/deepseek-v4.1-flash-1017`, which runs on Workers AI. Your Cloudflare account pays for it, not a provider key, and Workers AI usage settles at the end of the month. The benchmark below uses $0.011 per 1000 neurons (the unit Workers AI bills in).
 
 ## How a model call goes
 
-The agent in the container sends OpenAI-style requests to `http://15.0.0.3/ai/v1`. That address is the capability gate. It is a private address that exists only inside your container. The gate runs in your Worker. It calls `env.AI.run(...)` on the Workers AI binding, which acts as your account. No token is stored in the container, in the config or on the Worker.
+The agent in the container sends OpenAI-style requests to `http://15.0.0.3/ai/v1`. That address is the capability gate, a private address that exists only inside your container. The gate runs in your Worker and calls `env.AI.run(...)` on the Workers AI binding, which acts as your account. No token is stored in the container, in the config or on the Worker.
 
-The binding routes the call through an AI Gateway, which gives logs and spend limits. An AI Gateway is Cloudflare's proxy in front of model APIs.
+The binding routes the call through an AI Gateway, Cloudflare's proxy in front of model APIs, which gives you logs and spend limits.
 
-- The gateway is `default` unless you say otherwise. Cloudflare makes it on the first request, so `ochost init` makes no API call. Only the id `default` is made this way. Any other id must exist.
-- `ochost init --gateway <id>` uses one you made. `--gateway none` runs without a gateway: no logs, no spend limit.
-- The gate counts neurons per call against a daily budget. The default is 100,000 a day, about $1.10. Past it, calls get a 429. See and raise it with `ochost caps`.
-- The gate skips the gateway cache for chat, so an agent reply is never repeated from cache.
-- Some models (gpt-oss-120b, llama-3.3-70b, qwen3-30b) refuse an assistant message with `content: null`. OpenClaw sends that on a tool call. The gate changes it to an empty string.
+- The gateway is `default` unless you say otherwise. Cloudflare makes it on the first request, so `ochost init` makes no API call. Only the id `default` is made this way; any other id must already exist.
+- `ochost init --gateway <id>` uses a gateway you made. `--gateway none` runs without one, so you get no logs and no spend limit.
+- The gate counts neurons per call against a daily budget of 100,000 by default, about $1.10. Past it, calls get a 429. See and raise it with `ochost caps`.
+- The gate skips the gateway cache for chat, so an agent reply never comes from cache.
+- Some models (gpt-oss-120b, llama-3.3-70b, qwen3-30b) refuse an assistant message with `content: null`, which OpenClaw sends on a tool call. The gate changes it to an empty string.
 
 ```sh
 ochost model                 # the model of each role
@@ -32,7 +30,7 @@ ochost model bench           # agent turns with tool calls through the gate
 ochost ai-gateway setup      # choose the gateway; model test through the gate
 ```
 
-`model set` sends one test message through the gate first. A model that does not exist, or a Claude model with no key on the gateway, stops there and changes nothing. Add `--restart` to apply a change at once. Without it, it applies at the next wake.
+`model set` first sends one test message through the gate. A model that does not exist, or a Claude model with no key on the gateway, stops there and changes nothing. A change applies at the next wake, or at once if you add `--restart`.
 
 `ochost model bench` runs through the gate too. To bench a local copy of the Worker:
 
@@ -43,17 +41,17 @@ The binding still reaches your real account, so the bench bills you.
 
 ## Claude: your key stays in Cloudflare
 
-Provider models are opt-in. They bill your own provider key, not Cloudflare credit. Today `anthropic/<model>` works. The key lives in the AI Gateway key store (BYOK). The container and the Worker never hold it. The Worker asks the binding for `anthropic/<model>`, and the gateway adds the key.
+Provider models are opt-in, and they bill your own provider key, not Cloudflare credit. Today `anthropic/<model>` works. The key lives in the AI Gateway key store (BYOK, bring your own key), and the container and the Worker never hold it. The Worker asks the binding for `anthropic/<model>`, and the gateway adds the key.
 
-Do this once in the dashboard. The AI Gateway API needs a token that `init` does not have.
+Do this once in the dashboard, because the AI Gateway API needs a token that `init` does not have.
 
 <Render file="gateway-key-steps" />
 
-Cloudflare uses only a key with the alias `default` on this path. Without a key, the call falls back to Unified Billing (Cloudflare credit), or fails if the gateway has **Require provider credentials** on. The gateway needs authentication on, which the auto-made `default` has. The gate does not count Claude calls in neurons, only as requests. Set a spend limit on the gateway in the dashboard.
+On this path Cloudflare uses only a key with the alias `default`. Without a key, the call falls back to Unified Billing (Cloudflare credit), or fails if the gateway has **Require provider credentials** on. The gateway needs authentication on, which the auto-made `default` has. The gate counts Claude calls only as requests, not in neurons, so set a spend limit on the gateway in the dashboard.
 
 ## Thinking and the utility model
 
-Reasoning models think before they answer. This costs time and neurons. oc-workers sets the level for you:
+Reasoning models think before they answer, which costs time and neurons. oc-workers sets the level for you:
 
 - The main model runs at thinking `low`.
 - The utility model runs at `off`. OpenClaw uses it for titles, recaps and narration.
@@ -61,21 +59,21 @@ Reasoning models think before they answer. This costs time and neurons. oc-worke
 
 The default utility and compaction model is `@cf/google/gemma-4-26b-a4b-it`. Change it with `ochost model set --role utility <id>` or `--role compaction <id>`. GLM-5.3 cannot switch thinking off, so it runs at `low`.
 
-`ochost model set` refuses a model that has a deprecation date. This check needs an AI token (`--ai-token-file`). Without a token, it prints a warning.
+`ochost model set` refuses a model that has a deprecation date. This check needs an AI token (`--ai-token-file`); without one, it prints a warning.
 
-Run `ochost config render` and `ochost restart` to apply this to an older install. `ochost model bench --role utility` tests the model of one role at the effort that role uses.
+To apply this to an older install, run `ochost config render` and `ochost restart`. `ochost model bench --role utility` tests the model of one role at the effort that role uses.
 
 ## The model catalogue
 
-The `cfgw` provider lists every Workers AI chat model that has function calling and no deprecation date. You can pick one in the OpenClaw Control UI (Settings > Models) or with `/model <id>`. Each entry has the context window, the reasoning efforts and image input of the model.
+The `cfgw` provider lists every Workers AI chat model that has function calling and no deprecation date. You can pick one in the OpenClaw Control UI (Settings > Models) or with `/model <id>`. Each entry has the model's context window, reasoning efforts and image input.
 
-oc-workers ships a snapshot of this list. To get the live list, run `ochost model list --refresh` with an AI token (`--ai-token-file`). It writes `.oc-host/models-catalog.json`. Then run `ochost config render` and `ochost restart`. The render uses the file in `.oc-host/` when it exists, and the shipped snapshot when it does not.
+oc-workers ships a snapshot of this list. To get the live list, run `ochost model list --refresh` with an AI token (`--ai-token-file`), which writes `.oc-host/models-catalog.json`. Then run `ochost config render` and `ochost restart`. The render uses the file in `.oc-host/` when it exists, and the shipped snapshot when it does not.
 
 `ochost model` shows the roles and the size and date of the snapshot. The roles (main, utility, compaction) keep their thinking levels.
 
 ## Benchmark
 
-`ochost model bench` sends agent turns with tool calls through the gate. One turn is a prompt with 4 tools. The model must call the right tool with the right arguments, then answer with the fact from the result. The results use 10 turns per model and one run each.
+`ochost model bench` sends agent turns with tool calls through the gate. One turn is a prompt with 4 tools: the model must call the right tool with the right arguments, then answer with the fact from the result. The results use 10 turns per model and one run each.
 
 Short prompt:
 
@@ -96,9 +94,9 @@ With a 13,000 token OpenClaw-shaped prompt, the same prefix each turn:
 | Gemma 4 26B | 9/10 | 2.59 s | 215.1 | 0.00237 |
 | gpt-oss-120b | 9/10 | 2.78 s | 778.9 | 0.00857 |
 
-DeepSeek has a prefix cache. A cold first turn costs 381 to 692 neurons, about $0.004 to $0.008. The first turn after a wake or a long idle is the cold number. We did not measure how often that happens.
+DeepSeek has a prefix cache, so a cold first turn costs more: 381 to 692 neurons, about $0.004 to $0.008. The first turn after a wake or a long idle is the cold number. We did not measure how often that happens.
 
-The sample is small. Ten turns cannot rank latency. gpt-oss-120b, llama-3.3-70b and qwen3-30b need a string `content` in an assistant message to pass the second step of a tool turn. OpenClaw 2026.10.9 sends `null`. The gate now sends an empty string, so these models work. Gemma 4 26B is the recommended fallback. It is from another model family, and it works with `null`.
+The sample is small, and ten turns cannot rank latency. gpt-oss-120b, llama-3.3-70b and qwen3-30b need a string `content` in an assistant message to pass the second step of a tool turn, but OpenClaw 2026.10.9 sends `null`. The gate now sends an empty string, so these models work. Gemma 4 26B is the recommended fallback: it is from another model family, and it works with `null`.
 
 ## Next
 

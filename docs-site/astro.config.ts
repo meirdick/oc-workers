@@ -11,13 +11,13 @@ const nimbusConfig = defineNimbusConfig({
   // links in /llms.txt — leaving the placeholder breaks all of them.
   site: "https://oc-workers.mdick85.workers.dev",
   // CHANGE_ME: your project's name — used for <title>, the home H1, and OG.
-  title: "oc-host",
+  title: "oc-workers",
   // CHANGE_ME: a one-line description of your docs — used for meta + OG.
-  description: "Run your own OpenClaw on your own Cloudflare account. Install, operate and understand oc-host.",
+  description: "Run your own OpenClaw on your own Cloudflare account. Install, operate and understand oc-workers.",
   locale: "en",
   // CHANGE_ME: your repository — shown as the GitHub link in the header.
   github: "https://github.com/meirdick/oc-workers",
-  socialImageAlt: "oc-host documentation",
+  socialImageAlt: "oc-workers documentation",
   // No landing page yet: the Worker redirects / to /docs/, so these docs publish no /.well-known files.
   agents: { discovery: false },
   // The home page leads the sidebar; every other page joins it automatically.

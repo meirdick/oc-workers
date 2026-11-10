@@ -5,18 +5,18 @@ sidebar:
   order: 5
 ---
 
-The agent runs in the container. It needs tools such as a browser, web pages, speech and images. oc-workers gives it these tools through one gate in your Worker. The container holds no credential for these services.
+The agent uses tools such as a browser, web pages, speech and images. Every tool goes through one gate in your Worker, so the container holds no credential for these services.
 
 ## The gate
 
-The capability gate answers at `http://15.0.0.3`, port 80. The agent user (uid 1000) can reach only this gate and the sandbox gate at `15.0.0.4`. See [Sandbox](#sandbox). The container has no bearer token for them. The address exists only inside your install. A daily budget limits what the agent can spend if injected text steers it.
+The capability gate answers at `http://15.0.0.3`, port 80, an address that your Worker serves and that exists only inside your install. The agent user (uid 1000) can reach only this gate and the sandbox gate at `15.0.0.4` (see [Sandbox](#sandbox)), and the container has no bearer token for either. If injected text steers the agent, a daily budget limits what it can spend.
 
-`ochost init` writes the gate into the OpenClaw config. The gate is then the only browser, fetch, embedding and media provider the agent has.
+`ochost init` writes the gate into the OpenClaw config. The gate is then the agent's only browser, fetch, embedding and media provider.
 
 | Capability | Through the gate | Status |
 |---|---|---|
 | Browser | Cloudflare Browser Run, over CDP at `/browser/devtools` | Works. playwright-core and puppeteer-core connected and read a page title. |
-| Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The provider `cloudflare-web-fetch` of the `cf-capabilities` plugin posts to the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first. It calls the gate only for pages that the plain fetch cannot read. |
+| Web fetch | Browser Run, through `/v2/scrape` and `/browser/markdown`, `/browser/content` | Experimental. The provider `cloudflare-web-fetch` of the `cf-capabilities` plugin posts to the gate through a loopback relay in the container. OpenClaw tries its own plain fetch first and calls the gate only for pages that the plain fetch cannot read. |
 | Web search | Cloudflare Web Search API, through `/search` | Experimental. The `cf-capabilities` plugin adds the provider "Cloudflare Web Search" to Settings > Search. It needs no API key. |
 | Embeddings | `@cf/baai/bge-m3` | Works through the gate (1024 dimensions). |
 | Speech out | `@cf/deepgram/aura-2-en` | Works through the gate. The reply is MP3. |
@@ -24,17 +24,17 @@ The capability gate answers at `http://15.0.0.3`, port 80. The agent user (uid 1
 | Image | `@cf/black-forest-labs/flux-1-schnell` | Works through the gate. |
 | Cloudflare docs | MCP server `https://docs.mcp.cloudflare.com/mcp`, no auth | Configured. |
 
-### One plugin for web search, web fetch and the browser
-
-The plugin `cf-capabilities` ("Cloudflare capabilities") is in the image. Its card in Settings lists Web search, Web fetch and Browser. It needs no API key. OpenClaw has no plugin API for the built-in browser tool, so the browser stays a config key (`browser.profiles.cf`). The plugin only reads its state from the gate: `openclaw cf-capabilities status` prints `Browser: on, 40 s of 3600 s today`. `openclaw cf-capabilities test` runs one search, one fetch of `https://example.com` and one browser status read. Older installs: run `ochost config render`.
-
 "Works through the gate" means a test call from the agent user returned a valid answer. We did not run a full agent turn for each tool.
 
-Chat uses the gate too. The model provider `cfgw` points at `http://15.0.0.3/ai/v1`, and the Worker runs the call on its Workers AI binding. This is why no AI token exists. See [Models](/models/).
+### One plugin for web search, web fetch and the browser
+
+The plugin `cf-capabilities` ("Cloudflare capabilities") is in the image. Its card in Settings lists Web search, Web fetch and Browser, and it needs no API key. OpenClaw has no plugin API for the built-in browser tool, so the browser stays a config key (`browser.profiles.cf`) and the plugin only reads its state from the gate: `openclaw cf-capabilities status` prints `Browser: on, 40 s of 3600 s today`. `openclaw cf-capabilities test` runs one search, one fetch of `https://example.com` and one browser status read. On an older install, run `ochost config render`.
+
+Chat uses the gate too. The model provider `cfgw` points at `http://15.0.0.3/ai/v1`, and the Worker runs the call on its Workers AI binding. That is why no AI token exists. See [Models](/models/).
 
 ## Budgets
 
-Each UTC day has a budget for each verb.
+Each verb has a budget per UTC day.
 
 | Verb | Default |
 |---|---|
@@ -45,29 +45,29 @@ Each UTC day has a budget for each verb.
 | `exec` | 7200 seconds of sandbox commands |
 | `sandbox` | 8 hours of sandbox container time |
 
-At 80% the owner gets a warning alert. At 100% the owner gets a high alert, and the gate answers 429 with `retry-after`. The model's own count gives neuron use when it reports one. Otherwise the count is an estimate. The AI Gateway spend limit is the hard backstop. Claude calls (`anthropic/...`) count as requests, not neurons.
+At 80% you get a warning alert. At 100% you get a high alert, and the gate answers 429 with `retry-after`. Neuron use comes from the model's own count when it reports one; otherwise it is an estimate. The AI Gateway spend limit is the hard backstop. Claude calls (`anthropic/...`) count as requests, not neurons.
 
 ```sh
 ochost caps                      # used, limit and percent for each verb
 ochost caps set browser 7200     # raise or lower one limit
 ```
 
-Browser Run includes 10 hours a month. After that it costs $0.09 per browser hour (rate read in October 2026). Check the Cloudflare pricing page for current prices.
+Browser Run includes 10 hours a month and then costs $0.09 per browser hour (rate read in October 2026). Check the Cloudflare pricing page for current prices.
 
 The owner console shows each budget on the Overview tab. See [How it works](/how-it-works/#the-owner-console).
 
 ## File storage {#file-storage}
 
-The agent saves files to the storage location `r2`. The files go to your R2 bucket, under the prefix `f/<inst>/`. They stay when the container stops, sleeps or restarts. They are not in snapshots or archives (see [State and backups](/state-and-backups/)).
+The agent saves files to the storage location `r2`, which puts them in your R2 bucket under the prefix `f/<inst>/` (`<inst>` is your install id). The files stay when the container stops, sleeps or restarts. They are not in snapshots or archives (see [State and backups](/state-and-backups/)).
 
 - A plugin in the image (`ochost-storage`) adds the storage provider `ochost-r2` and the agent tool `file_store` (save, read, list, delete).
-- The plugin talks S3 to the replica gate at `15.0.0.2` through a loopback relay in the container (`127.0.0.1:18792`). It signs each request with the key of the current boot, the same key Litestream uses. The gate accepts that key only for `r/<inst>/g<gen>/` and `f/<inst>/`. The key is not in the OpenClaw config.
+- The plugin talks S3 to the replica gate at `15.0.0.2`, the part of your Worker that also stores the database backup. It goes through a loopback relay in the container (`127.0.0.1:18792`) and signs each request with the key of the current boot, the same key Litestream uses for the database. The gate accepts that key only for this boot's database path (`r/<inst>/g<gen>/`) and `f/<inst>/`. The key is not in the OpenClaw config.
 - The gate allows PUT, GET, HEAD, DELETE and list. It refuses multipart uploads, so one file is at most 100 MB.
 - A save never overwrites a file. Save to a new name.
 
 | Setting | Default | What it does |
 |---|---|---|
-| `files.capGb` | 5 | Total bytes under `f/<inst>/`. At 80% the owner gets the warning alert `storage-cap-80`. At 100% the gate refuses writes and sends the high alert `storage-cap-100`. |
+| `files.capGb` | 5 | Total bytes under `f/<inst>/`. At 80% you get the warning alert `storage-cap-80`. At 100% the gate refuses writes and sends the high alert `storage-cap-100`. |
 | `files.maxObjectMb` | 100 | Largest single file. |
 
 ```sh
@@ -76,14 +76,13 @@ ochost caps set storage 20           # raise the cap to 20 GB (same as config se
 openclaw storage test r2             # in the container: write, read and delete a check object
 ```
 
-`ochost doctor` has a row `file storage`. It writes, reads and deletes a 1-byte object under `f/<inst>/`. `ochost destroy --delete-data` deletes `f/<inst>/` before it deletes the bucket. Without `--delete-data` the files stay.
-
+`ochost doctor` has a `file storage` row, which writes, reads and deletes a 1-byte object under `f/<inst>/`. `ochost destroy --delete-data` deletes `f/<inst>/` before it deletes the bucket. Without `--delete-data`, the files stay.
 
 ## Sandbox
 
-The tool sandbox is off by default. It is experimental. When it is on, the exec and file tool calls of a sandboxed session run in a separate Cloudflare Sandbox container, not in the gateway container.
+The tool sandbox is experimental and off by default. When it is on, the exec and file tool calls of a sandboxed session run in a separate Cloudflare Sandbox container, not in the gateway container.
 
-`ochost sandbox on` sandboxes every channel chat: your Telegram DM, group chats, other channels and sub-agents. Only the chat in the OpenClaw Control UI stays on the gateway. OpenClaw classifies a channel DM by a per-peer key for its sandbox rule, even when it shares the main session. This is the pattern OpenClaw recommends. `ochost sandbox on --all` sandboxes every session, your main chat included.
+`ochost sandbox on` sandboxes every channel chat: your Telegram DM, group chats, other channels and sub-agents. Only the chat in the OpenClaw Control UI stays on the gateway. For its sandbox rule, OpenClaw classifies a channel DM by a per-peer key, even when the DM shares the main session; this is the pattern OpenClaw recommends. `ochost sandbox on --all` sandboxes every session, your main chat included.
 
 1. Turn it on:
 
@@ -106,13 +105,13 @@ The tool sandbox is off by default. It is experimental. When it is on, the exec 
    ochost sandbox off
    ```
 
-Facts:
+What to know:
 
 - The sandbox gate answers at `http://15.0.0.4`, port 80. The container holds no credential for it.
-- The sandbox has no internet access. The agent cannot install packages there.
-- Web search, web fetch, the browser, memory, media, the message tool and `file_store` still run in the gateway container. The render allows them for sandboxed sessions (`tools.sandbox.tools.alsoAllow`), because OpenClaw's own sandbox policy leaves them out.
-- It starts at the first exec. It sleeps after 10 minutes without an exec, when the install sleeps, or when its budget is spent.
-- oc-workers backs up the sandbox `/workspace` to your R2 bucket at each sleep and every 30 minutes of use. It keeps the newest 2 backups.
+- The sandbox has no internet access, so the agent cannot install packages there.
+- Web search, web fetch, the browser, memory, media, the message tool and `file_store` still run in the gateway container. OpenClaw's own sandbox policy leaves them out, so the render allows them for sandboxed sessions (`tools.sandbox.tools.alsoAllow`).
+- The sandbox starts at the first exec. It sleeps after 10 minutes without an exec, when the install sleeps, or when its budget is spent.
+- oc-workers backs up the sandbox `/workspace` to your R2 bucket at each sleep and every 30 minutes of use, and keeps the newest 2 backups.
 - The deploy builds the sandbox image even when the sandbox is off.
 
 ## Not built

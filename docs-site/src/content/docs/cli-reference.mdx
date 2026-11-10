@@ -5,9 +5,9 @@ sidebar:
   order: 12
 ---
 
-This page lists every `ochost` command with its flags. Install the CLI with `npm install -g oc-workers`. See [Quickstart](/quickstart/).
+Install the CLI with `npm install -g oc-workers` (see [Quickstart](/quickstart/)).
 
-`ochost -h` lists the commands. `ochost <command> -h` shows the flags of one command.
+`ochost -h` lists the commands, and `ochost <command> -h` shows the flags of one command.
 
 ## Global options
 
@@ -19,7 +19,7 @@ This page lists every `ochost` command with its flags. Install the CLI with `npm
 | `-h`, `--help` | Show help. |
 | `-v`, `--version` | Show the version. |
 
-`init` and `deploy` also take `--verbose`. A login link in `--json` output (`openUrl`) is a secret.
+`init` and `deploy` also take `--verbose`. Treat a login link in `--json` output (`openUrl`) as a secret.
 
 ## Exit codes
 
@@ -29,7 +29,7 @@ This page lists every `ochost` command with its flags. Install the CLI with `npm
 | 1 | Failed. One `Failed:` line. |
 | 2 | Usage error. |
 | 3 | A manual step is needed. The `fix:` names it. |
-| 4 | The time budget passed. The install can still come up. A rerun is safe. |
+| 4 | The time budget passed, but the install can still come up. A rerun is safe. |
 | 130 | Interrupted. |
 
 An error is one line: `Failed: <you see> — fix: <do this>`. A warning is `WARN: ...` with the same shape.
@@ -40,20 +40,20 @@ An error is one line: `Failed: <you see> — fix: <do this>`. A warning is `WARN
 
 | Command | Flags | Does |
 |---|---|---|
-| `init [dir]` | `--account-id <id>`, `--name <name>`, `--subdomain <name>`, `--adopt`, `--gateway <id>` (`none` = no gateway), `--ai-token-file <file>` (optional), `--model <id>`, `--instance <v/G/D>`, `--bucket <name>`, `--skip-ai`, `--no-open`, `--accept-loss`, `--verbose`, `--fake-telegram`, `--telegram-owner <id>`, `--telegram-token-file <file>`, `--sandbox on\|all\|off`, `--alerts ntfy\|webhook`, `--alerts-url <https URL>`, `--access-domain <host>`, `--access-token-file <file>` | Set up an install end to end. Safe to rerun. `--telegram-owner` records your Telegram user id: your first direct message to the bot is approved without a pairing code. The last five flags run the setup after the install: Telegram, alerts, Access. On a fresh interactive install, `init` asks for Telegram and Access; Enter skips. Alerts are flags only. |
+| `init [dir]` | `--account-id <id>`, `--name <name>`, `--subdomain <name>`, `--adopt`, `--gateway <id>` (`none` = no gateway), `--ai-token-file <file>` (optional), `--model <id>`, `--instance <v/G/D>`, `--bucket <name>`, `--skip-ai`, `--no-open`, `--accept-loss`, `--verbose`, `--fake-telegram`, `--telegram-owner <id>`, `--telegram-token-file <file>`, `--sandbox on\|all\|off`, `--alerts ntfy\|webhook`, `--alerts-url <https URL>`, `--access-domain <host>`, `--access-token-file <file>` | Set up an install end to end. Safe to rerun. `--telegram-owner` records your Telegram user id: your first direct message to the bot is approved without a pairing code. Five flags run setup steps after the install is up: `--telegram-token-file` (Telegram), `--alerts` and `--alerts-url` (alerts), `--access-domain` and `--access-token-file` (Access). `--sandbox` is written to `oc-host.jsonc` before the first deploy. On a fresh interactive install, `init` asks for Telegram and Access; Enter skips. Alerts are flags only. |
 | `deploy` | `--force`, `--require-archive` | Re-render `.oc-host/wrangler.jsonc` and deploy when the deploy hash changed. A live install gets a pre-upgrade archive first. |
 | `destroy` | `--dry-run`, `--yes`, `--delete-data`, `--bucket <name>` | Delete the Worker, the runtime and sandbox container apps and their image tags. Keeps the R2 bucket unless `--delete-data`. |
 
 Defaults for `init`: Worker name `oc-host`; instance `2/6/20` (vCPU, GiB, GB; the floor is `2/6/16`, the maximum is 4 vCPU, 12 GiB, 20 GB); model `@cf/deepseek-ai/deepseek-v4.1-flash-1017`; gateway `default`; bucket `oc-host-<inst>`.
 
-`--adopt` manages an existing install from this directory. It makes a new owner token and changes no image. `--accept-loss` allows a fresh install over existing data. `--skip-ai` installs with no model.
+`--adopt` manages an existing install from this directory: it makes a new owner token and changes no image. `--accept-loss` allows a fresh install over existing data. `--skip-ai` installs with no model.
 
 ## Run and watch
 
 | Command | Flags | Does |
 |---|---|---|
 | `status` | `--watch`, `-w` | Sleep state, next wake, last activity, cost range, alternatives, model. Never wakes. |
-| `logs` | `-f`, `--lines N`, `-n N`, `--source ctl\|rt\|ocsup\|gate\|alert` | Ring events and container lines, redacted. |
+| `logs` | `-f`, `--lines N`, `-n N`, `--source ctl\|rt\|ocsup\|gate\|alert` | Recent events and container log lines, redacted. |
 | `open` | `--no-open`, `--qr` | A new single-use login link. It opens the owner console at `/`. |
 | `doctor` | `--ai-token-file <file>` | PASS, WARN and FAIL checks, each with a fix. Reads `GET /ops/doctor`, the JSON the owner console shows. Never wakes. |
 
@@ -61,11 +61,11 @@ Defaults for `init`: Worker name `oc-host`; instance `2/6/20` (vCPU, GiB, GB; th
 
 | Command | Flags | Does |
 |---|---|---|
-| `sleep now` | `--force`, `--timeout <s>`, `--no-wait` | Run the sleep gate. It names the rule that refuses. `--force` skips the rules that you can override. If undelivered inbox rows refuse the sleep, `--force` dead-letters the pending rows, prints how many, and tries again. |
+| `sleep now` | `--force`, `--timeout <s>`, `--no-wait` | Run the sleep check, and name the rule that refuses. `--force` skips the rules that you can override. If undelivered inbox rows refuse the sleep, `--force` dead-letters the pending rows (marks them as never to be delivered), prints how many, and tries again. |
 | `sleep status` | | Show the sleep state. |
 | `sleep set auto\|off` | `--idle-minutes N`, `--proactive <v>` | Write the `sleep.*` keys in `oc-host.jsonc` and in the Worker's settings document. Applies at the next op. No deploy. |
 | `wake` | `--timeout <s>` | Wake and wait for running. Default 120 s. |
-| `restart` | `--hard`, `--yes`, `--timeout <s>`, `--no-wait` | A planned stop and start. `--hard` skips the sleep flush. Default 300 s. After a `deploy` with a new image it takes a workspace archive first (up to 3 min), then stops and boots the newest image: image path, new generation, Doctor. It prints that. If that archive fails or takes longer, the restart does not run; `--hard` skips the archive and loses writes since the last one. |
+| `restart` | `--hard`, `--yes`, `--timeout <s>`, `--no-wait` | A planned stop and start. `--hard` skips the sleep flush. Default 300 s. After a `deploy` with a new image it takes a workspace archive first (up to 5 min, or 90 s without progress; skipped when the newest archive is under 2 minutes old with no writes after it), then stops and boots the newest image: image path, new generation, Doctor. It prints that. If that archive fails or times out, the restart does not run; `--hard` skips the archive and loses writes since the last one. |
 
 ## State
 
@@ -76,6 +76,7 @@ Defaults for `init`: Worker name `oc-host`; instance `2/6/20` (vCPU, GiB, GB; th
 | `backup restore <id>` | `--sqlite pitr:<time>\|archive:<id>`, `--accept-loss`, `--yes` | Restore. It prints the loss window first. |
 | `snapshot list` | | Sleep snapshots and the chain. |
 | `snapshot prune` | `--dry-run`, `--yes` | Delete registry tags of old chains. |
+| `import <seed-dir>` | `--feb <dir>`, `--media <dir>`, `--only files,workspace,config`, `--dry-run`, `--yes` | Bring an old OpenClaw install in: workspace, memory, cron jobs and files. `--dry-run` prints the plan. Never copies credentials, `.env` files or keys. A rerun resumes. |
 
 ## Config and secrets
 
@@ -91,7 +92,7 @@ Defaults for `init`: Worker name `oc-host`; instance `2/6/20` (vCPU, GiB, GB; th
 | `secrets set <NAME>` | `--from-file <file>`, `--no-restart` | Set the Worker secret `OC_SECRET_<NAME>`. The gateway sees it as env `NAME`. Restarts unless `--no-restart`. |
 | `secrets list` | | Names and set times. |
 
-Config and secret changes apply when the gateway starts: at the next wake, or now with `--restart`.
+Config and secret changes apply when the gateway starts, which is at the next wake, or now with `--restart`.
 
 ## Channels and models
 
@@ -100,6 +101,7 @@ Config and secret changes apply when the gateway starts: at the next wake, or no
 | `channels add telegram` | `--token-file <file>`, `--wait-pair`, `--pair-timeout <t>` | Add the Telegram bot. Prints the webhook URL (the secret path shows as `<secret>`). |
 | `channels add slack\|discord\|twilio\|sms` | `--no-wait`, `--verify-timeout <t>` | Add a webhook channel. `sms` is the same as `twilio`. Secrets from env or a hidden prompt. Prints the console URL and waits for the platform's first call. |
 | `channels list` | | Status of each channel. |
+| `channels adopt <telegram\|slack\|discord\|twilio>` | | Adopt a channel token pasted in the OpenClaw UI, like the Adopt button on the Setup tab. See [Channels](/channels/#adopt-a-channel-from-the-openclaw-ui). |
 | `channels remove <channel>` | `--force` | Remove a channel. It refuses while the channel has undelivered inbox rows. `--force` removes it and dead-letters those rows. For Slack, Discord and Twilio it prints the `wrangler secret delete` commands. |
 | `inbox list` | `--channel <name>` | The webhook rows the Worker stored: id, channel, state, attempts, age. |
 | `inbox drop <id>` | | Dead-letter one pending or held row. It is not delivered. |
@@ -108,13 +110,13 @@ Config and secret changes apply when the gateway starts: at the next wake, or no
 | `pairing approve telegram <code>` | | Approve a direct-message pairing. |
 | `pairing wait [telegram]` | `--timeout <t>` | Wait for a pairing request. Default 10 minutes. |
 | `model list` | `--all`, `--ai-token-file <file>` | Workers AI models with tool calls. Uses your wrangler login unless you give a token. |
-| `model set <id>` | `--fallback <id>` (repeat), `--restart` | Set the primary model (`@cf/...` or `anthropic/...`). Tests it through the gate first. |
-| `model bench` | `--models a,b`, `--turns N`, `--gateway <id>`, `--concurrency N`, `--out <file>`, `--gate-url <url>`, `--direct` with `--ai-token-file <file>` | Agent turns with tool calls through the gate. |
+| `model set <id>` | `--role main\|utility\|compaction`, `--fallback <id>` (repeat), `--restart` | Set the primary model (`@cf/...` or `anthropic/...`). Tests it through the gate first. |
+| `model bench` | `--role <r>`, `--models a,b`, `--turns N`, `--gateway <id>`, `--concurrency N`, `--out <file>`, `--gate-url <url>`, `--direct` with `--ai-token-file <file>` | Agent turns with tool calls through the gate. |
 | `ai-gateway setup` | `--gateway <id>`, `--model <id>`, `--spend-limit-usd <n>`, `--ai-token-file <file>`, `--restart` | Choose the gateway, run the model test through the gate. A token lets it list or create the gateway. `--spend-limit-usd` records `llm.spendLimitUsd` and prints the dashboard step. |
 | `caps` | | Show the daily budgets. |
 | `caps set <browser\|neurons\|requests\|websearch\|exec\|sandbox> <n>` | | Set one budget. |
 | `sandbox [status]` | | Sandbox state, last backup, exec and sandbox budgets. |
-| `sandbox on\|off` | `--all` | Write `sandbox` in `oc-host.jsonc`: `on` sandboxes every channel chat, your Telegram DM included (the Control UI chat stays out), `on --all` every session. Then `ochost deploy` and `ochost restart`. |
+| `sandbox on\|off` | `--all`, `--apply` | Write `sandbox` in `oc-host.jsonc`: `on` sandboxes every channel chat, your Telegram DM included (the Control UI chat stays out), `on --all` every session. Then `ochost deploy` and `ochost restart`, or add `--apply` to do both. |
 | `sandbox sleep` | | Back up the sandbox workspace and stop it. |
 
 ## Access and alerts
@@ -158,7 +160,7 @@ See [Upgrades](/upgrades/).
 
 ## Scripts and agents
 
-Every prompt has a flag. This runs with no prompt:
+Every prompt has a flag, so this runs with no prompt:
 
 ```sh
 ochost init --non-interactive --json --no-open \

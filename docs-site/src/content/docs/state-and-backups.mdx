@@ -5,21 +5,23 @@ sidebar:
   order: 8
 ---
 
-oc-workers keeps the state of OpenClaw outside the container, because a container can stop at any time. This page says what is saved, how to make and restore a backup, and what you lose in a crash.
+A container can stop at any time, so oc-workers keeps OpenClaw's state outside it.
+
+A snapshot is a saved copy of the container disk, an archive is a portable backup made by OpenClaw's backup command, and the replica is the copy of OpenClaw's databases in R2.
 
 ## What is saved
 
 | Class | What it is | How it is saved | Target loss |
 |---|---|---|---|
-| Databases | OpenClaw SQLite: pairing, cron jobs, ingress queue, sessions | Litestream copies each change to R2 about every second | 1 to 3 s |
+| Databases | OpenClaw SQLite: pairing, cron jobs, ingress queue, sessions | Litestream (a SQLite streaming tool) copies each change to R2 about every second | 1 to 3 s |
 | Credentials | Channel and login credentials | Written to the Control DO on each change, plus a copy to R2 at most every 15 minutes | Under 1 s typical, 30 s worst |
 | Files | Workspace, plugins, media | Disk snapshots, hourly while awake and at each planned stop | 60 min. 0 after a planned stop. |
 | Stored files | Files the agent saves to the storage location `r2` | Written to R2 (`f/<inst>/`) through the replica gate on each save | 0: durable when the save returns |
 | Archives | A portable backup of everything | `openclaw backup create` on a schedule while awake (every 6 hours by default), at maintenance and before upgrades | 6 h for files |
 
-Other state is covered too. The config is a versioned document in the Control DO. Secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
+Other state is covered too. The config is a versioned document in the Control DO (the Durable Object that holds the install's records), and secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
 
-Stored files are outside snapshots and archives. A restore from a snapshot or an archive does not change them, and an archive does not contain them. A deleted file is gone; R2 keeps no older copy. See [File storage](/capabilities/#file-storage).
+Stored files are outside snapshots and archives. A restore from a snapshot or an archive does not change them, and an archive does not contain them. A deleted file is gone, because R2 keeps no older copy. See [File storage](/capabilities/#file-storage).
 
 ## Make and restore a backup
 
@@ -30,8 +32,8 @@ ochost backup restore <id>
 ```
 
 - `backup create` wakes the install.
-- `backup restore` prints the loss window first and asks you to accept it. Use `--accept-loss` to skip the question.
-- After each new archive, oc-workers prunes old ones. It keeps the newest 8, the newest of each of the last 14 days, the newest of each of the last 8 weeks, and every archive made before an upgrade.
+- `backup restore` first prints the loss window and asks you to accept it. Use `--accept-loss` to skip the question.
+- After each new archive, oc-workers reads it back and prunes old ones. It keeps the newest verified archive, the newest 8, the newest of each of the last 14 days, the newest of each of the last 8 weeks, and archives made before an upgrade or after a rollback for 90 days. It deletes an archive only when a newer verified one exists.
 - You can also select **Archive now** on the Setup tab of the owner console. It wakes the install.
 
 ### Point-in-time restore of the database
@@ -45,9 +47,9 @@ ochost backup restore --sqlite archive:<id>
 
 ### Replica checks
 
-Once per generation, while the install is awake, oc-workers restores the database replica into a scratch database and runs `quick_check`. A pass marks the generation `verified`. A failure marks it `bad` and sends the `gen-bad` alert. Cleanup keeps the newest verified generation. With none verified, it keeps the newest complete one.
+Each boot writes the replica to a new generation, a fresh path in R2. Once per generation, while the install is awake, oc-workers restores the replica into a scratch database and runs `quick_check`. A pass marks the generation `verified`. A failure marks it `bad` and sends the `gen-bad` alert. Cleanup keeps the newest verified generation, or the newest complete one if none is verified.
 
-The Setup tab also has **Restore drill**. It restores into a throw-away instance.
+The Setup tab also has **Restore drill**, which restores into a throw-away instance.
 
 ## Snapshots
 
@@ -56,11 +58,11 @@ ochost snapshot list
 ochost snapshot prune --dry-run
 ```
 
-`snapshot list` shows sleep snapshots and the chain. `snapshot prune` deletes registry tags of old chains. The plan lists only chains older than the live root, and only after one wake from that root worked. Cloudflare has not published a price for snapshot storage. See [Cost](/cost/).
+`snapshot list` shows sleep snapshots and the chain they form. `snapshot prune` deletes registry tags of old chains. The plan lists only chains older than the live root, and only after one wake from that root worked. Cloudflare has not published a price for snapshot storage. See [Cost](/cost/).
 
 ## The install never boots empty
 
-If an install has state and the copy in R2 is missing or unreadable, the boot stops. It does not start with empty state. In tests with a missing snapshot, an R2 outage and a wiped Control DO, no empty boot happened. After a Control DO wipe, one test rebuilt the install in 69.3 s.
+If an install has state and the copy in R2 is missing or unreadable, the boot stops rather than start with empty state. In tests with a missing snapshot, an R2 outage and a wiped Control DO, no empty boot happened. After a Control DO wipe, one test rebuilt the install in 69.3 s.
 
 ## Measured loss after a crash
 
@@ -75,12 +77,12 @@ These results come from 50 random SIGKILLs on a Cloudflare install with test tim
 | Archive | 6 h | Newest archive 12.1 min old at test cadence | Holds at test timers |
 | Webhook inbox | 0 | 0 rows lost in 586 acknowledged updates | Holds for rows |
 
-Replies are a separate case. In one test, 4 of 586 acknowledged updates never got a reply after a crash. A reply can also repeat. Treat replies as at-least-once, not exactly-once.
+Replies are a separate case. In one test, 4 of 586 acknowledged updates never got a reply after a crash, and a reply can also repeat. Treat replies as at-least-once, not exactly-once.
 
-oc-workers made these changes after the test. We did not repeat the test:
+oc-workers made these changes after the test, and we did not repeat it:
 
-- An online archive no longer reads the live database. It is made from a copy. oc-workers restores the managed databases from the R2 replica and copies other SQLite files with the backup API. This targets the 5.95 s case.
-- oc-workers sees and copies a database change that only touches the WAL file.
+- An online archive no longer reads the live database; it is made from a copy. oc-workers restores the managed databases from the R2 replica and copies other SQLite files with the backup API. This targets the 5.95 s case.
+- oc-workers now sees and copies a database change that only touches the WAL file (SQLite's write-ahead log).
 
 ## Next
 

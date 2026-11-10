@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-This page lists every setting of an install and says how to change each one. An install has two config layers. Know which one you edit.
+Settings sit in two layers, both stored in the Control DO (the Durable Object that holds the install's config and records). Check which layer you edit. An op is one action of the install, such as a wake, a sleep or a restart.
 
 ## The two layers
 
@@ -14,15 +14,15 @@ This page lists every setting of an install and says how to change each one. An 
 | `oc-host.jsonc` | Your project directory. Install settings. The CLI reads it. The Worker keeps its own versioned copy of the tuning keys: the settings document in the Control DO. | `ochost config set <key> <value>`, `ochost sleep set`, `ochost alerts setup`. Or your editor, then `ochost deploy` for the keys marked below. | At the Worker's next op, with no deploy, when set through `ochost`. See the table below. |
 | OpenClaw config document | The Control DO keeps numbered versions. The gateway reads the newest good one at each start. | `ochost config set <path> <json>` | At the next wake, or now with `--restart`. |
 
-`ochost config pull` writes the current version to `openclaw.jsonc` and sets `baseVersion` in `oc-host.jsonc`. `openclaw.jsonc` is a working copy. Edits to it do not reach the install. `config set` refuses when `baseVersion` is not the current version: run `config pull`, then set again. `--force` skips that check.
+`ochost config pull` writes the current version to `openclaw.jsonc` and sets `baseVersion` in `oc-host.jsonc`. `openclaw.jsonc` is only a working copy: edits to it do not reach the install. `config set` refuses when `baseVersion` is not the current version, so run `config pull` and then set again. `--force` skips that check.
 
-`ochost config list` shows the versions. `ochost config get [path] --ver N` shows one. A path is dotted: `agents.defaults.model.primary`, `bindings[0].agentId`. The value is JSON. A bare word that is not JSON is a string. `--unset` removes a key.
+`ochost config list` shows the versions, and `ochost config get [path] --ver N` shows one. A path is dotted, such as `agents.defaults.model.primary` or `bindings[0].agentId`. The value is JSON, and a bare word that is not JSON counts as a string. `--unset` removes a key.
 
 See [CLI reference](/cli-reference/) for the flags.
 
 ## Two ways to change OpenClaw settings
 
-OpenClaw has its own settings pages and `openclaw config` commands. oc-workers adds `ochost config`. Both change the same OpenClaw configuration. They differ in where the change lives and when it works.
+OpenClaw has its own settings pages and `openclaw config` commands, and oc-workers adds `ochost config`. Both change the same OpenClaw configuration, but they differ in where the change lives and when it takes effect.
 
 | | OpenClaw UI and `openclaw config` | `ochost config set` |
 |---|---|---|
@@ -41,18 +41,18 @@ When the install is asleep, only `ochost` works. `ochost config set` wakes nothi
 
 ## oc-host.jsonc keys
 
-`ochost init` writes the file with these defaults and comments. The file is JSONC. Comments stay when the CLI edits it. Never edit `.oc-host/wrangler.jsonc`: every `ochost` run rewrites it.
+`ochost init` writes the file with these defaults and comments. The file is JSONC, and comments stay when the CLI edits it. Never edit `.oc-host/wrangler.jsonc`, because every `ochost` run rewrites it.
 
-The CLI checks every key in the tables on load: type, floor and cap, and the rules between keys. A key you leave out takes its default. A bad value stops the command with the allowed range. `upgrade.auto: true` stops it too: automatic upgrades are not built.
+When it loads the file, the CLI checks every key in the tables: type, floor and cap, and the rules between keys. A key you leave out takes its default. A bad value stops the command and shows the allowed range. `upgrade.auto: true` stops it too, because automatic upgrades are not built.
 
 ### The settings document
 
-The tuning keys live in a settings document in the Control DO. It has numbered versions, like the OpenClaw config.
+The tuning keys live in a settings document in the Control DO, with numbered versions like the OpenClaw config.
 
-- `ochost deploy` seeds version 1 from `oc-host.jsonc`. After that the document wins: a later deploy does not change a value.
-- `ochost config set <key> <value>` checks the value, writes a new version and updates `oc-host.jsonc`. No deploy. The Control DO reads it on every call. The Runtime DO and the login store re-read it at the start of each op, with a 10 second cache, so a change applies at the next op.
+- `ochost deploy` seeds version 1 from `oc-host.jsonc`. After that the document wins, so a later deploy does not change a value.
+- `ochost config set <key> <value>` checks the value, writes a new version and updates `oc-host.jsonc`, with no deploy. The Control DO reads the document on every call. The Runtime DO (the Durable Object that runs the container) and the login store re-read it at the start of each op, with a 10 second cache, so a change applies at the next op.
 - `ochost config get <key>` shows the live value. `ochost config settings` lists every key with its live value and whether you set it. `--unset` puts the default back.
-- Editing `oc-host.jsonc` by hand changes nothing live. Run `ochost settings push`: it sends every tuning key of the file as the whole document (keys the file omits go back to their default). No deploy.
+- Editing `oc-host.jsonc` by hand changes nothing live. Run `ochost settings push`, which sends every tuning key of the file as the whole document (keys the file omits go back to their default), with no deploy.
 
 ```sh
 ochost config set sleep.idleMinutes 10
@@ -60,7 +60,7 @@ ochost config set archive.everyHours 3
 ochost config settings
 ```
 
-An op in flight keeps the values it started with. A changed `sleep.idleMinutes` applies at the next sleep decision. The adaptive idle time (it doubles after a quick re-wake) was set at the last wake, so it follows at the wake after.
+An op in flight keeps the values it started with. A changed `sleep.idleMinutes` applies at the next sleep decision. The adaptive idle time (it doubles after a quick re-wake) was set at the last wake, so it catches up one wake later.
 
 ### Install keys
 
@@ -83,11 +83,11 @@ An op in flight keeps the values it started with. A changed `sleep.idleMinutes` 
 | `llm.fallbacks` | `[]` | List of model ids | A local copy of the fallbacks. `ochost model set --fallback` writes it. | Local copy |
 | `llm.spendLimitUsd` | `null` | Number above 0, or `null` | A monthly spend cap for the AI Gateway. The CLI cannot set it: the gateway API needs a token that can edit the gateway, and the install holds none. `ochost ai-gateway setup` prints the dashboard step: AI, AI Gateway, your gateway, Settings, Spend limits, add a cost rule. | Dashboard step |
 
-The old `llm.auth` key is gone: it had one value. A file that still has it works.
+The old `llm.auth` key is gone, since it had only one value. A file that still has it works.
 
 ### Sleep keys
 
-Change them with `ochost config set <key> <value>`, or `ochost sleep set auto|off --idle-minutes N --proactive <v>`. Both apply at the next op.
+Change them with `ochost config set <key> <value>` or `ochost sleep set auto|off --idle-minutes N --proactive <v>`. Both apply at the next op.
 
 | Key | Default | Allowed values | What it changes |
 |---|---|---|---|
@@ -96,7 +96,7 @@ Change them with `ochost config set <key> <value>`, or `ochost sleep set auto|of
 | `sleep.minAwakeMinutes` | `2` | 1-60 | Stay awake at least this long after a boot. |
 | `sleep.minSleepMinutes` | `10` | 1-720 | No sleep when the next known wake is closer than this. |
 | `sleep.uiIdleMinutes` | `15` | 1-240 | A UI socket closes after this long without input. |
-| `sleep.uiMaxMinutes` | `60` | 5-1440, at least `uiIdleMinutes` | A UI socket closes after this long without a chat message. |
+| `sleep.uiMaxMinutes` | `60` | 5-1440, at least `uiIdleMinutes` | A UI socket closes after this long without a chat message or a write (a change made from the UI). |
 | `sleep.maxAwakeHours` | `16` | 6-72 | Uptime limit that the Control DO puts in each boot plan. Past it, the install restarts when idle. The old key `maintenance.maxUptimeHours` still counts when this one is absent. |
 | `sleep.costGuard` | `"auto"` | `auto`, `off` | `auto`: the guard holds the install awake when sleeping would cost more than staying on. `off`: it never holds. Status still shows the numbers. |
 | `sleep.snapshotCostUsd` | `0.0045` | 0-1 (USD) | Cost of one sleep snapshot, used by the cost guard and the cost figures. A guess until you see an invoice. |
@@ -129,7 +129,7 @@ Change them with `ochost config set <key> <value>`, or `ochost sleep set auto|of
 |---|---|---|---|
 | `alerts.dedupeMinutes` | `60` | 1-1440 | One send per alert class in this time. |
 | `alerts.minSeverity` | `"high"` | `info`, `warn`, `high` | The alert channel gets alerts at or above this level. `ochost alerts list` shows all. |
-| `gens.churnPerDay` | `10` | 1-200 | The alert `gen-churn` fires above this many unplanned gens in a UTC day. |
+| `gens.churnPerDay` | `10` | 1-200 | The alert `gen-churn` fires above this many unplanned gens (database replica generations; each boot starts one) in a UTC day. |
 | `storage.pruneAtMb` | `1024` | 64-8192 | Control DO storage size where hard pruning starts and the alert `ctl-storage-high` fires. |
 | `storage.refuseAtMb` | `2048` | 128-9000, above `pruneAtMb` | The Control DO refuses growth writes (credentials, config, plugins) above this. |
 | `cost.releaseBelowPct` | `80` | 10-99 | Once the cost guard holds, it lets go when 24 h spend is under this share of the always-on cost. |
@@ -147,15 +147,15 @@ Change them with `ochost config set <key> <value>`, or `ochost sleep set auto|of
 | `login.rateLimits.allFail` | `30` | 1-10000 | Failed logins from all IPs per window. |
 | `login.rateLimits.maxCodes` | `10` | 1-100 | Open one-time codes. |
 
-`sleep.mode`, `sleep.idleMinutes` and `sleep.proactive` are the settings that matter most.
+The settings that matter most are `sleep.mode`, `sleep.idleMinutes` and `sleep.proactive`.
 
 ## OpenClaw keys that oc-workers manages
 
-Do not set these by hand. Use the `ochost` command named in the table. oc-workers either overwrites the key at every boot, or checks it, or builds on it.
+Do not set these by hand; use the `ochost` command named in the table. oc-workers overwrites each of these keys at every boot, checks it, or builds on it.
 
 ### Overwritten at every boot
 
-The boot step takes the selected config version, then sets these keys over it. Your value is dropped. The Control DO supplies the values.
+The boot step takes the selected config version and sets these keys over it, with values from the Control DO. Your own value is dropped.
 
 | Key | Value | Why |
 |---|---|---|
@@ -170,27 +170,27 @@ The boot step takes the selected config version, then sets these keys over it. Y
 
 Open the UI with `ochost open`. A change to `gateway.auth`, `gateway.bind`, `gateway.port`, `gateway.trustedProxies`, `gateway.controlUi`, `browser.executablePath` or `tools.exec` raises the alert `config-sensitive`.
 
-A few keys are set only for one boot. A restore from an archive or to a point in time sets `cron.enabled` to `false` for that boot. A boot that holds channels off sets `channels.<name>.enabled` to `false` for that boot. A plugin that is missing from the image is set `enabled: false`. The stored version does not change.
+A few keys are set for one boot only, and the stored version does not change. A restore from an archive or to a point in time sets `cron.enabled` to `false` for that boot. A boot that holds channels off sets `channels.<name>.enabled` to `false` for that boot. A plugin that is missing from the image is set `enabled: false`.
 
 ### Written by ochost commands
 
-oc-workers writes these keys into the document, and checks some of them. Change them only with the command.
+oc-workers writes these keys into the document and checks some of them. Change them only with the named command.
 
 | Keys | Set by | Rule |
 |---|---|---|
 | `channels.telegram` (`botToken`, `webhookUrl`, `webhookSecret`, `webhookPath`, `dmPolicy`) and the Telegram entry in `bindings` | `ochost channels add telegram` | The Control DO refuses a `webhookUrl` that is not the managed Worker route. Refused versions give HTTP 403 and the alert `config-rejected`. Secrets are `${OC_...}` references. |
-| `agents.defaults.utilityModel`, `agents.defaults.compaction.model`, `agents.defaults.compaction.thinkingLevel`, `agents.defaults.models["cfgw/<model>"].params.thinking`, and the `reasoning`, `input` and `compat` fields of each `models.providers.cfgw.models` entry | `ochost config render`, `ochost model set --role` | The render sets a key only when it is absent, except the `cfgw` entries, which it rewrites. The main model runs at thinking `low`. The utility and compaction models run at `off`. The default utility model is `@cf/google/gemma-4-26b-a4b-it`. |
+| `agents.defaults.utilityModel`, `agents.defaults.compaction.model`, `agents.defaults.compaction.thinkingLevel`, `agents.defaults.thinkingDefault`, `agents.defaults.models["cfgw/<model>"].params.thinking`, and the `reasoning`, `input` and `compat` fields of each `models.providers.cfgw.models` entry | `ochost config render`, `ochost model set --role` | The render sets a key only when it is absent, except the `cfgw` entries, which it rewrites. The main model runs at thinking `low` through `agents.defaults.thinkingDefault` (the Control UI's Thinking row). The utility and compaction models get a per-model `params.thinking` of `off`; the render removes a per-model `low` left on the main model by an older render. The default utility model is `@cf/google/gemma-4-26b-a4b-it`. |
 | `models.providers.cfgw`, `agents.defaults.model.primary` as `cfgw/<model>` | `ochost init`, `ochost model set`, `ochost ai-gateway setup` | `cfgw` points at the capability gate (`http://15.0.0.3/ai/v1`) with a dummy key. The Worker runs the call on its Workers AI binding. No token. |
 | `browser`, `tools.web.fetch`, `tools.web.search`, `tools.media`, `plugins.load.paths`, `plugins.entries.cf-capabilities`, `memory.search`, `tts`, `models.providers.openai`, `agents.defaults.mediaModels`, `mcp.servers.cloudflare-docs` | `ochost init` (version 1) | Every one points at the capability gate at `15.0.0.3`. The container holds no Cloudflare credential. A key that points elsewhere skips the gate and its [budgets](#budgets). See [Capabilities](/capabilities/). |
 | `channels.slack`, `channels.discord`, `channels.sms` and their `bindings` entries | `ochost channels add slack\|discord\|twilio` | HTTP mode only, never socket. The webhook path is the adapter route. Secrets are `${OC_...}` references. |
 | `agents.defaults.sandbox.*`, `plugins.entries.ochost-sandbox` | The boot step, when `sandbox` is `on` | Set at every boot, like the keys above. Backend `ochost` at the sandbox gate `15.0.0.4`. |
 | `agents.defaults.heartbeat.every` | `0m` when you give no value | A new owner version with no `heartbeat.every` gets `0m` (off), so the OpenClaw heartbeat does not wake a sleeping install. Set your own value to keep it. `sleep.proactive: "openclaw"` also keeps the OpenClaw cadence. |
 
-A key that holds a secret takes a `${NAME}` reference. Set the value with `ochost secrets set NAME`. The gateway sees it as env `NAME`. Names that have their own command (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `CF_AI_TOKEN`, `GATEWAY_TOKEN`) are refused, with the command to use.
+A key that holds a secret takes a `${NAME}` reference. Set the value with `ochost secrets set NAME`, and the gateway sees it as env `NAME`. Names that have their own command (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, the Slack, Discord and Twilio secrets, `CF_AI_TOKEN`, `GATEWAY_TOKEN`) are refused, and the error names the command to use.
 
 ## OpenClaw keys you change
 
-The rest of the document is yours. The Control DO keeps up to 50 versions.
+The rest of the document is yours, and the Control DO keeps up to 50 versions of it.
 
 | Goal | Command |
 |---|---|
@@ -201,29 +201,27 @@ The rest of the document is yours. The Control DO keeps up to 50 versions.
 | Remove a key | `ochost config set <path> --unset` |
 | Apply now | Add `--restart`. Without it the change applies at the next wake. |
 
-The memory search keys (`memory.search.*`) point at the capability gate. Keep them. Other memory keys follow the OpenClaw reference.
+The memory search keys (`memory.search.*`) point at the capability gate, so keep them. Other memory keys follow the OpenClaw reference.
 
-For every other section, see the [OpenClaw configuration reference](https://docs.openclaw.ai/gateway/configuration-reference): `channels`, `agents`, `session`, `messages`, `tools`, `models`, `mcp`, `skills`, `plugins`, `browser`, `hooks`, `cron`, `logging`. Ignore the `gateway` section: oc-workers manages it. `openclaw config schema` prints the live schema.
+For every other section, see the [OpenClaw configuration reference](https://docs.openclaw.ai/gateway/configuration-reference): `channels`, `agents`, `session`, `messages`, `tools`, `models`, `mcp`, `skills`, `plugins`, `browser`, `hooks`, `cron`, `logging`. Ignore the `gateway` section, because oc-workers manages it. `openclaw config schema` prints the live schema.
 
 ## Budgets
 
-The capability gate and the sandbox gate count what the agent spends each UTC day. The Control DO holds the counters. The verbs and defaults are on [Capabilities](/capabilities/#budgets).
+The capability gate and the sandbox gate count what the agent spends each UTC day, and the Control DO holds the counters. An alert fires at 80 percent. At 100 percent the gate answers HTTP 429 with `retry-after` until the next UTC midnight or until you raise the limit. The verbs and defaults are on [Capabilities](/capabilities/#budgets).
 
 ```sh
 ochost caps                      # used, limit and percent per verb
 ochost caps set browser 7200     # change one limit
 ```
 
-An alert fires at 80 percent. At 100 percent the gate answers HTTP 429 with `retry-after`, until the next UTC midnight or until you raise the limit.
-
 ## Not configurable yet
 
-These values are fixed in code. No `oc-host.jsonc` key changes them.
+These values are fixed in code, and no `oc-host.jsonc` key changes them.
 
 | What | Current value |
 |---|---|
 | Maintenance snapshots per day | 2 |
-| OpenClaw config versions kept | 50 |
+| OpenClaw config versions kept | 50 (10 once hard pruning starts at `storage.pruneAtMb`) |
 | Cost guard cycle | One wake cycle counts as 37 s awake and 28 s CPU |
 | Abort hold | No sleep for 1 h after 3 aborts |
 | Socket max age | 24 h |

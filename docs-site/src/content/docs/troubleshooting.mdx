@@ -5,38 +5,38 @@ sidebar:
   order: 11
 ---
 
-An `ochost` error is one line: `Failed: <you see> — fix: <do this>`. This page shows the common ones and what to do for each.
+An `ochost` error is one line: `Failed: <you see> — fix: <do this>`.
 
 ## From the CLI
 
 | You see | Do this |
 |---|---|
-| `Node 22.18 or later is needed` | Install Node 22.18 or later. Check with `node -v`. Rerun. |
-| `Docker is not running` | Start Docker. Run `docker info`. Rerun. |
-| `wrangler is not logged in` | Run `npx wrangler login`. Rerun `ochost init`. |
-| `account is not on Workers Paid` | Upgrade at the link in the line. The plan is $5 a month. Rerun. |
-| `R2 is not enabled on this account` | Enable R2 in the dashboard. Rerun. |
+| `Node 22.18 or later is needed` | Install Node 22.18 or later, check with `node -v`, and rerun. |
+| `Docker is not running` | Start Docker, check with `docker info`, and rerun. |
+| `wrangler is not logged in` | Run `npx wrangler login`, then rerun `ochost init`. |
+| `account is not on Workers Paid` | Upgrade at the link in the line (the plan is $5 a month), then rerun. |
+| `R2 is not enabled on this account` | Enable R2 in the dashboard, then rerun. |
 | `no workers.dev subdomain` | Rerun with `--subdomain <name>`. |
-| `an oc-workers install already runs as <name>` | Run `ochost init --adopt`, or pick another `--name`. |
-| `gateway <id> does not exist` | Rerun with `--gateway default`. Cloudflare makes it on first use. Or `--gateway none`. |
-| `no provider key for anthropic` (from `ochost model set anthropic/...`) | Add your Anthropic key to the gateway. Steps below. |
+| `an oc-host install already runs as <name>` | Run `ochost init --adopt`, or pick another `--name`. |
+| `gateway <id> does not exist` | Rerun with `--gateway default`, which Cloudflare makes on first use, or with `--gateway none`. |
+| `anthropic/<model> did not answer through the gate (<status>)` (from `ochost model set`) | The gateway has no Anthropic key. Add it with the steps below, then rerun. |
 | `the gate did not answer (404)` | The Worker is older than this CLI. Run `ochost deploy`. |
-| `the OpenClaw config still calls the AI Gateway with the old AI token` (from `ochost deploy`) | The install was made before the zero-token flow. Run `ochost ai-gateway setup --restart`. It points the model at the gate. |
+| `the OpenClaw config still calls the AI Gateway with the old AI token` (from `ochost deploy`) | The install was made before oc-workers stopped using an AI token. Run `ochost ai-gateway setup --restart`, which points the model at the gate. |
 | `the token lacks AI Gateway: Run` (only with `--ai-token-file`) | Add that permission to the token, or drop the flag. |
-| `retry n of 3: blob unknown` | Nothing. `init` retries. |
+| `retry n of 3: blob unknown` | Nothing; `init` retries. |
 | `image push kept failing (3 retries)` | Rerun `ochost deploy`. Pushed layers are kept. |
-| `the install did not start in 10 min` | Run `ochost status`. Rerun `ochost init`. It is safe. |
-| `config changed elsewhere (base N, current M)` | Run `ochost config pull`. Then set again. |
+| `the install did not start in 10 min` | Run `ochost status`, then rerun `ochost init`. A rerun is safe. |
+| `config changed elsewhere (base N, current M)` | Run `ochost config pull`, then set again. |
 | `Telegram rejected the token` | Copy the token from @BotFather again. |
-| `a second Telegram bot is not supported in v1` | Run `ochost channels remove telegram` first. It also accepts `--yes`. |
-| `Telegram webhook not set after 3 min` | Run `ochost logs --source ocsup`. Then `ochost restart`. |
-| `no pairing request in 10 min` | Send a direct message to the bot. Then run `ochost pairing approve telegram <code>`. |
+| `a second Telegram bot is not supported in v1` | Run `ochost channels remove telegram` first (it also accepts `--yes`). |
+| `Telegram webhook not set after 3 min` | Run `ochost logs --source ocsup`, then `ochost restart`. |
+| `no pairing request in 10 min` | Send a direct message to the bot, then run `ochost pairing approve telegram <code>`. |
 | `<NAME> is a channel secret` or `<NAME> is a managed secret` (from `ochost secrets set`) | Use the command in the fix line. |
 | `<version> changes the state schema` | Stay on the pinned version. See [Upgrades](/upgrades/). |
-| `image contract failed for <v>` | The new image failed its contract test. The upgrade stops. Stay on your version. The test is in the `image/test` folder of the repo. |
+| `image contract failed for <v>` | The new image failed its contract test, so the upgrade stops. Stay on your version. The test is in the `image/test` folder of the repo. |
 | `rolled back to <v> (upgrade failed: ...)` | Run `ochost logs --source rt` and `ochost upgrade check`. |
 | `no oc-host install in <dir>` | Run `ochost init`, or `ochost init --adopt`. |
-| Any other `Failed:` line | Rerun with `OCHOST_DEBUG=1`. Report the output. |
+| Any other `Failed:` line | Rerun with `OCHOST_DEBUG=1` and report the output. |
 
 ### Add an Anthropic key to the gateway
 
@@ -47,26 +47,28 @@ An `ochost` error is one line: `Failed: <you see> — fix: <do this>`. This page
 | You see | Do this |
 |---|---|
 | The page "Link used or expired" | A login link works once and lasts 5 minutes. Run `ochost open`. |
-| "OpenClaw is waking up. Reload in a few seconds." | Nothing. The page shows the phase and reloads when the install runs. |
-| "offline" in an idle Control UI tab | Reload the page. The tab was closed for idle. This comes from the OpenClaw UI. |
+| "OpenClaw is waking up. Reload in a few seconds." | Nothing. The page shows the wake phase and reloads when the install runs. |
+| "offline" in an idle Control UI tab | Reload the page. The OpenClaw UI shows this when a tab was closed for being idle. |
 | Error 1101 on a page while the install sleeps | See [The 1101 page](#the-1101-page). |
 | `bad origin` when you log in with Firefox | See [Firefox login](#firefox-login). |
 
 ### The 1101 page
 
-An older Worker could fail with Cloudflare Error 1101 on a proxied path while the install went to sleep. The current Worker answers with the waking page instead (status 503 with `Retry-After: 5` for non-page requests). Update your clone and run `ochost deploy`.
+An older Worker could fail with Cloudflare Error 1101 on a proxied path while the install went to sleep. The current Worker answers with the waking page instead (status 503 with `Retry-After: 5` for non-page requests), so update your clone and run `ochost deploy`.
 
 ### Firefox login
 
-An older Worker refused the login form post from Firefox with 403 `bad origin`, because Firefox sent `Origin: null`. The current Worker accepts a missing or `null` Origin when `Sec-Fetch-Site` is `same-origin`. Update your clone and run `ochost deploy`. As a workaround, run `ochost open` and open the link.
+An older Worker refused the login form post from Firefox with 403 `bad origin`, because Firefox sent `Origin: null`. The current Worker accepts a missing or `null` Origin when `Sec-Fetch-Site` is `same-origin`, so update your clone and run `ochost deploy`. Until then, run `ochost open` and use the link.
 
 ## Known rough edges
 
 | You see | Meaning |
 |---|---|
-| `alerts db-unclassified (warn)` in `status` on a new install | The image scan flags a temp file. Harmless. |
-| `doctor`: `state WARN running, start ladder level 1` | A normal first start can leave level 1. No action. |
-| `.oc-host/wrangler.jsonc` has absolute paths into the clone | Keep the clone where it is. After a move, rerun `ochost init`. |
+| `alerts db-unclassified (warn)` in `status` on a new install | Harmless: the image scan flags a temp file. |
+| `status`: `degraded (disk-full)` | The container disk is 95 % full. Free space or raise the disk size. The state clears when use drops under 90 %. `disk-high` (80 %) is a warning only. |
+| A Telegram update shows as `dead` in `status` | The gateway answered it with 404 or 501 five times over at least 5 minutes. A dead row no longer keeps the install awake. |
+| `doctor`: `state WARN running, start ladder level 1` | No action. The start ladder counts failed starts, and a normal first start can leave it at level 1. |
+| `.oc-host/wrangler.jsonc` has absolute paths into the clone | Keep the clone where it is. If you move it, rerun `ochost init`. |
 | `ochost status` shows one cost value on a new install, not a range | Normal until the install has history. |
 | Deploy fails with `Timed out while preparing the container image` or `Unauthorized` | A registry problem. Rerun `ochost deploy`. |
 
@@ -80,11 +82,11 @@ ochost logs --source gate
 ochost logs --source alert
 ```
 
-To see alerts in the browser, open the Alerts and log tab of the owner console.
+`ctl` is the Control DO, `rt` the Runtime DO that runs the container, `ocsup` the supervisor in the container, `gate` container log lines and gate events, and `alert` the alerts sent. To see alerts in the browser, open the Alerts and log tab of the owner console.
 
 ## npm warns about blocked install scripts
 
-`npm install -g oc-workers` can print `install scripts blocked` for `esbuild` and `workerd`. npm 12 blocks post-install scripts it has not seen. The CLI and wrangler work without them. To clear the warning:
+`npm install -g oc-workers` can print `install scripts blocked` for `esbuild` and `workerd`, because npm 12 blocks post-install scripts it has not seen. The CLI and wrangler work without them. To clear the warning:
 
 ```sh
 npm install-scripts approve esbuild workerd

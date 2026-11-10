@@ -5,7 +5,7 @@ sidebar:
   order: 9
 ---
 
-This page shows how to move an install to a newer OpenClaw image and how to go back. An install follows a release track. The default is `extended-stable`. It is the key `upgrade.track` in `oc-host.jsonc`. Automatic upgrade is off (`upgrade.auto: false`). You upgrade by hand.
+An install follows a release track, `extended-stable` by default, set by the key `upgrade.track` in `oc-host.jsonc`. Automatic upgrade is off (`upgrade.auto: false`), so you upgrade by hand.
 
 ## Check for a new version
 
@@ -13,11 +13,11 @@ This page shows how to move an install to a newer OpenClaw image and how to go b
 ochost upgrade check
 ```
 
-`check` reads the npm dist-tag of the track and the matching image digest. It compares them with the pinned image and with the image that runs now. It prints the difference and the release notes URL. The exit code is 0 when the track is the same or older. It is 3 when the track is newer or its digest moved.
+`check` reads the npm dist-tag of the track and the matching image digest, and compares them with the pinned image and with the image that runs now. It prints the difference and the release notes URL. The exit code is 0 when the track is the same or older, and 3 when the track is newer or its digest moved.
 
 ## Run an upgrade
 
-You need Docker. The image tests run from a clone of the [repo](https://github.com/meirdick/oc-workers); the npm package has no tests.
+You need Docker. The image tests run from a clone of the [repo](https://github.com/meirdick/oc-workers), because the npm package has no tests.
 
 ```sh
 ochost upgrade run
@@ -29,7 +29,7 @@ ochost upgrade run <version>
 1. Builds the image from the new base with Docker and runs the image contract tests.
 2. Stops when the state schema changes (see [The schema gate](#the-schema-gate)).
 3. Takes a pre-upgrade archive, deploys and restarts.
-4. Watches the install: running, heartbeat, no restart ladder, new digest, channels alive.
+4. Watches the install: running, heartbeat, no restart ladder (repeated failed starts), new digest, channels alive.
 
 If the watch fails, `run` deploys the previous pin again and prints `rolled back to <v> (upgrade failed: <why>)`.
 
@@ -43,7 +43,7 @@ This takes a fresh archive of the current state, deploys the previous pin and re
 
 ## The schema gate
 
-Before it deploys, `run` runs the OpenClaw database preflight of the new version on a copy of your state. The result must be `exact`. Any other result means the version changes the state schema. The upgrade stops and nothing is deployed:
+Before it deploys, `run` runs the new version's OpenClaw database preflight on a copy of your state. The result must be `exact`. Any other result means the version changes the state schema, so the upgrade stops and nothing is deployed:
 
 ```text
 Failed: <version> changes the state schema (database preflight migration-required, ...) — fix: the dark/lit cutover is not built; stay on the pinned version
@@ -53,9 +53,9 @@ Stay on your pinned version. A version that changes the schema cannot be install
 
 ## Deploy without an upgrade
 
-`ochost deploy` redeploys the Worker and the image when the deploy hash changed. A pin in `.oc-host/image.json` stays in effect. A deploy that changes the image takes a pre-upgrade archive first and wakes the install. One run took about 5.5 minutes, 2 minutes of it for the archive.
+`ochost deploy` redeploys the Worker and the image when the deploy hash changed. A pin in `.oc-host/image.json` stays in effect. A deploy that changes the image first takes a pre-upgrade archive and wakes the install. One run took about 5.5 minutes, 2 minutes of it for the archive.
 
-A plain `ochost deploy` with a new image does not touch a running gateway. To use the new image now, run `ochost restart`. It takes a workspace archive (up to 3 minutes), stops, and boots the newest image. If the archive fails or takes longer than 3 minutes, the restart does not run and nothing is lost. Run it again later. `ochost restart --hard` skips the archive and loses the writes since the last one. Without a restart, the install uses the new image only after a sleep and an eviction of the Runtime DO.
+A plain `ochost deploy` with a new image does not touch a running gateway. To use the new image now, run `ochost restart`. It takes a workspace archive, stops, and boots the newest image. It skips the archive when the newest one finished less than 2 minutes ago and nothing was written after it, such as the archive the deploy just made. It waits up to 5 minutes for the archive and gives up after 90 s without progress. If the archive fails or times out, the restart does not run and nothing is lost, so run it again later. `ochost restart --hard` skips the archive and loses the writes since the last one. Without a restart, the install uses the new image only after a sleep and an eviction of the Runtime DO (the Durable Object that runs the container).
 
 ## What is not built
 

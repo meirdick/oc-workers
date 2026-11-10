@@ -5,25 +5,27 @@ sidebar:
   order: 0
 ---
 
-oc-workers installs and runs [OpenClaw](https://github.com/openclaw/openclaw) on your own Cloudflare account. OpenClaw is an agent gateway. It talks to you through a chat channel and a web Control UI. oc-workers is a community project. It is not affiliated with Cloudflare.
+With oc-workers you run your own [OpenClaw](https://github.com/openclaw/openclaw) assistant on your own Cloudflare account. OpenClaw is an agent gateway: it talks to you through a chat channel, such as Telegram, and through a web Control UI. oc-workers is a community project and is not affiliated with Cloudflare.
 
 ## What you get
 
-- **One install on your account.** An install is one Worker, some Durable Objects, one container and one R2 bucket. One owner controls it.
-- **Low cost.** The container sleeps after 5 minutes without activity. A sleeping install has no compute charge. Light use costs about $7 to $14 a month. See [Cost](/cost/).
-- **Fast install.** `ochost init` goes from an empty directory to a working Control UI in 4 to 5 minutes. It asks for no AI token. See [Quickstart](/quickstart/).
-- **Backups.** oc-workers copies state to R2 while the install runs. See [State and backups](/state-and-backups/) for what you can lose in a crash.
-- **A default model.** DeepSeek V4.1 Flash runs on Workers AI through your AI Gateway. An AI Gateway is the Cloudflare proxy in front of model APIs. It gives logs and spend limits.
+- **One install on your account.** An install is what oc-workers deploys: one Worker, some Durable Objects, one container and one R2 bucket. You are its owner, the one person who controls it.
+- **Low cost.** The container sleeps after 5 minutes without activity, and a sleeping install has no compute charge. Light use costs about $7 to $14 a month. See [Cost](/cost/).
+- **A fast install.** `ochost init` goes from an empty directory to a working Control UI in 4 to 5 minutes, and it asks for no AI token. See [Quickstart](/quickstart/).
+- **Backups.** oc-workers copies state to R2 while the install runs. [State and backups](/state-and-backups/) says what you can lose in a crash.
+- **A default model.** DeepSeek V4.1 Flash runs on Workers AI through your AI Gateway, Cloudflare's proxy in front of model APIs, which gives you logs and spend limits.
 - **Agent tools.** Browser, web fetch, web search, embeddings, speech, transcription and image tools run through a gate in your Worker. See [Capabilities](/capabilities/).
 - **One CLI.** `ochost` installs, shows status, makes backups, upgrades and removes the install. See [CLI reference](/cli-reference/).
 
+The CLI and its files keep the short names `ochost` and `oc-host`: for example `oc-host.jsonc`, the `.oc-host/` folder and the default Worker name `oc-host`.
+
 ## How the install behaves
 
-The install sleeps when idle. It wakes on a Telegram message, a timer or when you open the Control UI. The first reply after a sleep takes about 30 seconds. See [How it works](/how-it-works/).
+To sleep, the install saves the container disk as a snapshot and stops the container. To wake, it starts the container again from that snapshot. It wakes on a Telegram message, a timer or when you open the Control UI, and the first reply after a sleep takes about 30 seconds. See [How it works](/how-it-works/).
 
 ## Status
 
-oc-workers is at version 1.0. It has run on one account for weeks, not on many. [Limits and tradeoffs](/limits-and-tradeoffs/) lists what does not work or is not measured.
+oc-workers is at version 1.2.1. It has run on one account for weeks, not on many. [Limits and tradeoffs](/limits-and-tradeoffs/) lists what does not work or is not measured.
 
 ## Read in this order
 

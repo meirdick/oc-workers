@@ -5,24 +5,24 @@ sidebar:
   order: 13
 ---
 
-This page says what an install is made of, how it sleeps and wakes, and what keeps it awake.
-
 ## One install
 
 One install on your account is:
 
 - one Worker, the front door;
 - one Control Durable Object (Control DO), which holds config, the message inbox, alerts and the record of every operation;
-- one Runtime DO for each epoch (one image plus one Worker code version). The Runtime DO owns the container;
+- one Runtime DO for each epoch. An epoch is one image plus one Worker code version, and one epoch is active at a time. The Runtime DO owns the container;
 - one container, 2 vCPU, 6 GiB memory, 20 GB disk by default, that runs OpenClaw;
 - one sandbox container for agent tools, only when `sandbox` is on;
 - one R2 bucket, `oc-host-<inst>` by default.
 
-The Worker is `oc-host` by default. Its URL is `https://<name>.<subdomain>.workers.dev`. With [Cloudflare Access](/security/#cloudflare-access) on, the URL is your custom domain.
+The Worker is `oc-host` by default, at `https://<name>.<subdomain>.workers.dev`. With [Cloudflare Access](/security/#cloudflare-access) on, the URL is your custom domain.
+
+Inside the container, a supervisor (ocsup) restores state, starts OpenClaw and runs the sleep steps. It reaches the Worker through gates, private addresses that the Worker serves ([Security](/security/#what-the-container-can-reach) lists them).
 
 ## The owner console
 
-The owner console is the page at your install URL (`/`). It is the same on a custom domain and on workers.dev. Without the owner cookie, it shows the login form and nothing else.
+The owner console is the page at your install URL (`/`), the same on a custom domain and on workers.dev. Without the owner cookie, it shows the login form and nothing else.
 
 With the owner cookie, it shows a state card and three tabs. The top bar has the install name, **Open Control UI** (`/chat`) and **Sign out**. The state card shows the state (running, asleep, waking, retrying) and for how long, the last activity, the next scheduled wake, the projected month cost at the last 24 hours' pace, the check count, and one state button:
 
@@ -35,7 +35,7 @@ With the owner cookie, it shows a state card and three tabs. The top bar has the
 | Backoff, or every restore refused | **Retry now**, with the fix line of the open alert beside it |
 | Stopped by you | **Start** |
 
-Each tab is its own page. The tab names are links: Overview is `/`, Alerts and log is `/?tab=log`, and Setup is `/?tab=setup`. An item shows in one tab only. Buttons are only in Setup and Alerts and log.
+Each tab is its own page, and the tab names are links: Overview is `/`, Alerts and log is `/?tab=log`, and Setup is `/?tab=setup`. An item shows in one tab only, and buttons are only in Setup and Alerts and log.
 
 | Tab | What it holds |
 |---|---|
@@ -46,19 +46,19 @@ Each tab is its own page. The tab names are links: Overview is `/`, Alerts and l
 Notes:
 
 - **Approve** does the same as `ochost pairing approve telegram <code>`. **Raise** doubles a limit, up to 1,000,000,000. A second click on the same page does not double it again.
-- The three controls run the same `/ops` actions as the CLI. **Apply** on the sandbox saves the choice in the Control DO and restarts the install. It does not need a deploy. The row says "Applies at the next start" until the next boot. **Apply** on the model posts a new config version (source `owner`) with `agents.defaults.model.primary` changed, then restarts. If the install sleeps, it does not wake: the change applies at the next start.
-- **Save** on the alert channel stores the URL in the Control DO. The Worker cannot set its own secret, so the sender uses this URL first and the `ALERT_URL` secret second. **Off** stops all alerts, also when the secret is set. **Test** sends the same test alert as `ochost alerts test` and shows its code. Run `ochost alerts ack <code>` to confirm it. `ochost alerts setup` still works: it sets the secret, which applies when no URL is saved in the console.
-- A choice made in the console is kept over the value in `oc-host.jsonc`. After you use the sandbox control, `ochost sandbox on|off` and a deploy do not change the sandbox. Use the console.
+- The three controls run the same `/ops` actions as the CLI. **Apply** on the sandbox saves the choice in the Control DO and restarts the install, with no deploy. The row says "Applies at the next start" until the next boot. **Apply** on the model posts a new config version (source `owner`) with `agents.defaults.model.primary` changed, then restarts. If the install sleeps, it does not wake: the change applies at the next start.
+- **Save** on the alert channel stores the URL in the Control DO. The Worker cannot set its own secret, so the sender uses this URL first and the `ALERT_URL` secret second. **Off** stops all alerts, even when the secret is set. **Test** sends the same test alert as `ochost alerts test` and shows its code; run `ochost alerts ack <code>` to confirm it arrived. `ochost alerts setup` still works: it sets the secret, which applies when no URL is saved in the console.
+- A choice made in the console wins over the value in `oc-host.jsonc`. After you use the sandbox control, `ochost sandbox on|off` and a deploy no longer change the sandbox, so keep using the console.
 - A status is a dot and a word: OK, Warning or Failing. A warning or failing row has the fix line that `ochost doctor` prints.
 - After a button, the page returns to the tab that holds the button.
 - The page follows the light or dark setting of your system.
-- Opening the page does not wake the install. The model test and the Telegram webhook check run at most once a minute. While the install sleeps, those rows show the last values and say so.
-- `GET /ops/doctor` serves the same JSON, and `ochost doctor` prints it. The page and the CLI agree.
+- Opening the page does not wake the install (see [Security](/security/#the-owner-console)). The model test and the Telegram webhook check run at most once a minute. While the install sleeps, check rows show the last values and say so.
+- `GET /ops/doctor` serves the same JSON, and `ochost doctor` prints it, so the page and the CLI agree.
 - The page works with JavaScript off. Each tab is a link and each button is a form. A small script reloads the current tab every 30 seconds (5 seconds while the state changes).
 
 ## The duty cycle
 
-The default mode is `sleep.mode: auto`. In this mode the container sleeps when it is idle and wakes when something needs it.
+The duty cycle is the default mode, `sleep.mode: auto`: the container sleeps when it is idle and wakes when something needs it.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -66,21 +66,21 @@ The default mode is `sleep.mode: auto`. In this mode the container sleeps when i
 | `sleep.minAwakeMinutes` | 2 | Stay awake at least this long after a boot. |
 | `sleep.minSleepMinutes` | 10 | The next known wake must be at least this far away. |
 | `sleep.uiIdleMinutes` | 15 | An open Control UI tab is closed after this long without user input. |
-| `sleep.uiMaxMinutes` | 60 | A tab is closed after this long without a chat or a write. |
+| `sleep.uiMaxMinutes` | 60 | A tab is closed after this long without a chat message or a write (a change made from the UI). |
 | `sleep.maxAwakeHours` | 16 | Past this uptime, the install restarts when idle. |
 | `sleep.proactive` | `2h@08-22` | OpenClaw's proactive check runs every 2 hours from 08:00 to 22:00 local time. |
 
-These keys are in `oc-host.jsonc`. Change one with `ochost config set <key> <value>`; it applies at the next op, with no deploy.
+These keys are in `oc-host.jsonc`. Change one with `ochost config set <key> <value>`, and it applies at the next op, with no deploy.
 
 To sleep, the install also needs an empty inbox and no running turn, cron run or pending delivery. A cost guard keeps the install awake when the last 24 hours of sleep and wake cycles would cost more than always-on.
 
-A sleep takes a snapshot of the container disk. A wake starts the container from the snapshot. Each wake gets a new generation of the SQLite replica.
+A sleep takes a snapshot of the container disk, and a wake starts the container from that snapshot. Each wake also gets a new generation (gen) of the SQLite replica, a new R2 path that only the current boot may write. This stops a container from an earlier boot from writing over newer data.
 
 ## What wakes it
 
 | Event | Wakes? |
 |---|---|
-| A Telegram message from a paired sender | Yes. The Worker stores and acknowledges it first. The container then starts and receives it. |
+| A Telegram message from a paired sender | Yes. The Worker stores and acknowledges it first, then the container starts and receives it. |
 | A verified Slack (HTTP mode) or Twilio SMS event | Yes. Same path as Telegram. There is no wake list for these yet. Twilio delivery receipts do not wake. |
 | A cron alarm (OpenClaw cron jobs and the proactive check) | Yes. The Control DO sets a wake alarm before the next job. |
 | You open the Control UI (`/chat`) with the owner cookie | Yes. You see a waking page until the container runs. |
@@ -100,13 +100,13 @@ A sleep takes a snapshot of the container disk. A wake starts the container from
 
 ## Cold reply time
 
-A wake is not instant. In tests:
+A wake takes time. In tests:
 
 - The first reply after a cold wake took p50 31.6 s with a mock model (30 runs).
-- An acknowledged message to a running container took p50 32.9 s (200 cycles).
+- From the acknowledgement of a message to a running container took p50 32.9 s (200 sleep and wake cycles).
 - One real reply came 20.8 s after the message. The model took 3.5 s of that.
 
-While Telegram waits, the Worker shows the typing indicator and a "Waking up" message with the phase and the seconds. It deletes the message when the reply arrives. Replies stream by message edits. See [Channels](/channels/#the-waking-message). A warm-up call at boot exists but is off, because it made the first reply slower in tests.
+While Telegram waits, the Worker shows a "Waking up" message (see [Channels](/channels/#the-waking-message)), and replies stream by message edits. A warm-up call at boot exists but is off, because it made the first reply slower in tests.
 
 A warm reply takes about 1 second plus model time. [Limits and tradeoffs](/limits-and-tradeoffs/) states the bound as "about a minute".
 
@@ -114,22 +114,22 @@ The Worker acknowledges the Telegram webhook at the edge while the container sle
 
 ## What keeps it awake
 
-A channel that needs a socket keeps the install always-on. The sleep check reads the live channel status. A running channel account that does not use the managed webhook blocks sleep. Other blockers are a running cron job, an open ingress event, a pending delivery and an event-driven job. `ochost status` names the blocker. See [Channels](/channels/) and [Cost](/cost/).
+A channel that needs a socket keeps the install always-on. The sleep check reads the live channel status, and a running channel account that does not use the managed webhook blocks sleep. Other blockers are a running cron job, an open ingress event, a pending delivery, an event-driven job and an open `ochost import` (it fails with `import-stalled` after 30 minutes without an answer). `ochost status` names the blocker. See [Channels](/channels/) and [Cost](/cost/).
 
 ## Design choices, and the failures they prevent
 
-oc-workers started from a reading of the earlier Cloudflare template for OpenClaw, [cloudflare/moltworker](https://github.com/cloudflare/moltworker), and the failures its users reported. Four of those reports shaped the design. The table says what we do instead and how it was tested.
+oc-workers started from a reading of the earlier Cloudflare template for OpenClaw, [cloudflare/moltworker](https://github.com/cloudflare/moltworker), and the failures its users reported. Four of those reports shaped the design. The table says what oc-workers does instead and how it was tested.
 
 | Reported failure | Cause in the template | oc-workers | Tested |
 |---|---|---|---|
-| Stuck at "Container is starting up". | The start runs inside a web request. No supervisor, no time limit, no retry. | The Runtime DO owns the start. Each attempt has a time limit (30 s, 300 s on the first pull of a new image). A missed start is a step on the restart ladder. After 60 misses the ladder stops with the alert `start-loop`. The console shows the state and the fix. | 50 random kills, 0 restart timeouts. |
-| Ran for days, then the start never ends. | The backup expires after 7 days and is deleted. A restore can run again under a live gateway. | No expiry. An old backup is removed only after a newer one is verified. The restore runs before the gateway starts, never under it. | No empty boot in the loss tests. Rebuilt after a wiped Control DO in 69.3 s. |
+| Stuck at "Container is starting up". | The start runs inside a web request. No supervisor, no time limit, no retry. | The Runtime DO owns the start. Each attempt has a time limit (30 s, 300 s on the first pull of a new image). A failed start is a step on the restart ladder, which waits longer before each new try and never gives up: up to 5 minutes between tries for a platform error, and every 30 minutes with a high alert every 6 hours at its last level. A start that goes 40 rounds without a running container ends with `start-loop` and goes to the ladder too. The console shows the state and the fix. | 50 random kills, 0 restart timeouts. |
+| Ran for days, then the start never ends. | The backup expires after 7 days and is deleted. A restore can run again under a live gateway. | No expiry. An old archive is removed only when a newer one is verified, and the newest verified archive is always kept. The restore runs before the gateway starts, never under it. | No empty boot in the loss tests. Rebuilt after a wiped Control DO in 69.3 s. |
 | The gateway runs, no reply comes. | No inbox. A message lost in a restart is gone. | The Control DO stores and acks every message before it wakes the container. A message accepted and not answered before a start is replayed once. A message not answered for 5 minutes while the gateway runs raises the alert `no-reply`. | 587 messages during 50 kills, 586 acked; 4 unanswered led to the replay rule. 15 of 15 answered once after a kill right after accept. |
 | Data loss, R2 mount failures. | State lives on a mounted bucket. A failed mount means an empty home and a fresh setup. | No mount. The database streams to R2 through a gate; the container holds no R2 key. Archives are verified by read-back and a monthly restore drill. An install with state refuses to boot empty. | See [State and backups](/state-and-backups/). |
 
 ## Platform reliability
 
-A 72 hour test on Cloudflare with 24 injected faults showed 0 platform-caused container stops in 3.7 awake instance-days. The sleep-mode instance had 71 of 71 wakes succeed. After a fault we caused, the container restarted in 224 to 1045 s. The restart delay we set is 180 to 240 s of that. Restore time grew from 18 to 41 s to 215 to 249 s in the last two restarts. Cloudflare gives no uptime guarantee for containers.
+A 72 hour test on Cloudflare with 24 injected faults showed 0 platform-caused container stops in 3.7 awake instance-days, and the sleep-mode instance had 71 of 71 wakes succeed. After a fault we caused, the container restarted in 224 to 1045 s, of which 180 to 240 s is the restart delay we set. Restore time grew from 18 to 41 s to 215 to 249 s in the last two restarts. Cloudflare gives no uptime guarantee for containers.
 
 ## Next
 

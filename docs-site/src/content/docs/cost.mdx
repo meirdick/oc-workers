@@ -5,7 +5,7 @@ sidebar:
   order: 7
 ---
 
-This page shows what an install costs and how to see the cost of yours. All figures are US dollars. They are estimates until your first invoice. They come from the project's cost model and from test runs. Check [Cloudflare Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/) for current rates.
+Figures are US dollars from the project's cost model and test runs. They are estimates until your first invoice. Check [Cloudflare Containers pricing](https://developers.cloudflare.com/containers/platform/pricing/) for current rates.
 
 ## What you pay
 
@@ -29,9 +29,9 @@ Included allowances, such as container hours and Durable Object requests, lower 
 | A channel that needs a socket | Not possible | About $50 to $69 |
 | For comparison, a small VM (Hetzner CX33) | About $10 to $12 | About $10 to $12 |
 
-The VM figure includes about 20% for backups (an estimate). Hetzner showed every plan as unavailable when we read its page in October 2026.
+The VM figure adds about 20% for backups (an estimate). When we read Hetzner's page in October 2026, it showed every plan as unavailable.
 
-The default profile in the cost model is a proactive check every 2 hours from 08 to 22, and 10 Telegram chats a day. Sleep mode costs $10.55 with the lowest snapshot price guess, $12.37 with a middle guess and $24.72 with a high guess. Always-on costs $50.25 to $68.53 in the same model, and about $58 with R2 operations and 10% idle CPU added.
+The cost model's default profile is a proactive check every 2 hours from 08 to 22, plus 10 Telegram chats a day. On that profile, sleep mode costs $10.55 with the lowest snapshot price guess, $12.37 with a middle guess and $24.72 with a high guess. Always-on costs $50.25 to $68.53 in the same model, and about $58 once you add R2 operations and 10% idle CPU.
 
 ## Per wake
 
@@ -47,18 +47,18 @@ In test runs, the measured cost of a wake was 1.05 times the model for a cron wa
 
 ## See your own cost
 
-- Run `ochost status`. It shows the cost range for your install. A new install shows one value until it has history.
+- Run `ochost status` to see the cost range for your install. A new install shows one value until it has history.
 - Open the owner console. The state card shows the projected month. The Overview tab shows the month at the last 24 hours' pace, the always-on month, the percent saved and the cost guard.
 
 ## Cost guard
 
-The install does not sleep when the last 24 hours plus one more sleep and wake cycle would cost more than always-on. Set `sleep.costGuard` to `off` to turn this off. See [Configuration](/configuration/#sleep-keys).
+The install does not sleep when the last 24 hours plus one more sleep and wake cycle would cost more than always-on. To turn this off, set `sleep.costGuard` to `off`. See [Configuration](/configuration/#sleep-keys).
 
 ## Against a VM
 
-A VM costs about the same at the defaults. It is cheaper if you chat a lot. Above about 10 Telegram sessions a day, or 5.5 Control UI sessions a day, a bare CX33 is cheaper than oc-workers. If you must run a socket channel all the time and only price matters, a VM with backups is about 4 to 5 times cheaper.
+At the defaults, a VM costs about the same, and it is cheaper if you chat a lot. Above about 10 Telegram sessions a day, or 5.5 Control UI sessions a day, a bare CX33 is cheaper than oc-workers. If you must run a socket channel all the time and only price matters, a VM with backups is about 4 to 5 times cheaper.
 
-oc-workers does not win on price alone. It gives a one-command install, webhook acknowledgement at the edge while the install sleeps, backups and managed upgrades.
+oc-workers does not win on price alone. It adds a one-command install, webhook acknowledgement at the edge while the install sleeps, backups and managed upgrades.
 
 ## Next
 
