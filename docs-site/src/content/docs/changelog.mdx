@@ -5,8 +5,6 @@ sidebar:
   order: 15
 ---
 
-Version 1.2.1 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
-
 ## 1.2.1
 
 Fixes:
@@ -70,7 +68,9 @@ Fixes:
 - `ochost init` refuses a Worker of the same name that is not an oc-host install.
 - The bench shortlist drops two retired models and adds `glm-5.3` and `glm-4.7-flash`.
 
-## Owner console
+## 1.0.0
+
+### Owner console
 
 - The console has three tabs: Overview (cost, alerts summary, budgets, connected checks, backups), Alerts and log, and Setup. Tabs are links (`/?tab=`) and need no script. Buttons are only in Alerts and log and in Setup.
 - The state card stays on top. One state button shows **Wake now**, **Sleep now**, **Start** or **Retry now**, by state.
@@ -78,7 +78,7 @@ Fixes:
 - `ochost doctor` reads `GET /ops/doctor`, the same JSON the console shows.
 - Without a session, `/` shows the login form only.
 
-## Install and CLI
+### Install and CLI
 
 - `ochost init` asks for no AI token. Model calls run on the Worker's Workers AI binding through the capability gate. `--ai-token-file` is an optional override.
 - `init` prints one line per step and a summary block. `--json` output is complete, and WARN lines carry a fix.
@@ -90,7 +90,7 @@ Fixes:
 - The image push retries on `connection reset` and `broken pipe`.
 - The default model is DeepSeek V4.1 Flash on Workers AI through an AI Gateway. New `ochost model bench`.
 
-## Channels
+### Channels
 
 - New `ochost channels add slack|discord|twilio`. The Worker checks the signature, stores and acknowledges the event before the container is up.
 - Slack and Twilio SMS messages reach the gateway. The image has the OpenClaw Slack and SMS plugins. Run `ochost deploy` on an older install.
@@ -101,13 +101,13 @@ Fixes:
 - Pairing requests stay open 24 hours. Strangers and unlisted groups do not wake the install.
 - Messages that arrive while the gateway restarts wait for it. After a crash, only recent messages are sent again.
 
-## Capabilities and sandbox
+### Capabilities and sandbox
 
 - The capability gate serves browser, web fetch, web search, embeddings, speech, transcription and image calls, with daily budgets. New `ochost caps`.
 - Web fetch uses the `firecrawl` plugin in the image. Web search uses the Cloudflare Web Search API.
 - New tool sandbox, off by default: `ochost sandbox on|off|sleep`. New `exec` and `sandbox` budgets.
 
-## Security and access
+### Security and access
 
 - A login link from `ochost open` opens a Continue button. A link preview cannot spend it.
 - Login works in Firefox.
@@ -115,7 +115,7 @@ Fixes:
 - A daily `heartbeat` alert and a `deadman-silent` alert. `ochost doctor` checks the alert sink.
 - The Worker answers with the waking page, not Error 1101, when the Runtime throws while the install sleeps or stops.
 
-## Backups and upgrades
+### Backups and upgrades
 
 - Archives run on a schedule, with verification and restore. A test restore marks each replica generation `verified`.
 - Archives are pruned after each archive and taken from a copy, not the live database.
@@ -124,7 +124,7 @@ Fixes:
 - New `ochost upgrade check`, `run` and `rollback`, with a schema gate.
 - After two failed Doctor boots on one image, the install raises one alert with the Doctor output tail.
 
-## Sleep and wake
+### Sleep and wake
 
 - The install sleeps when idle and wakes on a message or a timer.
 - New `sleep.minAwakeMinutes`.

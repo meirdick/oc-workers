@@ -49,8 +49,6 @@ Before it deploys, `run` runs the new version's OpenClaw database preflight on a
 Failed: <version> changes the state schema (database preflight migration-required, ...) — fix: the dark/lit cutover is not built; stay on the pinned version
 ```
 
-Stay on your pinned version. A version that changes the schema cannot be installed yet.
-
 ## Deploy without an upgrade
 
 `ochost deploy` redeploys the Worker and the image when the deploy hash changed. A pin in `.oc-host/image.json` stays in effect. A deploy that changes the image first takes a pre-upgrade archive and wakes the install. One run took about 5.5 minutes, 2 minutes of it for the archive.
@@ -66,7 +64,7 @@ A plain `ochost deploy` with a new image does not touch a running gateway. To us
 
 ## Test status
 
-`upgrade check` and the schema gate ran against a real install. The full path (contract, archive, deploy, restart, watch) and `rollback` did not, because no newer version with the same schema existed. Treat them as untested.
+`upgrade check` and the schema gate ran against a real install. The full path (contract, archive, deploy, restart, watch) and `rollback` did not, because no newer version with the same schema existed.
 
 ## Next
 

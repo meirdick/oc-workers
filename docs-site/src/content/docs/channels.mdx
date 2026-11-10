@@ -13,7 +13,7 @@ A webhook channel (Telegram, Slack in HTTP mode, Twilio SMS) gets each message a
 
 ## Support matrix
 
-Socket channels run but keep the install awake. A webhook channel works only if the Worker has a route for it: Telegram, Slack, Discord and Twilio do. Any other path needs the owner cookie, so another platform's webhook calls get 404 in every sleep mode. "Sleeps" means the install can sleep between messages. "Always-on" means the channel holds a connection, so the container must stay up. See [Cost](/cost/).
+A webhook channel works only if the Worker has a route for it: Telegram, Slack, Discord and Twilio do. Any other path needs the owner cookie, so another platform's webhook calls get 404 in every sleep mode. "Sleeps" means the install can sleep between messages. "Always-on" means the channel holds a connection, so the container must stay up. See [Cost](/cost/).
 
 | Channel | OpenClaw transport | On oc-workers | Notes |
 |---|---|---|---|
@@ -118,7 +118,7 @@ Every verified Slack or Twilio event wakes the install. Only Telegram has a wake
 
 ## Socket channels
 
-A socket cannot survive a sleep, and oc-workers treats an unknown channel as a socket. A socket channel works, but the install must stay always-on: about $50 to $69 a month at the default size, against about $7 to $14 when it can sleep. `ochost status` names the channel that keeps it awake.
+A socket cannot survive a sleep, and oc-workers treats an unknown channel as a socket. A socket channel keeps the install always-on: about $50 to $69 a month at the default size, against about $7 to $14 when it can sleep.
 
 ## Messages that do not go out
 

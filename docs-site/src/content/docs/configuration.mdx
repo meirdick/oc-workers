@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-Settings sit in two layers, both stored in the Control DO (the Durable Object that holds the install's config and records). Check which layer you edit. An op is one action of the install, such as a wake, a sleep or a restart.
+Settings sit in two layers, both stored in the Control DO (the Durable Object that holds the install's config and records). An op is one action of the install, such as a wake, a sleep or a restart.
 
 ## The two layers
 
@@ -22,7 +22,7 @@ See [CLI reference](/cli-reference/) for the flags.
 
 ## Two ways to change OpenClaw settings
 
-OpenClaw has its own settings pages and `openclaw config` commands, and oc-workers adds `ochost config`. Both change the same OpenClaw configuration, but they differ in where the change lives and when it takes effect.
+OpenClaw has its own settings pages and `openclaw config` commands, and oc-workers adds `ochost config`. Both change the same OpenClaw configuration.
 
 | | OpenClaw UI and `openclaw config` | `ochost config set` |
 |---|---|---|
@@ -174,7 +174,7 @@ A few keys are set for one boot only, and the stored version does not change. A 
 
 ### Written by ochost commands
 
-oc-workers writes these keys into the document and checks some of them. Change them only with the named command.
+oc-workers writes these keys into the document and checks some of them.
 
 | Keys | Set by | Rule |
 |---|---|---|
@@ -215,8 +215,6 @@ ochost caps set browser 7200     # change one limit
 ```
 
 ## Not configurable yet
-
-These values are fixed in code, and no `oc-host.jsonc` key changes them.
 
 | What | Current value |
 |---|---|

@@ -1,6 +1,6 @@
 # ochost
 
-`ochost` is the CLI of oc-workers. It installs and runs your own OpenClaw on your own Cloudflare account. The install sleeps when idle, wakes on a message, and costs a few dollars a month.
+`ochost` is the CLI of oc-workers. It installs and runs your own OpenClaw on your own Cloudflare account. The install sleeps when idle and wakes on a message.
 
 This is a community project. It is not affiliated with Cloudflare. The full docs are in `docs-site/` and at <https://oc-workers.mdick85.workers.dev>. Terms are in `CONTEXT.md`.
 

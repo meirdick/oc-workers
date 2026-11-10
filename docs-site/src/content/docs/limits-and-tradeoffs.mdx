@@ -12,7 +12,7 @@ sidebar:
 | A socket channel keeps the install always-on, which costs more than a VM. | Cloudflare bills provisioned memory per second. A VM price is flat. | Cloudflare adds a cheaper idle tier, or the channel moves to webhooks. |
 | The first reply after sleep takes about 30 seconds in tests, and the stated bound is about a minute. | OpenClaw boots in 16 to 33 s plus restore. A VM never sleeps. | Restore or boot gets faster. |
 | Replies and cron runs are at-least-once across a crash. | The database loss window is 1 to 3 s. Exactly-once needs OpenClaw changes. | OpenClaw adds idempotent receipts. |
-| Cloudflare gives no uptime guarantee for containers. | A platform fact. The oc-workers target is 99.5% uptime, about 3.6 hours down in 30 days, but it is not measured over 14 days. | Cloudflare publishes an SLA. |
+| Cloudflare gives no uptime guarantee for containers. | The oc-workers target is 99.5% uptime, about 3.6 hours down in 30 days, but it is not measured over 14 days. | Cloudflare publishes an SLA. |
 | The snapshot storage price is not known. | Cloudflare has not published it. The cost page shows a range. | The first invoice. |
 | One Telegram account, webhook only. | Long-poll blocks sleep. | A later version. |
 | The tool sandbox is off by default, so agent code is confined to uid 1000 (the agent user) in the gateway container. | Memory and cost. | You turn it on with `ochost sandbox on`. It is experimental. |
@@ -50,7 +50,7 @@ sidebar:
 
 ## Status of the project
 
-oc-workers is at version 1.2.1. It has been tested on the project owner's Cloudflare account, and the numbers on these pages come from those tests.
+Version 1.2.1 was tested on the project owner's Cloudflare account. The numbers on these pages come from those tests.
 
 ## Next
 

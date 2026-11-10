@@ -90,15 +90,15 @@ The container holds no Cloudflare credential: the Worker calls Workers AI throug
 
 ## What init does
 
-`init` prints one line for each of its 14 steps: preflight, account, subdomain, files, AI model, secrets, R2 bucket, deploy, health, model hop, config, start, self-test and login. The deploy step takes longest, and times vary.
+`init` prints one line for each of its 14 steps: preflight, account, subdomain, files, AI model, secrets, R2 bucket, deploy, health, model hop, config, start, self-test and login. The deploy step takes longest.
 
 ## If init stops
 
-You can safely rerun it. Run `ochost init` again in the same directory, and it skips what is already current.
+Rerun `ochost init` in the same directory. A rerun is safe: it skips what is already current.
 
 If a stop leaves the deploy part-way done, you see a `Failed:` line with a fix and no summary, and a rerun finishes the deploy. If the image push keeps failing, run `ochost deploy`; the CLI keeps the layers it already pushed. See [Troubleshooting](/troubleshooting/).
 
-A second `ochost init` changes nothing that is current. It can wake a sleeping install, and it redeploys when the deploy hash changed.
+A rerun can wake a sleeping install, and it redeploys when the deploy hash changed.
 
 ## Add Telegram
 

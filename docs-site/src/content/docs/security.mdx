@@ -16,8 +16,6 @@ An install has one owner and no other users. As the owner, you have two credenti
 
 ## Login
 
-There are two ways to log in.
-
 - **Single-use link.** `ochost open` makes one, and `init` prints one at the end. It works once and expires after 5 minutes. Opening the link shows a Continue button, and the link is spent only when you press it (a POST). A link preview in a chat app does a GET, so it cannot spend the link.
 - **Token form.** `/_ochost/login` takes the owner token.
 

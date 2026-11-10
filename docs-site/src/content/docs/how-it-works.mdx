@@ -100,7 +100,7 @@ A sleep takes a snapshot of the container disk, and a wake starts the container 
 
 ## Cold reply time
 
-A wake takes time. In tests:
+In tests:
 
 - The first reply after a cold wake took p50 31.6 s with a mock model (30 runs).
 - From the acknowledgement of a message to a running container took p50 32.9 s (200 sleep and wake cycles).
@@ -118,7 +118,7 @@ A channel that needs a socket keeps the install always-on. The sleep check reads
 
 ## Design choices, and the failures they prevent
 
-oc-workers started from a reading of the earlier Cloudflare template for OpenClaw, [cloudflare/moltworker](https://github.com/cloudflare/moltworker), and the failures its users reported. Four of those reports shaped the design. The table says what oc-workers does instead and how it was tested.
+oc-workers started from a reading of the earlier Cloudflare template for OpenClaw, [cloudflare/moltworker](https://github.com/cloudflare/moltworker), and the failures its users reported. Four of those reports shaped the design.
 
 | Reported failure | Cause in the template | oc-workers | Tested |
 |---|---|---|---|

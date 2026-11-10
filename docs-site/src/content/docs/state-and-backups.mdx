@@ -19,7 +19,7 @@ A snapshot is a saved copy of the container disk, an archive is a portable backu
 | Stored files | Files the agent saves to the storage location `r2` | Written to R2 (`f/<inst>/`) through the replica gate on each save | 0: durable when the save returns |
 | Archives | A portable backup of everything | `openclaw backup create` on a schedule while awake (every 6 hours by default), at maintenance and before upgrades | 6 h for files |
 
-Other state is covered too. The config is a versioned document in the Control DO (the Durable Object that holds the install's records), and secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
+The config is a versioned document in the Control DO (the Durable Object that holds the install's records), and secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
 
 Stored files are outside snapshots and archives. A restore from a snapshot or an archive does not change them, and an archive does not contain them. A deleted file is gone, because R2 keeps no older copy. See [File storage](/capabilities/#file-storage).
 
