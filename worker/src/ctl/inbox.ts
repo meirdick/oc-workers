@@ -2,7 +2,7 @@
 // Row states: pending, held, accepted, replicated, dead. Key: unique (route, account, platform_key).
 import { ulid } from "../core/ids";
 import { ADAPTERS } from "./adapters";
-import { alert } from "./alerts";
+import { alert, resolveAlert } from "./alerts";
 import { type Ctx, ring, utcDay } from "./ctx";
 import { pj, type SqlValue } from "./sql";
 
@@ -48,6 +48,10 @@ export const REPLY_WAIT_MS = 10 * 60_000;
 export const REPLY_ID_STEP = 2 ** 40;
 /** L3: one fresh-key replay per row. */
 export const REPLAY_MAX = 1;
+/** An accepted Telegram row with no reply after this long, on a running install, raises `no-reply`. */
+export const NO_REPLY_ALERT_MS = 5 * 60_000;
+/** Rows accepted longer ago than this are not counted (the owner has seen the silence by then). */
+const NO_REPLY_WINDOW_MS = 60 * 60_000;
 /** Telegram Bot API methods that count as a reply (not typing actions or webhook calls). */
 export const REPLY_METHODS = /^(send(?!ChatAction)[A-Za-z]*|copyMessages?|forwardMessages?|editMessageText)$/;
 
@@ -70,6 +74,7 @@ export function noteOutbound(
   const got = c.db.all<{ received_at: number }>(`SELECT received_at FROM inbox WHERE ${where}`, chat, at);
   if (got.length) {
     c.db.run(`UPDATE inbox SET replied_at = ? WHERE ${where}`, at, chat, at);
+    if (!noReplyCount(c)) resolveAlert(c, "no-reply");
     const byDay = new Map<string, number>();
     for (const r of got) byDay.set(utcDay(r.received_at), (byDay.get(utcDay(r.received_at)) ?? 0) + 1);
     for (const [day, n] of byDay)
@@ -80,6 +85,46 @@ export function noteOutbound(
       );
   }
   return got.length;
+}
+
+/** Accepted Telegram rows older than NO_REPLY_ALERT_MS (within one hour) that still have no outbound reply. */
+export function noReplyCount(c: Ctx): number {
+  const now = c.now();
+  return (
+    c.db.one<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM inbox WHERE route = ? AND state IN ('accepted', 'replicated')
+       AND replied_at IS NULL AND accepted_at IS NOT NULL AND accepted_at <= ? AND accepted_at > ?`,
+      ROUTE_TG,
+      now - NO_REPLY_ALERT_MS,
+      now - NO_REPLY_WINDOW_MS,
+    )?.n ?? 0
+  );
+}
+
+/**
+ * Alarm check: the gateway runs but a Telegram message got no reply. Warn once per alert dedupe window with the
+ * count. A not-running install is not checked (a sleeping install has nothing to reply with). Returns the count.
+ */
+export function noReplyCheck(c: Ctx, running: boolean): number {
+  if (!running) return 0;
+  const n = noReplyCount(c);
+  if (!n) {
+    resolveAlert(c, "no-reply");
+    return 0;
+  }
+  const row = c.db.one<{ open: number; last_sent_at: number | null }>(
+    "SELECT open, last_sent_at FROM alerts WHERE class = 'no-reply'",
+  );
+  const sent =
+    !!row?.open && row.last_sent_at !== null && c.now() - row.last_sent_at < c.timers.alertDedupeMs;
+  if (!sent)
+    alert(
+      c,
+      "no-reply",
+      "warn",
+      `${n} Telegram message${n === 1 ? "" : "s"} without a reply after 5 minutes. The gateway runs. Check: ochost logs, ochost doctor`,
+    );
+  return n;
 }
 
 /** Console counters: one more webhook message on its UTC day; the last inbound time and route. */

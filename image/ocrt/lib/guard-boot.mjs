@@ -13,7 +13,7 @@ import { createConfigWatch } from "./configwatch.mjs";
 import { afterDoctor, doctorTail, runDoctorStaged } from "./doctor.mjs";
 import { openclawCli } from "./guard.mjs";
 import { applyRules } from "./netfilter.mjs";
-import { checkAtBoot, pathInstallArgs, RECORDED_BUNDLED_DIRS, staleInstalls } from "./plugins.mjs";
+import { checkAtBoot } from "./plugins.mjs";
 
 export const STAGE_U = "/var/lib/ocrt/stage-u";
 
@@ -45,35 +45,6 @@ async function ocioWrite(ctx, file, text) {
 async function ocioRead(ctx, file) {
   const r = await ctx.runOcio("config-io", ["read", file], { cg: ctx.cgIo, timeoutMs: 20_000 });
   return r.json?.ok ? { text: r.json.text } : null;
-}
-
-/**
- * Older installs keep an npm install record for a plugin the image now bundles (firecrawl). Record it as a path
- * install of the bundled dir so Doctor stops trying npm. One cheap DB read per boot; the CLI runs only on a stale
- * record. Never fails the boot. ctx.readFile/ctx.runOcio/ctx.runCli as in configStep. Returns the repaired ids.
- */
-export async function pathInstallStep(ctx, bundled = RECORDED_BUNDLED_DIRS) {
-  const dirs = [];
-  for (const dir of bundled) {
-    try {
-      const read = ctx.readManifest || ((f) => fs.readFileSync(f, "utf8"));
-      const id = JSON.parse(read(path.join(dir, "openclaw.plugin.json"))).id;
-      if (typeof id === "string") dirs.push({ dir, id });
-    } catch {}
-  }
-  const db = path.join(ctx.state, "state", "openclaw.sqlite");
-  const r = await ctx
-    .runOcio("cron-read", [db, "plugin-installs"], { cg: ctx.cgIo, timeoutMs: 20_000 })
-    .catch(() => null);
-  if (!r?.json?.ok) return [];
-  const fixed = [];
-  const cli = openclawCli(ctx.runCli, ctx.cliEnv);
-  for (const { dir, id } of staleInstalls(dirs, r.json.records)) {
-    const x = await cli(pathInstallArgs(dir), { timeoutMs: 120_000 });
-    ctx.log?.("plugin-path-install", { id, dir, code: x.code, ms: x.ms, from: r.json.records[id]?.source });
-    if (x.code === 0) fixed.push(id);
-  }
-  return fixed;
 }
 
 /** Plan step "config". Returns {rec} or {exit, detail}. Stores the result in ctx.cfg for later steps. */
@@ -122,7 +93,6 @@ export async function configStep(ctx) {
   } catch (e) {
     return { exit: "ownership", detail: e.message };
   }
-  await pathInstallStep(ctx);
   ctx.cfg = { version, rendered, manifest, missingPlugins: plugins.missing, file, writtenAt: Date.now() };
   writeOverlay(ctx, rendered);
   ctx.log?.("config-render", {
@@ -188,7 +158,8 @@ export async function doctorStep(ctx) {
         doc: res.doc,
       };
       const sens = sensitiveChanges(cfg.version.doc || {}, res.doc);
-      if (sens.length) ctx.alert?.("config-sensitive", "warn", `doctor:${sens.join(",")}`);
+      // Doctor's own changes are logged, not alerted: the gate's ring row carries them (ledger config-proposal).
+      if (sens.length) ctx.log?.("config-sensitive-doctor", { keys: sens });
       try {
         await ctx.gate.call("PUT", "/v1/config/proposal", body, { timeoutMs: 15_000 });
       } catch (e) {

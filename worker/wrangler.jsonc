@@ -1,11 +1,11 @@
 // oc-host Worker. `ochost deploy` regenerates this file (M5). Test groups use name/bucket oc-m2-<group>.
 // durable_object scheduling: the instance size is chosen at start() (§8.4). Do not add image,
 // instance_type, max_instances, rollout or constraints: wrangler rejects them for this policy.
-// Deploy with `npm run deploy` (injects CODE_VERSION, spec 08 §2.2).
+// Deploy with `npm run deploy` (injects CODE_VERSION, spec 08 §2.2). No account_id here: wrangler takes
+// CLOUDFLARE_ACCOUNT_ID or the account of your login. An install deploys with `ochost deploy` instead.
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "oc-host",
-  "account_id": "5759bb6ef591b078e5480bfd5a767856",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-30",
   "compatibility_flags": ["nodejs_compat"],

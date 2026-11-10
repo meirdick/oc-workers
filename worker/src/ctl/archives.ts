@@ -101,6 +101,22 @@ export function archiveDirty(c: Ctx): boolean {
   return n === null ? true : w !== null && w > n.created_at;
 }
 
+/** A restart treats an archive this young as fresh (the deploy's own pre-upgrade archive, seconds old). */
+export const RESTART_FRESH_MS = 2 * 60_000;
+
+/**
+ * Pre-restart rule: the newest complete archive finished less than RESTART_FRESH_MS ago and no replica upload
+ * landed after it finished. The upload the gateway makes while the archive runs does not count; that is why
+ * archiveDirty (it compares with the archive start) asks for a second archive right after a deploy's own.
+ */
+export function archiveFreshForRestart(c: Ctx): boolean {
+  const n = newestComplete(q(c));
+  if (n === null) return false;
+  const done = n.completed_at ?? n.created_at;
+  const w = lastWriteAt(q(c));
+  return c.now() - done < RESTART_FRESH_MS && (w === null || w <= done);
+}
+
 /**
  * N8 gate for a stop that precedes a boot: the sleep op waits for an archive newer than the last write. Asks for one
  * (forced reason, so the 6 h cadence and the 15 min gap do not apply) when the next boot may be an archive-path

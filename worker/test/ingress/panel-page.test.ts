@@ -184,7 +184,7 @@ beforeEach(() => {
   resetPointerCache();
 });
 
-const ACTS = ["ack", "raise", "archive", "drill", "approve"];
+const ACTS = ["ack", "raise", "archive", "drill", "approve", "sandbox", "alerts", "model"];
 const opsCalls = (calls: Call[]) => calls.filter((c) => c.m === "ops").map((c) => c.a[0]);
 
 describe("owner panel page", () => {
@@ -309,7 +309,7 @@ describe("owner panel page", () => {
     expect(ov).not.toContain(">alerts sink<");
     expect(ov).toContain("on, location r2, put+get+delete 38 ms; 1.2 GB of 5.0 GB used");
     expect(ov).toContain('<i class="w17"></i>');
-    expect(ov).toContain("Cost guard is holding the install awake");
+    expect(ov).toContain("Cost guard: holding the install awake");
     expect(ov).toContain("Fix: <code>ochost sleep status</code>");
     expect(ov).toContain('<span class="big">96%</span>');
 
@@ -340,6 +340,112 @@ describe("owner panel page", () => {
     const html = await (await go(e, "/", { cookie: c, headers: nav })).text();
     expect(html).toContain("<h1>oc-demo</h1>");
     expect(html).not.toContain("Budgets");
+  });
+});
+
+describe("Setup controls: sandbox, alerts, model", () => {
+  const TOG: Panel = {
+    ...PANEL,
+    connected: [
+      ...PANEL.connected,
+      { name: "sandbox", result: "PASS", detail: "off (opt-in)", fix: "ochost sandbox on" },
+    ],
+    toggles: {
+      sandbox: { value: "on", pending: true },
+      alerts: { source: "secret", kind: "ntfy" },
+      model: { primary: "@cf/b/two", choices: ["@cf/a/one", "@cf/b/two"] },
+    },
+  };
+  const forms = (h: string) => [...h.matchAll(/action="\/_ochost\/panel\/(\w+)"/g)].map((m) => m[1]);
+
+  it("forms only on Setup; each is one POST form that works without JavaScript; access stays a command", async () => {
+    const { e } = mkEnv({ panel: TOG });
+    const c = await login(e);
+    const tab = async (t: string) => (await go(e, `/?tab=${t}`, { cookie: c, headers: nav })).text();
+    const setup = await tab("setup");
+    expect(forms(setup)).toEqual(["approve", "alerts", "sandbox", "model", "raise", "archive", "drill"]);
+    expect(forms(await tab("overview"))).toEqual([]);
+    expect(forms(await tab("log"))).toEqual(["ack"]);
+    // Sandbox: a select with the saved value chosen, Apply, and the pending note.
+    expect(setup).toContain(
+      '<select name="value" aria-label="Sandbox"><option value="off">off</option><option value="on" selected>on</option><option value="all">all</option></select><button type="submit">Apply</button>',
+    );
+    expect(setup).toContain("Applies at the next start");
+    // Alerts: one input and three submit buttons that carry their action in the button value.
+    expect(setup).toContain('<input type="url" name="url"');
+    for (const v of ["save", "test", "off"]) expect(setup).toContain(`name="do" value="${v}"`);
+    // Model: the catalogue, the main model chosen.
+    expect(setup).toContain('<option value="@cf/b/two" selected>@cf/b/two</option>');
+    expect(setup).toContain('<option value="@cf/a/one">@cf/a/one</option>');
+    // The commands the controls replace are gone (Access has no control and keeps its command).
+    expect(setup).not.toMatch(/ochost (sandbox on|model set|alerts setup)/);
+    expect([...setup.matchAll(/<script/g)]).toHaveLength(1);
+  });
+
+  it("without toggles (an older Control DO) the rows keep their commands", async () => {
+    const { e } = mkEnv({ panel: PANEL });
+    const setup = await (await go(e, "/?tab=setup", { cookie: await login(e), headers: nav })).text();
+    expect(setup).toContain("ochost model set &lt;id&gt;");
+    expect(forms(setup)).not.toContain("model");
+  });
+
+  it("each form posts to its op and comes back to Setup with a notice", async () => {
+    const seen: any[] = [];
+    const { e } = mkEnv({
+      ops: (r) => {
+        seen.push(r);
+        if (r.action === "status") return { status: 200, body: { state: "running" } };
+        if (r.action === "alerts" && r.sub[0] === "test") return { status: 200, body: { sent: 1 } };
+        if (r.action === "config" && r.method === "GET" && !r.sub.length)
+          return { status: 200, body: { versions: [{ ver: 3 }] } };
+        if (r.action === "config" && r.method === "GET")
+          return {
+            status: 200,
+            body: { doc: { models: { providers: { cfgw: { models: [{ id: "@cf/a/one" }] } } } } },
+          };
+        return { status: 200, body: { ok: true } };
+      },
+    });
+    const c = await login(e);
+    const p = (act: string, body: string) =>
+      go(e, `/_ochost/panel/${act}`, {
+        method: "POST",
+        cookie: c,
+        body,
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: ORIGIN },
+      });
+    expect((await p("sandbox", "value=all")).headers.get("location")).toBe("/?n=saved-restart&tab=setup");
+    expect(seen.map((r) => `${r.method} ${r.action}`)).toEqual([
+      "POST sandbox-set",
+      "GET status",
+      "POST restart",
+    ]);
+    expect(seen[0].body).toEqual({ value: "all" });
+    seen.length = 0;
+    expect((await p("alerts", "url=https%3A%2F%2Fhooks.example%2Fx&do=save")).headers.get("location")).toBe(
+      "/?n=alerts-saved&tab=setup",
+    );
+    expect(seen[0]).toMatchObject({
+      action: "alerts",
+      sub: ["sink"],
+      body: { url: "https://hooks.example/x" },
+    });
+    const t = await p("alerts", "url=&do=test");
+    expect(t.headers.get("location")).toMatch(/^\/\?n=alerts-test&why=[a-z0-9]{6}&tab=setup$/);
+    expect((await p("alerts", "do=off")).headers.get("location")).toBe("/?n=alerts-off&tab=setup");
+    seen.length = 0;
+    expect((await p("model", "id=%40cf%2Fa%2Fone")).headers.get("location")).toBe(
+      "/?n=saved-restart&tab=setup",
+    );
+    const post = seen.find((r) => r.action === "config" && r.method === "POST");
+    expect(post.body).toMatchObject({
+      baseVer: 3,
+      doc: { agents: { defaults: { model: { primary: "cfgw/@cf/a/one" } } } },
+    });
+    expect((await p("model", "id=%40cf%2Fnot%2Flisted")).headers.get("location")).toMatch(/panel-failed/);
+    // The notice text.
+    const html = await (await go(e, "/?n=saved-next&tab=setup", { cookie: c, headers: nav })).text();
+    expect(html).toContain("Saved. It applies at the next start.");
   });
 });
 
@@ -437,6 +543,18 @@ describe("panel buttons: owner cookie, same origin, one /ops action each", () =>
     expect(opsCalls(calls)).toMatchObject([
       { action: "archive", method: "POST", sub: [], body: { reason: "owner" } },
     ]);
+  });
+
+  it("Adopt: POST channels/adopt {channel}; a bad channel is refused", async () => {
+    const { e, calls } = mkEnv();
+    const c = await login(e);
+    expect((await post(e, c, "adopt", "channel=telegram")).headers.get("location")).toBe(
+      "/?n=adopted&tab=setup",
+    );
+    expect(opsCalls(calls)).toMatchObject([
+      { action: "channels", method: "POST", sub: ["adopt"], body: { channel: "telegram" } },
+    ]);
+    expect((await post(e, c, "adopt", "channel=x")).headers.get("location")).toMatch(/panel-failed/);
   });
 
   it("Restore drill: POST archive/drill; a failed drill shows its reason", async () => {

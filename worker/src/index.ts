@@ -49,6 +49,7 @@ interface CtlEntry {
     fresh?: FreshSecrets,
   ): Promise<PutOut>;
   webhookPrevOk(): Promise<boolean>;
+  adoptedSecrets(): Promise<Record<string, string>>;
   progressSent(chat: string, msg: number | null): Promise<unknown>;
   hookSeen(id: string, kind: string): Promise<unknown>;
   ring(a: { src: string; kind: string; detail?: unknown }): Promise<unknown>;
@@ -194,15 +195,24 @@ function webhook(req: Request, env: Env, ctx: ExecutionContext): Promise<Respons
 }
 
 /** Slack, Discord, Twilio: the adapter verifies and answers; the row goes through the same inbox hand-off. */
-function adapterHook(
+async function adapterHook(
   a: NonNullable<ReturnType<typeof adapterByPath>>,
   req: Request,
   env: Env,
   ctx: ExecutionContext,
 ) {
   const ctl = ctlOf(env);
+  // A secret adopted from the UI lives in the Control DO, not in this env (ctl/adopt.ts). Worker secrets win.
+  let secrets = platformSecrets(env);
+  if (a.secrets.some((n) => !secrets[n]))
+    secrets = {
+      ...(await Promise.resolve()
+        .then(() => ctl.adoptedSecrets())
+        .catch(() => ({}) as Record<string, string>)),
+      ...Object.fromEntries(Object.entries(secrets).filter(([, v]) => v)),
+    };
   return handleAdapter(req, a, {
-    secrets: platformSecrets(env),
+    secrets,
     ctl: {
       hookSeen: (id, kind) => ctl.hookSeen(id, kind),
       inboxPut: async (p) => {

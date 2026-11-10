@@ -10,6 +10,7 @@ import { gzipSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import {
   archiveDirty,
+  archiveFreshForRestart,
   archiveSleepBlockers,
   drillDue,
   ensurePreBootArchive,
@@ -706,6 +707,35 @@ describe("N8 pre-boot archive: a deploy since the last boot", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("restart right after the deploy's own archive: young archive, upload only during it → fresh, no second archive", async () => {
+    const { w, gen } = await booted();
+    const s = w.ledger.archiveStart(gen, "online", { reason: "pre-upgrade" });
+    if (!s.ok) throw new Error(`start ${s.error}`);
+    await w.r2.put(s.key, goodArchive());
+    w.advance(30_000);
+    upload(w, gen, 60); // the gateway writes while the archive runs
+    w.advance(10_000);
+    const bytes = goodArchive();
+    w.ledger.archiveFinish(s.archiveId, true, { sha256: sha(bytes), size: bytes.length, parts: 1 });
+    expect(archiveDirty(w.ctx)).toBe(true); // newer than the archive start
+    w.advance(20_000);
+    expect(archiveFreshForRestart(w.ctx)).toBe(true);
+    w.advance(MIN);
+    expect(archiveFreshForRestart(w.ctx)).toBe(true); // 80 s after it finished
+    w.advance(MIN);
+    expect(archiveFreshForRestart(w.ctx)).toBe(false); // 140 s: older than 2 min
+  });
+
+  it("restart: an upload after the archive finished, or no archive, is not fresh", async () => {
+    const { w, gen } = await booted();
+    expect(archiveFreshForRestart(w.ctx)).toBe(false); // no complete archive
+    await mkArchive(w, gen);
+    expect(archiveFreshForRestart(w.ctx)).toBe(true);
+    w.advance(5_000);
+    upload(w, gen, 61);
+    expect(archiveFreshForRestart(w.ctx)).toBe(false);
   });
 
   it("a pre-restart archive request with no progress for 90 s is given up as stalled, well under the 5 min cap", async () => {

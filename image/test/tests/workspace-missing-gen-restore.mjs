@@ -43,16 +43,29 @@ export default {
     await a.waitExit(30_000);
 
     // (1) image rootfs + gen 1, no workspace source → refuse.
-    const b = t.box({ name: "b", gen: 2, restoreGens: [1], plan: genPlan({ workspace: { source: "none" } }) });
+    const b = t.box({
+      name: "b",
+      gen: 2,
+      restoreGens: [1],
+      plan: genPlan({ workspace: { source: "none" } }),
+    });
     await b.start();
     await b.waitExit(240_000);
     const xb = await exitInfo(t, b);
     t.measure("b.exit", xb);
-    t.check("(1) exit 75 restore-blocked:mismatch", xb.code === 75 && xb.reason === "restore-blocked:mismatch", xb);
+    t.check(
+      "(1) exit 75 restore-blocked:mismatch",
+      xb.code === 75 && xb.reason === "restore-blocked:mismatch",
+      xb,
+    );
     const gwB = (await gateEvents(t, "gateway-starting")).filter((e) => e.body?.gen === 2);
     t.check("(1) no gateway start", gwB.length === 0 && b.ev("gateway-starting").length === 0, gwB.length);
     const alB = await gateAlerts(t, "workspace-missing");
-    t.check("(1) alert workspace-missing (high)", alB.some((x) => x.severity === "high"), alB.slice(0, 2));
+    t.check(
+      "(1) alert workspace-missing (high)",
+      alB.some((x) => x.severity === "high"),
+      alB.slice(0, 2),
+    );
 
     // (2) same, owner acceptLoss → reset + start.
     const c = t.box({

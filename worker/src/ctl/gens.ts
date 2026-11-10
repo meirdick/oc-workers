@@ -5,7 +5,7 @@ import { imageDigestOf } from "../core/version";
 import { alert, resolveAlert } from "./alerts";
 import { rebaseAtWake } from "./chain";
 import { configMarkGood } from "./config";
-import { maxCredSeq } from "./creds";
+import { ADOPTED_PREFIX, credTexts, maxCredSeq } from "./creds";
 import { type Ctx, ring, STATE_DB, utcDay } from "./ctx";
 import { deferDigest } from "./digest";
 import { epochRow } from "./epochs";
@@ -85,9 +85,12 @@ function rebaseDue(c: Ctx, a: BeginBootArgs): boolean {
   return rebaseAtWake(c, String(a.reason));
 }
 
-function resultOf(g: GenRow): BeginBootResult {
+function resultOf(c: Ctx, g: GenRow): BeginBootResult {
   const plan = pj<BootPlan>(g.plan, {} as BootPlan);
+  // Channel credentials adopted from the UI (ctl/adopt.ts) reach the gateway in the start env.
+  const adopted = credTexts(c, ADOPTED_PREFIX);
   return {
+    ...(Object.keys(adopted).length ? { adoptedEnv: adopted } : {}),
     gen: g.gen,
     secret: g.secret,
     restoreGens: pj<number[]>(g.restore_gens, []),
@@ -121,7 +124,7 @@ export async function beginBoot(c: Ctx, a: BeginBootArgs): Promise<BeginBootResu
   const ep = live && live !== ep0.digest && !deferred ? (epochRow(c, a.epoch) ?? ep0) : ep0;
   if (a.mode === "prod" && ep.status !== "active") return { error: "epoch-not-active" } as BeginBootResult;
   const prior = c.db.one<GenRow>("SELECT * FROM gens WHERE op_id = ?", a.opId);
-  if (prior && !(a.replan && prior.state === "booting" && !prior.iid)) return resultOf(prior);
+  if (prior && !(a.replan && prior.state === "booting" && !prior.iid)) return resultOf(c, prior);
   const facts = c.db.metaNum("initialized", 0) === 1 ? null : await freshFacts(c);
   // Rebase (add §2.8, ctl/chain.ts): a prod L1 wake boots image + newest archive + gen, so the next sleep
   // snapshot is a new chain base.
@@ -133,7 +136,7 @@ export async function beginBoot(c: Ctx, a: BeginBootArgs): Promise<BeginBootResu
 
   const out = c.db.tx(() => {
     const p2 = c.db.one<GenRow>("SELECT * FROM gens WHERE op_id = ?", a.opId);
-    if (p2 && !(a.replan && p2.state === "booting" && !p2.iid)) return { res: resultOf(p2), fresh: false };
+    if (p2 && !(a.replan && p2.state === "booting" && !p2.iid)) return { res: resultOf(c, p2), fresh: false };
     const gen = p2 ? p2.gen : c.db.metaNum("genCounter", 0) + 1;
     if (p2) {
       // Replan: a consumed marker of the old plan goes void (§14: quick_check failure or snapshot miss).
@@ -156,13 +159,22 @@ export async function beginBoot(c: Ctx, a: BeginBootArgs): Promise<BeginBootResu
     }
     const plan: BootPlan = { ...po.plan, gen };
     if (po.supersedeAfter !== undefined) supersedeNewerThan(c, ep.digest, po.supersedeAfter);
-    if (po.markerId)
+    if (po.markerId) {
       c.db.run(
         "UPDATE markers SET state = 'consumed', consumed_by_gen = ?, updated_at = ? WHERE id = ? AND state = 'valid'",
         gen,
         c.now(),
         po.markerId,
       );
+    } else {
+      // A boot that does not use the marker (PITR, rebase, archive, fresh) writes a new gen, so the marker's
+      // SQLite point is stale. Left valid, a later crash boot from the same snapshot took it and rolled SQLite
+      // back past this gen (M7 soak, fault-mix gen 32). Voiding only costs the faster restore path.
+      c.db.run(
+        "UPDATE markers SET state = 'void', void_reason = 'unused', updated_at = ? WHERE state = 'valid'",
+        c.now(),
+      );
+    }
     const unplanned = UNPLANNED.test(a.reason) ? 1 : 0;
     if (p2) {
       c.db.run(
@@ -236,7 +248,10 @@ export async function beginBoot(c: Ctx, a: BeginBootArgs): Promise<BeginBootResu
     if (plan.sqlite.kind === "marker" && plan.dbs.some((d) => d.bytes > plan.replica.seedGateMaxBytes))
       c.db.setMeta(`seeding:${gen}`, "1");
     c.db.setMeta(`cur:${a.epoch}`, gen);
-    return { res: resultOf(c.db.one<GenRow>("SELECT * FROM gens WHERE gen = ?", gen) as GenRow), fresh: !p2 };
+    return {
+      res: resultOf(c, c.db.one<GenRow>("SELECT * FROM gens WHERE gen = ?", gen) as GenRow),
+      fresh: !p2,
+    };
   });
   if (out.fresh || a.replan) {
     try {

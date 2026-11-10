@@ -89,6 +89,9 @@ export const finish = (o: Omit<Extract<StepOut, { done: true }>, "done"> = {}): 
   ...o,
 });
 
+/** Drill D watch: ladder to `slow` (about 45 min live) + l5PendingMs (2 h) + margin. */
+export const POISON_WATCH_MS = 210 * MIN;
+
 /** Bounds from docs/01-plan.md §1 and M4-STATUS §5. `ms` values in ms. */
 export const BOUND = {
   sqliteMs: 3000,

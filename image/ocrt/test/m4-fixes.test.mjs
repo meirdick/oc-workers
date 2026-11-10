@@ -30,7 +30,6 @@ test("F9 configStep with no config version renders the default doc with the mana
     state: "/home/node/.openclaw",
     envNames: ["OC_ANTHROPIC_KEY", "OC_GATEWAY_TOKEN"],
     runOcio: async (name, args, o) => {
-      if (name === "cron-read") return { json: { ok: true, records: {} } }; // plugin-installs read (guard-boot pathInstallStep)
       writes.push({ name, args, text: o.stdin });
       return { json: { ok: true } };
     },

@@ -329,7 +329,7 @@ export type SubdomainCheck = { kind: "has"; subdomain: string } | { kind: "none"
 
 export async function checkSubdomain(cf: CfClient, accountId: string): Promise<SubdomainCheck> {
   const r = await cf.call<{ subdomain?: string }>("GET", `/accounts/${accountId}/workers/subdomain`);
-  // measured: {"success":true,"subdomain":"mdick85"}; the API docs put it in result
+  // measured: {"success":true,"subdomain":"<sub>"}; the API docs put it in result
   const sub = r.j.result?.subdomain ?? (r.j.subdomain as string | undefined);
   if (ok(r) && typeof sub === "string" && sub) return { kind: "has", subdomain: sub };
   if (r.status === 404 || /subdomain/i.test(cfErrText(r.j))) return { kind: "none" };

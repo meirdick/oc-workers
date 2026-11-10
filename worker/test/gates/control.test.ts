@@ -313,6 +313,19 @@ describe("config and plugins", () => {
     expect(g.doc).toEqual(doc);
     expect(w.sql("SELECT status, source FROM config")).toEqual([{ status: "candidate", source: "ui" }]);
     expect(w.sql("SELECT class FROM alerts WHERE class = 'config-sensitive'")).toHaveLength(1);
+    // Doctor's own repair at boot: the ring row carries the keys, no alert (count stays 1).
+    const doc2 = { ...doc, gateway: { auth: { mode: "token" } } };
+    await ok(
+      await w.control(
+        "PUT",
+        "/v1/config/proposal",
+        w.env({ source: "doctor", sha: sha(JSON.stringify(doc2)), doc: doc2, baseVer: 1 }),
+        { iid: w.iid },
+      ),
+      "PUT",
+      "/v1/config/proposal",
+    );
+    expect(w.sql("SELECT count FROM alerts WHERE class = 'config-sensitive'")).toEqual([{ count: 1 }]);
     const bad = { channels: { slack: { webhookUrl: "https://evil" } } };
     const r = await w.control(
       "PUT",

@@ -242,7 +242,7 @@ describe("core behaviours", () => {
     cases.quiescing = (await w.core.requestWake("cli")).action;
     w.core.tr(38, "asleep-unconfirmed");
     cases["asleep-unconfirmed"] = (await w.core.requestWake("cli")).action;
-    w.core.tr(54, "stopped");
+    w.core.tr(54, "stopped", { desired: "stopped" });
     cases.stopped = (await w.core.requestWake("cli")).action;
     w.core.tr(57, "retired");
     cases.retired = (await w.core.requestWake("cli")).action;

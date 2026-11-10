@@ -61,6 +61,7 @@ const CALLS: [string, string[]][] = [
   ["sandbox", ["sleep"]],
   ["status", ["--bogus"]],
   ["channels", ["add", "slack"]],
+  ["import", ["/nonexistent-seed", "--dry-run"]],
 ];
 
 describe("--json", () => {

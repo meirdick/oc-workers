@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
-import path from "node:path";
 import { describe, it } from "node:test";
-import {
-  configStep,
-  doctorStep,
-  netfilterStep,
-  pathInstallStep,
-  startConfigWatch,
-} from "../lib/guard-boot.mjs";
-import { staleInstalls } from "../lib/plugins.mjs";
+import { configStep, doctorStep, netfilterStep, startConfigWatch } from "../lib/guard-boot.mjs";
 import { tmpdir } from "./fixtures.mjs";
 
 const V = {
@@ -147,70 +139,5 @@ describe("Doctor failure output (M6 polish live)", () => {
     assert.equal(t.length, 2048);
     assert.ok(t.endsWith("END"));
     assert.equal(doctorTail(""), "");
-  });
-});
-
-describe("path install of a baked plugin (firecrawl data upgrade row)", () => {
-  const root = "/app/dist/extensions";
-
-  it("staleInstalls: an npm record is stale, a path record of the dir and no record are not", () => {
-    const dirs = [
-      { dir: "/app/dist/extensions/firecrawl", id: "firecrawl" },
-      { dir: "/app/dist/extensions/cf-web-search", id: "cf-web-search" },
-    ];
-    assert.deepEqual(
-      staleInstalls(dirs, { firecrawl: { source: "npm", installPath: "/x/npm/firecrawl" } }).map((d) => d.id),
-      ["firecrawl"],
-    );
-    assert.deepEqual(
-      staleInstalls(dirs, { firecrawl: { source: "path", installPath: "/app/dist/extensions/firecrawl" } }),
-      [],
-    );
-    assert.deepEqual(
-      staleInstalls(dirs, {
-        firecrawl: { source: "path", installPath: "/home/node/.openclaw/ext/firecrawl" },
-      }).map((d) => d.id),
-      ["firecrawl"],
-      "a path record of another dir is stale too",
-    );
-    assert.deepEqual(staleInstalls(dirs, {}), []);
-    assert.deepEqual(staleInstalls(dirs, undefined), []);
-  });
-
-  it("pathInstallStep: links only the stale plugin; skips when the DB cannot be read", async () => {
-    const calls = [];
-    const mk = (json) => ({
-      state: "/home/node/.openclaw",
-      cgIo: "io",
-      cliEnv: () => ({}),
-      readManifest: (f) => JSON.stringify({ id: path.basename(path.dirname(f)) }),
-      log: (ev, f) => calls.push(["log", ev, f.id, f.code]),
-      runOcio: async (n, a) => {
-        calls.push(["ocio", n, a[1]]);
-        return { json };
-      },
-      runCli: async (a) => {
-        calls.push(["cli", a.join(" ")]);
-        return { code: 0, out: "", ms: 1 };
-      },
-    });
-    const dirs = [`${root}/firecrawl`];
-    const fixed = await pathInstallStep(
-      mk({ ok: true, records: { firecrawl: { source: "npm", installPath: "/gone" } } }),
-      dirs,
-    );
-    assert.deepEqual(fixed, ["firecrawl"]);
-    assert.ok(
-      calls.some(
-        (x) =>
-          x[1] ===
-          `/app/openclaw.mjs plugins install --link --force --accept-capabilities --no-enable ${root}/firecrawl`,
-      ),
-    );
-    calls.length = 0;
-    assert.deepEqual(await pathInstallStep(mk({ ok: false }), dirs), []);
-    assert.deepEqual(await pathInstallStep(mk({ ok: true, records: {} }), dirs), []);
-    assert.equal(calls.filter((x) => x[0] === "cli").length, 0, "no CLI call without a stale record");
-    assert.deepEqual(await pathInstallStep(mk({ ok: true, records: {} }), []), []);
   });
 });

@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config";
+
+// Worker tests need their own config (cloudflare:workers alias, sync-crypto setup).
+// CLI tests run plain Node.
 export default defineConfig({
   test: {
-    include: ["worker/test/**/*.test.ts", "cli/test/**/*.test.ts"],
     passWithNoTests: true,
-    testTimeout: 30_000,
+    projects: ["worker/vitest.config.ts", "cli/vitest.config.ts"],
   },
 });

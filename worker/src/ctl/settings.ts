@@ -4,7 +4,7 @@
 // next op: the Control DO reads the row on every call, the Runtime and Auth DOs fetch `settingsView` with a
 // short cache.
 import { defaultsFlat, expand, flatten, specOf, timerOverlay, validateDoc } from "../core/tunables";
-import { type Ctx, ring } from "./ctx";
+import { type Ctx, ring, type Settings } from "./ctx";
 import type { Db } from "./sql";
 
 export const KEEP_VERSIONS = 20;
@@ -142,4 +142,9 @@ export function settingsView(c: Ctx): SettingsView {
   const s = c.settings();
   const o = timerOverlay(flatten(s), c.test);
   return { ver: latestSettings(c.db)?.ver ?? 0, t: o.t, rt: o.rt, login: s.login };
+}
+
+/** The owner's console choice (meta `sandboxChoice`, set by POST /ops/sandbox/set) over the deploy value in OC_SETTINGS. */
+export function withSandboxChoice(s: Settings, choice: string | null): Settings {
+  return choice === "on" || choice === "all" || choice === "off" ? { ...s, sandbox: choice } : s;
 }

@@ -18,6 +18,7 @@ import {
 } from "./config-commands.ts";
 import { destroy, destroyFlags } from "./destroy.ts";
 import { doctor, doctorFlags } from "./doctor.ts";
+import { IMPORT_HELP, importCmd, importFlags } from "./import.ts";
 import { inbox, inboxFlags } from "./inbox.ts";
 import { aiGateway, aiGatewayFlags, model, modelFlags } from "./llm-commands.ts";
 import { logs, logsFlags } from "./logs.ts";
@@ -94,6 +95,14 @@ export const OPS_COMMANDS: Record<string, OpsCommand> = {
     usage: "backup list | create [--reason t] | restore <id> [--sqlite src] [--accept-loss]",
     does: "archives",
   },
+  import: {
+    flags: importFlags,
+    run: importCmd,
+    usage:
+      "import <seed-dir> [--rules <file.json>] [--feb <dir>] [--media <dir>] [--only files,workspace,config] [--dry-run] [--yes]",
+    does: "bring an old OpenClaw install in (workspace, memory, cron, files)",
+    more: IMPORT_HELP,
+  },
   snapshot: {
     flags: snapshotFlags,
     run: snapshot,
@@ -122,7 +131,7 @@ export const OPS_COMMANDS: Record<string, OpsCommand> = {
   sandbox: {
     flags: sandboxFlags,
     run: sandbox,
-    usage: "sandbox [status] | on [--all] | off | sleep",
+    usage: "sandbox [status] | on [--all] [--apply] | off [--apply] | sleep",
     does: "tool sandbox: state, budgets, on/off",
   },
   doctor: {

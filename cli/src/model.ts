@@ -64,13 +64,17 @@ export function toInfo(m: RawModel, primary: string): ModelInfo {
   };
 }
 
-/** GET /ai/models/search?task=Text Generation, all pages. */
+/**
+ * GET /ai/models/search?task=Text Generation, all pages. The API pages like every v4 list: `result_info` is
+ * {count, page, per_page, total_count} (no total_pages), and the server may cap per_page below the asked 100. So the
+ * loop goes on until the list holds total_count models, a page is empty, or a page adds no new name.
+ */
 async function fetchRaw(
   p: { acct: string; token: string },
   d: Pick<AigDeps, "fetch" | "sleep">,
 ): Promise<RawModel[]> {
-  const out: RawModel[] = [];
-  for (let page = 1; page <= 10; page++) {
+  const out = new Map<string, RawModel>();
+  for (let page = 1; page <= 20; page++) {
     const r = await cfApi<RawModel[]>(
       d,
       p.token,
@@ -82,11 +86,14 @@ async function fetchRaw(
         `cannot list Workers AI models (${errCode(r.json) ?? r.status})`,
         "the AI token needs Workers AI Read (the Workers AI template has it); ochost ai-gateway setup prints the steps",
       );
-    out.push(...(r.json.result ?? []));
+    const before = out.size;
+    for (const m of r.json.result ?? []) out.set(m.name, m);
     const ti = r.json.result_info;
-    if (!ti?.total_pages || page >= ti.total_pages || (r.json.result ?? []).length < 100) break;
+    if (out.size === before) break; // empty page, or a server that ignores `page`
+    if (ti?.total_count !== undefined && out.size >= ti.total_count) break;
+    if (ti?.total_pages !== undefined && page >= ti.total_pages) break;
   }
-  return out;
+  return [...out.values()];
 }
 
 /** `all` keeps models without function calling. */

@@ -78,13 +78,12 @@ openclaw storage test r2             # in the container: write, read and delete 
 
 `ochost doctor` has a row `file storage`. It writes, reads and deletes a 1-byte object under `f/<inst>/`. `ochost destroy --delete-data` deletes `f/<inst>/` before it deletes the bucket. Without `--delete-data` the files stay.
 
-## Sandbox {#sandbox}
 
 ## Sandbox
 
 The tool sandbox is off by default. It is experimental. When it is on, the exec and file tool calls of a sandboxed session run in a separate Cloudflare Sandbox container, not in the gateway container.
 
-`ochost sandbox on` sandboxes every session except your own main chat: group chats, other channels and sub-agents. This is the pattern OpenClaw recommends. `ochost sandbox on --all` sandboxes every session, your main chat included.
+`ochost sandbox on` sandboxes every channel chat: your Telegram DM, group chats, other channels and sub-agents. Only the chat in the OpenClaw Control UI stays on the gateway. OpenClaw classifies a channel DM by a per-peer key for its sandbox rule, even when it shares the main session. This is the pattern OpenClaw recommends. `ochost sandbox on --all` sandboxes every session, your main chat included.
 
 1. Turn it on:
 
@@ -111,7 +110,7 @@ Facts:
 
 - The sandbox gate answers at `http://15.0.0.4`, port 80. The container holds no credential for it.
 - The sandbox has no internet access. The agent cannot install packages there.
-- Web search, web fetch, the browser, memory, media and the message tool still run in the gateway container. The render allows them for sandboxed sessions (`tools.sandbox.tools.alsoAllow`), because OpenClaw's own sandbox policy leaves them out.
+- Web search, web fetch, the browser, memory, media, the message tool and `file_store` still run in the gateway container. The render allows them for sandboxed sessions (`tools.sandbox.tools.alsoAllow`), because OpenClaw's own sandbox policy leaves them out.
 - It starts at the first exec. It sleeps after 10 minutes without an exec, when the install sleeps, or when its budget is spent.
 - oc-workers backs up the sandbox `/workspace` to your R2 bucket at each sleep and every 30 minutes of use. It keeps the newest 2 backups.
 - The deploy builds the sandbox image even when the sandbox is off.

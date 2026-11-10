@@ -4,7 +4,7 @@
 // its SQLite staging root (snapshot/local-repository-directory-policy: owner euid or root), up to "/".
 // A foreign "/" fails both: exit 1, ocsup exit 78 doctor-failed. This box gets "/" chowned to 2346:2346
 // before ocsup starts (the CF shape); ocsup must give "/" back to root before any uid-1000 child runs.
-// The live installs had state from earlier gens and the baked firecrawl plugin configured, so: boot 1 makes
+// The live installs had state from earlier gens and an old config that names the firecrawl plugin (the render now maps it to cloudflare-web-fetch), so: boot 1 makes
 // state (no Doctor), boot 2 from its snapshot runs Doctor with the foreign "/".
 // Boot 1 gets a valid doc (the gateway refuses the retired key without Doctor); boot 2 adds the retired key.
 const BASE = {

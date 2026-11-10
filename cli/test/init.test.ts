@@ -268,6 +268,8 @@ describe("redact", () => {
 // ---------------------------------------------------------------- end to end with fakes
 
 interface World {
+  /** Status of anonymous GET / (the login form); default 200. */
+  rootAnonymous?: number;
   workerExists: boolean;
   secrets: Set<string>;
   bucketExists: boolean;
@@ -376,17 +378,22 @@ function fakeFetch(w: World): typeof fetch {
       return json({ error: "init must not call the gateway" }, 500);
     // the Worker
     const auth = (init.headers as Record<string, string> | undefined)?.authorization;
+    // Like the real Worker (docs/18, docs/15): anonymous `/` is the login form; a GET of the owner link is the
+    // Continue page; the page's POST sets the cookie.
     if (path === "/" && !auth) {
       const cookie = (init.headers as Record<string, string> | undefined)?.cookie;
       return cookie
         ? new Response("<title>OpenClaw Control</title>", { status: 200 })
-        : json({ error: "not found" }, 404);
+        : new Response('<h1>Sign in</h1><form method="post" action="/_ochost/login"></form>', {
+            status: w.rootAnonymous ?? 200,
+          });
     }
     if (path.startsWith("/_ochost/login/"))
-      return new Response(null, {
-        status: 303,
-        headers: { location: "/", "set-cookie": "ochost=s1; Path=/" },
-      });
+      return m === "POST"
+        ? new Response("<h1>Signed in</h1>", { status: 200, headers: { "set-cookie": "ochost=s1; Path=/" } })
+        : new Response('<h1>Sign in</h1><form method="post"><button type="submit">Continue</button></form>', {
+            status: 200,
+          });
     if (path === "/_ochost/logout") return new Response(null, { status: 303 });
     if (!auth) return json({ error: "not found" }, 404);
     if (path === "/ops/status") return json({ inst: "x", state: w.state, epoch: w.starts ? { n: 1 } : null });
@@ -597,6 +604,20 @@ describe("runInit end to end (fake wrangler + fake fetch)", () => {
       "login",
     ]);
     expect(done.every((e) => typeof e.ms === "number" && e.total === 14)).toBe(true);
+  });
+
+  it("M8 F3: the self-test passes on a healthy install: login form at /, Continue page, session, no WARN", async () => {
+    expect(await initCommand(ctxFor(["--name", "oc-m5-test", "--non-interactive"]))).toBe(0);
+    const text = out.join("");
+    expect(text).toMatch(/anonymous sees the login form, UI opens/);
+    expect(text).not.toMatch(/self-test:.*(returned|gave|no cookie|failed)/);
+    expect(w.calls.filter((c) => /^POST \S+\/_ochost\/login\/c+\d$/.test(c))).toHaveLength(1);
+  });
+
+  it("the self-test still warns when anonymous / is not the login form", async () => {
+    w.rootAnonymous = 404;
+    expect(await initCommand(ctxFor(["--name", "oc-m5-test", "--non-interactive"]))).toBe(0);
+    expect(out.join("")).toMatch(/self-test: anonymous GET \/ returned 404/);
   });
 
   it("a step that fails still prints its line, then the error is one Failed line", async () => {

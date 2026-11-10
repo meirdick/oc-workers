@@ -114,7 +114,7 @@ Config and secret changes apply when the gateway starts: at the next wake, or no
 | `caps` | | Show the daily budgets. |
 | `caps set <browser\|neurons\|requests\|websearch\|exec\|sandbox> <n>` | | Set one budget. |
 | `sandbox [status]` | | Sandbox state, last backup, exec and sandbox budgets. |
-| `sandbox on\|off` | `--all` | Write `sandbox` in `oc-host.jsonc`: `on` sandboxes every session but your main chat, `on --all` every session. Then `ochost deploy` and `ochost restart`. |
+| `sandbox on\|off` | `--all` | Write `sandbox` in `oc-host.jsonc`: `on` sandboxes every channel chat, your Telegram DM included (the Control UI chat stays out), `on --all` every session. Then `ochost deploy` and `ochost restart`. |
 | `sandbox sleep` | | Back up the sandbox workspace and stop it. |
 
 ## Access and alerts

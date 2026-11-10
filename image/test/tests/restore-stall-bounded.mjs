@@ -47,11 +47,18 @@ export default {
       await b.start();
       if (CONTROL) {
         await t.sleep(150_000);
-        const phase = b.events().filter((e) => e.ev === "phase").at(-1)?.phase;
+        const phase = b
+          .events()
+          .filter((e) => e.ev === "phase")
+          .at(-1)?.phase;
         t.measure("control.after150s", { running: b.running(), phase, lock: b.ev("lock").length });
-        t.check("control: still in phase restore after 150 s (no bound)", b.running() && phase === "restore", {
-          phase,
-        });
+        t.check(
+          "control: still in phase restore after 150 s (no bound)",
+          b.running() && phase === "restore",
+          {
+            phase,
+          },
+        );
         return;
       }
       await b.waitExit(300_000);

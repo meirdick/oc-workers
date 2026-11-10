@@ -15,6 +15,7 @@ import type {
   WakeReason,
 } from "../core/types";
 import { dispatchGateCall, GateLedger } from "../gates/ledger";
+import { seedAdopted } from "./adopt";
 import { cfgOf } from "./archives";
 import { boundsGuard, storageLimits } from "./bounds";
 import { ControlCore, type OpsReq, type OpsRes } from "./control";
@@ -45,6 +46,7 @@ export class ControlApi implements ControlForRuntime {
     });
     this.ledger.migrate();
     this.core.ledger = this.ledger;
+    seedAdopted(c);
   }
 
   // ---- ControlForRuntime ----

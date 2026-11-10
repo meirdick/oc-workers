@@ -2,8 +2,13 @@
 // the World (Control DO + Runtime DO + fake container, fake clock). The fake container answers the in-container
 // scripts with canned JSON; what is asserted is that each step executes, records a result in R2 and that the
 // bound logic gives the right verdict on inputs that differ at the boundary.
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { PLANS } from "../../src/ctl/soak/plans";
+import { PITR_WRITE, STATE_DB } from "../../src/ctl/soak/scripts";
 import { HANDLERS } from "../../src/ctl/soak/steps";
 import type { SoakSummary, StepResult } from "../../src/ctl/soak/types";
 import type { World } from "../harness/world";
@@ -34,7 +39,9 @@ function fakeContainer(world: World, f: Fake) {
     const js = b64 ? Buffer.from(b64, "base64").toString() : "";
     const out = (o: unknown) => ({ exitCode: 0, stdout: `${JSON.stringify(o)}\n` });
     if (/setsid nohup/.test(line)) return { exitCode: 0, stdout: "started\n" };
-    if (/pgrep/.test(line)) return { exitCode: 0, stdout: "dead\n" };
+    // pgrep -f sees the `sh -c` running it: a pattern that matches its own command line is "alive" (M7 soak).
+    const pg = /pgrep -f '?([^' ]+)'?/.exec(line);
+    if (pg) return { exitCode: 0, stdout: new RegExp(pg[1] as string).test(line) ? "alive\n" : "dead\n" };
     if (/SCRUB|ps -eo/.test(line))
       return { exitCode: 0, stdout: "SCRUB 11|openclaw gateway|1|1\nSCRUB 12|ocio helper|1|1\n" };
     if (/df -B1/.test(line)) return { exitCode: 0, stdout: "100000 50000\n" };
@@ -57,8 +64,9 @@ function fakeContainer(world: World, f: Fake) {
   };
 }
 
-async function setup(o: { windowMs?: number } = {}) {
-  w = await fresh(sut);
+async function setup(o: { windowMs?: number; noBot?: boolean } = {}) {
+  // A test install with its fake Telegram channel added (ochost channels add telegram sets the token).
+  w = await fresh(sut, o.noBot ? {} : { vars: { OC_SECRET_OC_TELEGRAM_BOT_TOKEN: "123:fake" } });
   await toRunning(w);
   const f: Fake = { windowMs: o.windowMs ?? 700, killedAt: 0 };
   fakeContainer(w, f);
@@ -221,6 +229,7 @@ describe("soak runner", () => {
         params: { n: 2, kills: 1, killEvery: 1, gapMs: 1000, settleMs: 20_000, ...t },
       },
       { id: "cycles", type: "cycles", params: { n: 1, ...t } },
+      { id: "r2-mark", type: "r2-mark" },
       { id: "s4-final", type: "s4-final" },
       { id: "pitr", type: "pitr", params: t },
       { id: "poison", type: "poison", params: { watchMs: 20_000, ...t } },
@@ -255,4 +264,96 @@ describe("soak runner", () => {
     });
     expect(byId.writer?.ok).toBe(true);
   }, 300_000);
+});
+
+describe("M7 soak findings (docs/research/soak-m7-findings.md)", () => {
+  const custom = async (steps: unknown[], maxMs = 60 * 60_000) => {
+    expect((await w.ops("soak-plan", { plan: "custom", steps })).status).toBe(202);
+    await finish("custom", maxMs);
+  };
+  const res = (id: string) => r2json<StepResult>(`results/custom/${id}.json`);
+
+  it("churn starts (pgrep does not match its own shell); no lag when the stores never match", async () => {
+    await setup();
+    const t = { timeoutMs: 90_000 };
+    await custom([
+      { id: "churn", type: "churn-hold", params: { ms: 5000, sampleMs: 1000, ...t } },
+      { id: "compare", type: "creds-compare", params: { settleMs: 5000, ...t } },
+    ]);
+    const churn = await res("churn");
+    expect(churn?.checks.churned).toBe(true);
+    expect((churn?.data as { restarts?: number } | undefined)?.restarts ?? 0).toBeGreaterThanOrEqual(1);
+    const cmp = await res("compare");
+    expect(cmp?.checks.credStoreEqualsDisk).toBe(false); // fake disk has creds.json, the store has none
+    expect(cmp?.measures).toEqual([]); // the wait cap is not reported as a lag
+  }, 120_000);
+
+  it("reply-counting steps fail at once with no Telegram channel", async () => {
+    await setup({ noBot: true });
+    await custom([
+      { id: "tg", type: "tg-batch", params: { n: 2, kills: 0 } },
+      { id: "a", type: "drill-a" },
+      { id: "cy", type: "cycles", params: { n: 1 } },
+    ]);
+    for (const id of ["tg", "a", "cy"]) {
+      const r = await res(id);
+      expect(r?.checks, id).toEqual({ telegramChannel: false });
+    }
+  }, 120_000);
+
+  it("a refused force sleep keeps the gate rule in the step data", async () => {
+    await setup(); // World default: sleep.mode off → rule 1:mode-off
+    await custom([{ id: "cy", type: "cycles", params: { n: 1, timeoutMs: 60 * 60_000 } }]);
+    const r = await res("cy");
+    expect(r?.checks.sleptEveryCycle).toBe(false);
+    const refused = (r?.data as { refused?: Record<string, number> } | undefined)?.refused ?? {};
+    expect(Object.keys(refused)).toContain("1:mode-off");
+  }, 120_000);
+
+  it("each fill step writes its own file; a step that starts above 80 % expects no new disk-high", async () => {
+    await setup();
+    const lines: string[] = [];
+    const c = w.rt().c;
+    const prev = c.execHandler;
+    const used = 85;
+    c.execHandler = (cmd, opts) => {
+      const line = cmd.join(" ");
+      lines.push(line);
+      if (/df -B1/.test(line)) return { exitCode: 0, stdout: `100000 ${100000 - used * 1000}\n` };
+      return prev(cmd, opts);
+    };
+    await custom([{ id: "d96", type: "disk-fill", params: { pct: 96, waitMs: 5000, timeoutMs: 90_000 } }]);
+    expect(lines.some((l) => /soak-fill\/f96\b/.test(l))).toBe(true);
+    const r = await res("d96");
+    expect(r?.checks).not.toHaveProperty("diskHighAlert");
+    expect(r?.checks).toHaveProperty("diskFullAlert");
+    expect(r?.data).toMatchObject({ usedBefore: 85 });
+  }, 120_000);
+
+  it("s4 R2 bound is growth over the plan; R2 over state is info only", async () => {
+    await setup();
+    await custom([
+      { id: "r2-start", type: "r2-mark" },
+      { id: "final", type: "s4-final" },
+    ]);
+    const r = await res("final");
+    expect(r?.checks).toMatchObject({ usageRead: true, r2StartRead: true });
+    const g = r?.measures.find((m) => m.item === "s4-r2-growth");
+    expect(g).toMatchObject({ unit: "x", max: 1.5 });
+    expect(g?.value).toBeCloseTo(1, 1);
+    expect(r?.measures.find((m) => m.item === "s4-r2-bytes")?.max).toBeUndefined();
+    expect(
+      PLANS.find((p) => p.name === "s4-500")
+        ?.build({})
+        .map((s) => s.type),
+    ).toContain("r2-mark");
+  }, 120_000);
+
+  it("PITR_WRITE takes phase and count from argv[2] and argv[3]", () => {
+    const dir = mkdtempSync(join(tmpdir(), "soak-pitr-"));
+    const f = join(dir, "w.mjs");
+    writeFileSync(f, PITR_WRITE.replace(JSON.stringify(STATE_DB), JSON.stringify(join(dir, "s.sqlite"))));
+    const out = execFileSync(process.execPath, ["--no-warnings", f, "b", "3"], { encoding: "utf8" });
+    expect(JSON.parse(out.trim())).toMatchObject({ n: 3 });
+  });
 });

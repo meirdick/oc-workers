@@ -1,6 +1,7 @@
 // CredStore owner side (plan §4.10, §6.1 row 2). The write-through wire (PUT/DELETE/GET /v1/creds/*) is the
 // gates' ledger (src/gates/ledger.ts) on the same tables. Here: manifest for status, history and the manual
 // restore from history (`/ops/creds/restore`), and the hwm credsSeq.
+import { sha256Hex } from "../core/ids";
 import { CAPS } from "../gates/ledger";
 import { alert } from "./alerts";
 import type { Ctx } from "./ctx";
@@ -141,4 +142,55 @@ export function credRestore(c: Ctx, path: string, seq: number): Res {
     alert(c, "creds-restored", "warn", `${path} restored from seq ${seq} as seq ${next}`);
     return { status: 200, body: { ok: true, seq: next } };
   });
+}
+
+// ---------------------------------------------------------------- owner-written secrets (channel adoption)
+
+/** Creds rows under this prefix are Worker-side secrets: never in the manifest the container restores. */
+export const ADOPTED_PREFIX = "adopted/";
+
+const utf8b64 = (s: string) => {
+  let bin = "";
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin);
+};
+const b64utf8 = (b64: string) =>
+  new TextDecoder().decode(Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0)));
+
+/** Owner write of a small text secret as a new version (seq above every row, so the newest copy wins). */
+export async function credPutText(c: Ctx, path: string, text: string): Promise<number> {
+  const sha = await sha256Hex(text);
+  const b64 = utf8b64(text);
+  return c.db.tx(() => {
+    const cur = getCred(c, path);
+    const gen = cur?.gen ?? c.db.metaNum("genCounter", 0);
+    const seq = maxCredSeq(c) + 1;
+    const now = c.now();
+    c.db.run(
+      `INSERT INTO creds (path, gen, seq, sha256, mode, b64, r2_key, deleted, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?)
+       ON CONFLICT(path) DO UPDATE SET gen = excluded.gen, seq = excluded.seq, sha256 = excluded.sha256,
+         mode = excluded.mode, b64 = excluded.b64, r2_key = NULL, deleted = 0, updated_at = excluded.updated_at`,
+      path,
+      gen,
+      seq,
+      sha,
+      0o600,
+      b64,
+      now,
+    );
+    hist(c, path, gen, seq, sha, 0o600, b64, null, 0, now);
+    return seq;
+  });
+}
+
+/** Live text rows under a prefix: path (without the prefix) → value. */
+export function credTexts(c: Ctx, prefix: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of c.db.all<CredRow>(
+    "SELECT * FROM creds WHERE deleted = 0 AND b64 IS NOT NULL AND substr(path, 1, ?) = ?",
+    prefix.length,
+    prefix,
+  ))
+    out[r.path.slice(prefix.length)] = b64utf8(r.b64 as string);
+  return out;
 }

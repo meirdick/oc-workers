@@ -5,7 +5,32 @@ sidebar:
   order: 15
 ---
 
-Version 1.1.0 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
+Version 1.2.0 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
+
+## 1.2.0
+
+New:
+
+- `ochost import <seed-dir>` brings an old OpenClaw install in. `--dry-run` prints the plan. Workspace and `memory/` merge into the workspace; the bootstrap files replace the new defaults (old copies in `.ochost-import/<id>/backup/`), other files the install already has are kept. Records, raw transcripts, media and skills without a target go to file storage (`history/INDEX.json` maps keys to the old names). Cron jobs are re-created. Config keys that OpenClaw 2026.10.9 has merge into a new version; the rest is listed. Credentials, `.env` files and keys never leave the laptop. Rules for one old install (vault paths, dirs for file storage, skills to park, cron jobs to skip or turn off) come from an optional local file, `--rules <file.json>`; `ochost import -h` shows the fields. With the sandbox on, the same merge runs in the sandbox workspace.
+- The Setup tab of the owner console has controls for the sandbox (off, on, all), the alert channel (URL, **Save**, **Test**, **Off**) and the model. Each form is one POST and works with JavaScript off.
+- New alert `no-reply`: a Telegram message accepted 5 minutes ago has no reply while the install runs. The Telegram row in the console and `ochost doctor` shows the count.
+- `ochost sandbox on|off --apply` writes the setting, deploys, and restarts.
+- Channel setup from the OpenClaw UI. Paste a bot token in Settings > Channels and save; the Setup tab then shows an Adopt button, and `ochost channels adopt <telegram|slack|discord|twilio>` does the same. The Worker moves the credentials out of the config, sets the webhook and restarts the gateway. Polling mode is refused.
+- `testTimers` in `oc-host.jsonc` sets the timers of a test install. A real install ignores it.
+
+Fixes:
+
+- Data loss: a boot that does not use a valid clean marker now voids it. Before, a later crash boot from the same snapshot could restore SQLite from before the newest gen and lose rows.
+- An inbox row that the gateway answers 404 or 501 goes dead after 5 misses and 5 minutes, with alert `inbox-dead`. Before, such rows held the install awake for up to 23 hours.
+- `ochost restart` during a sleep no longer leaves the install stopped.
+- `ochost restart` right after a deploy no longer asks for a second archive when the newest one finished less than 2 minutes ago.
+- The self-test at the end of `ochost init` no longer warns on a healthy install.
+- `ochost model list --refresh` reads every page of the model search.
+- `sandbox on` sandboxes your Telegram DM too; only the Control UI chat stays on the gateway. The docs said the main chat was exempt.
+- Sandboxed sessions keep the `file_store` tool. The agent skill names the search and `file_store` tools.
+- The `firecrawl` package is not in the image. Run `ochost config render` on a config that still names it.
+- Alert `archive-failed` closes when a later archive completes. The console cost guard line reads as a state, not a fault.
+- Soak engine checks for test installs are fixed.
 
 ## 1.1.1
 

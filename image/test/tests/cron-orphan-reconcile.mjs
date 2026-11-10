@@ -30,10 +30,7 @@ export default {
     const b = t.box({ name: "a", gen: 1, env: { OC_ANTHROPIC_KEY: "sk-ant-m4-cron-probe-0000" } });
     await b.start();
     if (!t.check("/startupz", (await b.startupz()) !== null)) return;
-    const first = await b.waitEv(
-      (e) => e.ev === "cron-reconcile" || e.ev === "cron-orphan-deleted",
-      60_000,
-    );
+    const first = await b.waitEv((e) => e.ev === "cron-reconcile" || e.ev === "cron-orphan-deleted", 60_000);
     t.measure("bootReconcile", first);
     t.check("reconcile ran at the first gateway start", !!first);
     t.check(
@@ -68,10 +65,7 @@ export default {
     );
     const rowsAfter = JSON.parse(b.as1000(["node", "-e", COUNT, DB]).out || "[]");
     t.measure("rowsAfter", rowsAfter);
-    t.check(
-      "orphan row gone",
-      !rowsAfter.some((x) => x.job_id === "m4-orphan-0001"),
-    );
+    t.check("orphan row gone", !rowsAfter.some((x) => x.job_id === "m4-orphan-0001"));
     t.check(
       "other rows kept",
       rowsAfter.length === rowsBefore.length - 1,

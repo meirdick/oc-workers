@@ -8,6 +8,7 @@ import type { Ctx } from "../ctx";
 import type { Db } from "../sql";
 import { type SoakPort, type StepCtx, type StepOut, sh } from "./lib";
 import { catalog, PLANS, planByName } from "./plans";
+import { procPat } from "./scripts";
 import { HANDLERS, timeoutOf } from "./steps";
 import {
   activePlan,
@@ -388,7 +389,7 @@ async function cleanup(port: SoakPort): Promise<void> {
   await port.rtFault("clear").catch(() => undefined);
   await sh(
     port,
-    "pkill -f soak-writer.mjs; pkill -f soak-churn.mjs; rm -rf /home/node/soak-fill; echo ok",
+    `pkill -f ${procPat("soak-writer.mjs")}; pkill -f ${procPat("soak-churn.mjs")}; rm -rf /home/node/soak-fill; echo ok`,
     30_000,
   ).catch(() => undefined);
 }

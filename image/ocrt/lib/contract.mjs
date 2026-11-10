@@ -615,6 +615,17 @@ export const ArchiveComplete = env(
   ["archiveId", "sha256", "size", "parts"],
 );
 export const ArchiveAbort = env({ archiveId: str() }, ["archiveId"]);
+// `ochost import` (docs/10 §1.2): ocsup reports the outcome of the import request the heartbeat ack named.
+export const IMPORT_ID_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export const ImportDone = env(
+  {
+    id: str({ re: IMPORT_ID_RE }),
+    ok: bool,
+    why: str({ max: 500 }),
+    result: any,
+  },
+  ["id", "ok"],
+);
 // spec 08 §12.2, §23: wake allowlist export (owner Telegram user ids, allowed group chats).
 export const WakeAllowReq = env(
   {
@@ -692,6 +703,8 @@ export const ROUTES = Object.freeze([
   { m: "PUT", path: "/v1/shadow/:db", auth: "secret+iid", raw: true, rate: "1 per DB per 10 min" },
   { m: "POST", path: "/v1/export/:path", auth: "secret+iid", raw: true, modes: ["files-only"] },
   { m: "PUT", path: "/v1/wake-allow", auth: "secret+iid", body: WakeAllowReq, res: OkRes, modes: ["prod"] },
+  { m: "GET", path: "/v1/import/bundle", auth: "secret+iid", raw: true, query: ["id"] },
+  { m: "POST", path: "/v1/import/done", auth: "secret+iid", body: ImportDone, res: OkRes, modes: ["prod"] },
 ]);
 
 export function routeFor(method, pathname) {

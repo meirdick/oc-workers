@@ -44,7 +44,7 @@ export default {
       const doc = {
         ...tgDoc(extra),
         agents: { defaults: { model: { primary: "anthropic/claude-sonnet-4-6" } } },
-        models: { providers: { anthropic: { apiKey: "${OC_ANTHROPIC_KEY}" } } },
+        models: { providers: { anthropic: { apiKey: "$" + "{OC_ANTHROPIC_KEY}" } } },
       };
       await t.ctl("/_ctl/config", { ver: 1 + i, doc });
       const b = t.box({

@@ -2,9 +2,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AccessHooks } from "../src/access.ts";
 import { defaultConfigText, parseJsonc, validateConfig, workerSettings } from "../src/config.ts";
 import { renderWranglerJsonc } from "../src/deploy.ts";
-import { setSandboxKey } from "../src/sandbox.ts";
+import { makeCtx } from "../src/ops-lib.ts";
+import { sandbox, sandboxFlags, setSandboxKey } from "../src/sandbox.ts";
 import { FakeOps, installDir, run, T0 } from "./ops-fake.ts";
 
 const ACCT = "a".repeat(32);
@@ -44,6 +46,26 @@ describe("config", () => {
     });
     expect(w.durable_objects.bindings).toContainEqual({ name: "SANDBOX", class_name: "SandboxSession" });
     expect(w.exports.SandboxSession).toEqual({ type: "durable-object", storage: "sqlite" });
+  });
+
+  it("testTimers: OC_TIMERS on a test install only; bad values refused", () => {
+    const c = { ...cfgOf(), testTimers: { l5PendingMs: 600_000 } };
+    const vars = (fake: boolean) =>
+      (
+        parseJsonc(
+          renderWranglerJsonc(validateConfig(c), {
+            accountId: ACCT,
+            url: "https://x",
+            source: "/src",
+            fakeTelegram: fake,
+          }),
+        ) as any
+      ).vars;
+    expect(vars(true).OC_TIMERS).toBe('{"l5PendingMs":600000}');
+    expect(vars(false).OC_TIMERS).toBeUndefined();
+    expect(vars(true).OC_TEST).toBe("1");
+    expect(() => validateConfig({ ...cfgOf(), testTimers: { l5PendingMs: -1 } })).toThrow(/testTimers/);
+    expect(() => validateConfig({ ...cfgOf(), testTimers: [1] })).toThrow(/testTimers/);
   });
 });
 
@@ -88,6 +110,62 @@ describe("ochost sandbox", () => {
     expect((parseJsonc(readFileSync(join(dir, "oc-host.jsonc"), "utf8")) as any).sandbox).toBe("on");
     expect(r.out).toMatch(/next: ochost deploy, then ochost restart/);
     expect(f.calls("GET", "/ops/sandbox")).toHaveLength(0);
+  });
+
+  it("on --apply writes the key, then deploys with it, then restarts", async () => {
+    const order: string[] = [];
+    const hooks: AccessHooks = {
+      async deploy(ctx) {
+        order.push(
+          `deploy:${(parseJsonc(readFileSync(join(ctx.dir, "oc-host.jsonc"), "utf8")) as any).sandbox}`,
+        );
+      },
+      async restart() {
+        order.push("restart");
+        return "restarted";
+      },
+    };
+    let out = "";
+    const ctx = makeCtx(
+      ["on", "--apply", "--dir", dir],
+      sandboxFlags,
+      { env: {} },
+      {
+        stdout: (t) => {
+          out += t;
+        },
+        stderr: () => {},
+      },
+    );
+    expect(await sandbox(ctx, hooks)).toBe(0);
+    expect(order).toEqual(["deploy:on", "restart"]);
+    expect(out).toMatch(/deployed; restart: restarted/);
+    expect(out).not.toMatch(/next:/);
+  });
+
+  it("on --apply: a failed deploy stops before the restart and says the file is changed", async () => {
+    const order: string[] = [];
+    const hooks: AccessHooks = {
+      async deploy() {
+        throw new Error("wrangler boom");
+      },
+      async restart() {
+        order.push("restart");
+        return "restarted";
+      },
+    };
+    const ctx = makeCtx(
+      ["off", "--apply", "--dir", dir],
+      sandboxFlags,
+      { env: {} },
+      {
+        stdout: () => {},
+        stderr: () => {},
+      },
+    );
+    await expect(sandbox(ctx, hooks)).rejects.toThrow(/deploy failed: wrangler boom/);
+    expect(order).toEqual([]);
+    expect((parseJsonc(readFileSync(join(dir, "oc-host.jsonc"), "utf8")) as any).sandbox).toBe("off");
   });
 
   it("sleep posts once", async () => {

@@ -6,7 +6,6 @@ Licensed under the Apache License, Version 2.0. See LICENSE.
 This package builds a container image from third-party software, each under its own licence:
 
 - OpenClaw (https://github.com/openclaw/openclaw), the assistant that runs in the container. MIT.
-- @openclaw/firecrawl-plugin, the web fetch client bundled into the image. MIT.
 - Litestream (https://github.com/benbjohnson/litestream), SQLite replication. Apache-2.0.
 - tini, nftables, jemalloc, from the Debian packages of the base image. Their own licences.
 

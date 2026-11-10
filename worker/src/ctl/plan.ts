@@ -324,6 +324,8 @@ export function buildPlan(c: Ctx, a: BeginBootArgs, ep: EpochRow, facts: FreshFa
   const overlay: BootPlan["overlay"] = [];
   if (a.reason === "l5" || pitr) overlay.push({ path: "cron.enabled", value: false });
 
+  // What this boot renders; the console shows "applies at the next start" while the setting differs.
+  c.db.setMeta("sandboxBooted", s.sandbox ?? "off");
   const plan: Omit<BootPlan, "gen"> = {
     v: 1,
     mode: a.mode,

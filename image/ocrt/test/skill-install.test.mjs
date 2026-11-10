@@ -35,7 +35,12 @@ test("remove: the old name's dir goes; the new one stays; a bad or same name is 
   const ws = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "skill-")), "workspace");
   fs.mkdirSync(path.join(ws, "skills", "oc-host-cloudflare"), { recursive: true });
   fs.writeFileSync(path.join(ws, "skills", "oc-host-cloudflare", "SKILL.md"), "old");
-  const r = run({ src: SRC, workspace: ws, name: "oc-workers-cloudflare", remove: ["oc-host-cloudflare", "../x", "oc-workers-cloudflare"] });
+  const r = run({
+    src: SRC,
+    workspace: ws,
+    name: "oc-workers-cloudflare",
+    remove: ["oc-host-cloudflare", "../x", "oc-workers-cloudflare"],
+  });
   assert.equal(r.ok, true);
   assert.deepEqual(fs.readdirSync(path.join(ws, "skills")).sort(), ["oc-workers-cloudflare"]);
 });

@@ -452,3 +452,49 @@ describe("replay driver", () => {
     expect(w.api.core.inboxBlocksSleep()).toEqual({ pending: 0, unreplicated: 1 });
   });
 });
+
+describe("no-reply alert", () => {
+  const nr = (w: World) =>
+    w.db.one<{ open: number; count: number; last_detail: string }>(
+      "SELECT open, count, last_detail FROM alerts WHERE class = 'no-reply'",
+    );
+  const accept = (w: World, key: number, chat: number) => {
+    put(w, tg(key, chat, chat));
+    w.db.run(
+      "UPDATE inbox SET state = 'accepted', accepted_at = ? WHERE platform_key = ?",
+      w.clock.t,
+      String(key),
+    );
+  };
+
+  it("warns once per hour with the count after 5 minutes, and a reply closes it", async () => {
+    const w = world({ real: true });
+    awake(w);
+    accept(w, 1, 7);
+    accept(w, 2, 8);
+    w.advance(4 * 60_000);
+    await w.api.tick();
+    expect(nr(w)).toBeNull(); // 4 min: too early
+    w.advance(2 * 60_000);
+    await w.api.tick();
+    expect(nr(w)).toMatchObject({ open: 1, count: 1 });
+    expect(nr(w)?.last_detail).toContain("2 Telegram messages without a reply");
+    w.advance(10 * 60_000);
+    await w.api.tick();
+    expect(nr(w)?.count).toBe(1); // same hour: no second alert
+    w.api.core.noteOutbound(7, w.clock.t, "sendMessage");
+    expect(nr(w)?.open).toBe(1); // chat 8 still waits
+    w.api.core.noteOutbound(8, w.clock.t, "sendMessage");
+    expect(nr(w)?.open).toBe(0);
+  });
+
+  it("does not warn while the install is not running", async () => {
+    const w = world({ real: true });
+    awake(w);
+    accept(w, 1, 7);
+    w.api.noteRtState(1, "asleep");
+    w.advance(6 * 60_000);
+    await w.api.tick();
+    expect(nr(w)).toBeNull();
+  });
+});

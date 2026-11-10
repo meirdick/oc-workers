@@ -235,6 +235,8 @@ export function checkArchive(a: any, state: string): Check {
 /** The alert sink as `GET /ops/alerts` reports it (`sinkInfo`): configured, kind, acked. */
 export interface Sink {
   configured?: boolean;
+  /** `console` (saved in the Control DO), `secret` (ALERT_URL), `off` or `none`. */
+  source?: string;
   kind?: string | null;
   ackedAt?: number | null;
   lastOkAt?: number | null;

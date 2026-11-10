@@ -34,6 +34,41 @@ interface SendItem {
 export type SinkKind = "ntfy" | "slack" | "discord";
 
 /** Sink format from the URL. Slack: hooks.slack.com/services|triggers|workflows; Discord: /api/webhooks. */
+/**
+ * The sink the Worker sends to. A URL the owner saved in the console (meta `alertSinkUrl`, no secret rights
+ * needed) wins over the Worker secret ALERT_URL; the empty string means the owner turned alerts off.
+ * A saved URL has no token: ALERT_TOKEN goes with the secret URL only.
+ */
+export function sinkUrl(c: Ctx): string | undefined {
+  const saved = c.db.meta("alertSinkUrl");
+  return saved === null ? c.secrets.alertUrl : saved || undefined;
+}
+const sinkToken = (c: Ctx) => (c.db.meta("alertSinkUrl") === null ? c.secrets.alertToken : undefined);
+
+/** POST /ops/alerts/sink {url}: save the sink in the Control DO. `null` clears it (the Worker secret applies again); "" is off. */
+export function setAlertSink(
+  c: Ctx,
+  url: unknown,
+): { status: 200; body: Record<string, unknown> } | { status: 400; body: { error: string } } {
+  if (url === null) {
+    c.db.delMeta("alertSinkUrl");
+    ring(c, "alert", "sink-set", { source: "secret" });
+    return { status: 200, body: { ok: true, sink: sinkInfo(c) } };
+  }
+  if (typeof url !== "string") return { status: 400, body: { error: "url must be a string or null" } };
+  const u = url.trim();
+  if (u) {
+    let ok = false;
+    try {
+      ok = new URL(u).protocol === "https:" && u.length <= 500;
+    } catch {}
+    if (!ok) return { status: 400, body: { error: "url must be an https URL of 500 characters or less" } };
+  }
+  c.db.setMeta("alertSinkUrl", u);
+  ring(c, "alert", "sink-set", { source: u ? "console" : "off", kind: u ? sinkKind(u) : null });
+  return { status: 200, body: { ok: true, sink: sinkInfo(c) } };
+}
+
 export function sinkKind(url: string): SinkKind {
   let u: URL;
   try {
@@ -169,7 +204,7 @@ export async function flushAlerts(
   // Claim before any await so a second flush does not resend.
   c.db.setMeta("alertMark", mark);
   c.db.setMeta("alertRetry", []);
-  const url = c.secrets.alertUrl;
+  const url = sinkUrl(c);
   if (!items.length || !url) return { sent: 0, failed: 0 };
   const kind = sinkKind(url);
   const keep: SendItem[] = [];
@@ -185,7 +220,7 @@ export async function flushAlerts(
     let status: number | null = null;
     try {
       const r = await c.fetch(url, {
-        ...sinkRequest(kind, c.inst, a, c.secrets.alertToken),
+        ...sinkRequest(kind, c.inst, a, sinkToken(c)),
         signal: AbortSignal.timeout(10_000),
       });
       status = r.status;
@@ -278,7 +313,7 @@ export function alertAck(c: Ctx, code: unknown): { status: number; body: Record<
  * alert); failing: the newest send failed after the newest 2xx. `ochost doctor` FAILs on never-acked or failing.
  */
 export function sinkInfo(c: Ctx): Record<string, unknown> {
-  const url = c.secrets.alertUrl;
+  const url = sinkUrl(c);
   const t = c.db.metaJson<AlertTest | null>("alertTest", null);
   const a = c.db.metaJson<AlertAck | null>("alertAck", null);
   const ok = c.db.metaNum("alertSinkOkAt", 0) || null;
@@ -286,7 +321,8 @@ export function sinkInfo(c: Ctx): Record<string, unknown> {
   return {
     configured: !!url,
     kind: url ? sinkKind(url) : null,
-    token: !!c.secrets.alertToken,
+    token: !!sinkToken(c),
+    source: c.db.meta("alertSinkUrl") === null ? (url ? "secret" : "none") : url ? "console" : "off",
     lastTestAt: t?.at ?? null,
     ackedAt: a && t && a.at >= t.at ? a.at : null,
     lastOkAt: ok,
@@ -312,7 +348,7 @@ export const DEADMAN_RESEND_MS = 24 * 3_600_000;
  * the alert path is down). Without a sink, keep `alerts-none` open: nothing reaches the owner.
  */
 export function dailyHeartbeat(c: Ctx): "sent" | "no-sink" {
-  if (!c.secrets.alertUrl) {
+  if (!sinkUrl(c)) {
     alert(c, "alerts-none", "warn", "no alert sink: faults reach no one. Fix: ochost alerts setup");
     return "no-sink";
   }

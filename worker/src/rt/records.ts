@@ -32,6 +32,7 @@ export interface Boot {
   labels: Record<string, string>;
   planKind: string;
   markerId?: string | null;
+  adoptedEnv?: Record<string, string>;
   snapshotId?: string | null;
   /** L2: plan rootfs time; the checkpoint clock counts from it (null: from the boot). */
   rootfsAt?: number | null;

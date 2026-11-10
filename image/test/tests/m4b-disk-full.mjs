@@ -60,7 +60,7 @@ export default {
     t.measure("containerAt150s", st);
     t.check("ocsup still running at 100 % for 150 s", st.status === "running", st);
     const ex = b.ev("exit").at(-1);
-    t.check("no exit 70 gateway-crash-loop", !ex || ex.reason !== "gateway-crash-loop", ex ?? null);
+    t.check("no exit 70 gateway-crash-loop", ex?.reason !== "gateway-crash-loop", ex ?? null);
     // Recover.
     b.sh(["rm", "-f", `${FILL}.1`, `${FILL}.2`]);
     const n0 = b.ev("startupz").length;

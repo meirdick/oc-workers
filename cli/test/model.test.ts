@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SHIPPED_CATALOG } from "../src/catalog.ts";
 import { modelEntry, renderModelRoles, renderOpenclawDoc } from "../src/config.ts";
 import {
+  fetchCatalog,
   formatModels,
   listModels,
   modelRoles,
@@ -260,5 +261,72 @@ describe("toCatalog", () => {
     expect(c.models.map((x) => x.id)).toEqual(["@cf/openai/gpt-oss-120b"]);
     expect(c.models[0]?.efforts).toEqual(["low", "medium", "high"]);
     expect(c.date).toBe("2026-11-06");
+  });
+});
+
+describe("model list --refresh against the search endpoint's real shape", () => {
+  // Shape of GET /ai/models/search (v4 page pagination): each item has id, source, name, description, task,
+  // created_at, tags and `properties` with string values (price is an array); `result_info` is {count, page,
+  // per_page, total_count}, with no total_pages. The server answers 2 items a page whatever per_page asks.
+  const item = (name: string, properties: { property_id: string; value: unknown }[]) => ({
+    id: `00000000-0000-4000-8000-${String(name.length).padStart(12, "0")}`,
+    source: 1,
+    name,
+    description: "d",
+    task: { id: "t", name: "Text Generation", description: "d" },
+    created_at: "2026-10-17 12:00:00.000",
+    tags: [],
+    properties,
+  });
+  const p = (property_id: string, value: unknown) => ({ property_id, value });
+  const price = p("price", [
+    { unit: "per M input tokens", price: 0.5, currency: "USD" },
+    { unit: "per M output tokens", price: 1.5, currency: "USD" },
+  ]);
+  const PAGES = [
+    [
+      item("@cf/meta/llama-3.2-1b-instruct", [p("context_window", "60000")]),
+      item("@cf/x/new-tools", [p("context_window", "262144"), p("function_calling", "true"), price]),
+    ],
+    [
+      item("@cf/x/going-away", [p("function_calling", "true"), p("planned_deprecation_date", "2026-12-01")]),
+      item("@cf/x/beta-tools", [p("beta", "true"), p("function_calling", "true"), p("reasoning", "true")]),
+    ],
+    [item("@cf/x/last-tools", [p("function_calling", "true"), p("context_window", "8192")])],
+  ];
+
+  it("pages through by total_count, keeps function calling, drops a planned deprecation", async () => {
+    const ff = fakeFetch([
+      [
+        `GET https://api.cloudflare.com/client/v4/accounts/${ACCT}/ai/models/search`,
+        (c) => {
+          const page = Number(new URL(c.url).searchParams.get("page"));
+          return cf(PAGES[page - 1] ?? [], {
+            result_info: { count: PAGES[page - 1]?.length ?? 0, page, per_page: 2, total_count: 5 },
+          });
+        },
+      ],
+    ]);
+    const cat = await fetchCatalog({ acct: ACCT, token: TOKEN, date: "2026-11-06" }, { fetch: ff.fetch });
+    expect(cat.models.map((x) => x.id)).toEqual(["@cf/x/beta-tools", "@cf/x/last-tools", "@cf/x/new-tools"]);
+    expect(cat.models.find((x) => x.id === "@cf/x/new-tools")).toMatchObject({
+      contextWindow: 262144,
+      priceInPerM: 0.5,
+      priceOutPerM: 1.5,
+    });
+    expect(cat.models.find((x) => x.id === "@cf/x/beta-tools")?.supportsReasoning).toBe(true);
+    expect(ff.calls.map((c) => new URL(c.url).searchParams.get("page"))).toEqual(["1", "2", "3"]);
+  });
+
+  it("without result_info it stops at the first empty page", async () => {
+    const ff = fakeFetch([
+      [
+        `GET https://api.cloudflare.com/client/v4/accounts/${ACCT}/ai/models/search`,
+        (c) => cf(PAGES[Number(new URL(c.url).searchParams.get("page")) - 1] ?? []),
+      ],
+    ]);
+    const cat = await fetchCatalog({ acct: ACCT, token: TOKEN, date: "2026-11-06" }, { fetch: ff.fetch });
+    expect(cat.models).toHaveLength(3);
+    expect(ff.calls).toHaveLength(4);
   });
 });

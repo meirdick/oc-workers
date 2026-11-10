@@ -284,6 +284,23 @@ describe("marker and snapshots in plans", () => {
     expect(c.plan.sqlite).toMatchObject({ kind: "gen", gen: a.gen });
   });
 
+  it("M7 soak: a boot that does not use the valid marker (PITR) voids it; a later crash boot gets `gen`", async () => {
+    // Live oc-m7-soak, fault-mix gen 32: the PITR restart (planned stop → marker valid) booted gen 31 from
+    // pitr; the sigkill boot after it took the stale marker (planKind marker) and lost gen 31's writes.
+    const w = world();
+    w.install();
+    const a = await bootComplete(w);
+    const mid = await sleepCycle(w, a.gen, "snap-1", "stop-pitr");
+    w.advance(1000);
+    w.db.setMeta("l5", { opId: "l5-x", kind: "pitr", gen: a.gen, ts: w.clock.t - 500 });
+    const p = await w.api.beginBoot({ epoch: 1, mode: "prod", opId: "pitr-boot", reason: "user" });
+    expect(p.plan.sqlite).toMatchObject({ kind: "gen", gen: a.gen });
+    expect(w.db.one<{ state: string }>("SELECT state FROM markers WHERE id = ?", mid)?.state).toBe("void");
+    const c = await w.api.beginBoot({ epoch: 1, mode: "prod", opId: "after-kill", reason: "ladder" });
+    expect(c.plan.rootfs).toMatchObject({ snapshotId: "snap-1" });
+    expect(c.plan.sqlite.kind).not.toBe("marker");
+  });
+
   it("#65 late upload to marker.gen voids a valid marker", async () => {
     const w = world();
     w.install();

@@ -152,7 +152,7 @@ export interface BootPlan {
   wakeIgnore?: string[];
   /** docs/12: true → ocsup renders the OpenClaw sandbox keys (backend ochost at SandboxGate). */
   sandbox?: boolean;
-  /** OpenClaw sandbox mode: `non-main` (default: every session but the owner's main chat) or `all`. */
+  /** OpenClaw sandbox mode: `non-main` (default: every channel chat, Telegram included; not the Control UI chat) or `all`. */
   sandboxMode?: "non-main" | "all";
   /** Active Control UI origin (custom domain when Access is on, else workers.dev) → gateway.publicOrigin. */
   publicOrigin?: string;
@@ -195,6 +195,8 @@ export interface BeginBootResult {
   imageKey: string;
   snapshotId?: string;
   markerId?: string;
+  /** Channel credentials adopted from the UI (ctl/adopt.ts): gateway env NAME → value, for the start env. */
+  adoptedEnv?: Record<string, string>;
   error?: string;
 }
 

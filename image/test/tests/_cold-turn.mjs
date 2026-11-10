@@ -56,7 +56,7 @@ export default {
     let doc = {
       ...tgDoc({ dmPolicy: "open", allowFrom: ["*"] }),
       agents: { defaults: { model: { primary: "anthropic/claude-sonnet-4-6" } } },
-      models: { providers: { anthropic: { apiKey: "${OC_ANTHROPIC_KEY}" } } },
+      models: { providers: { anthropic: { apiKey: "$" + "{OC_ANTHROPIC_KEY}" } } },
     };
     if (process.env.OCM1_DOC) {
       const real = JSON.parse(fs.readFileSync(process.env.OCM1_DOC, "utf8"));

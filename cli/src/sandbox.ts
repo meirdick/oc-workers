@@ -3,9 +3,21 @@
 // status: GET /ops/sandbox (never wakes the sandbox). sleep: POST /ops/sandbox/sleep (back up, then stop).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { CliError, EXIT, type FlagSpec, fmtAgo, kv, type OpsCtx, opsClient, usage } from "./ops-lib.ts";
+import { type AccessHooks, realAccessHooks } from "./access.ts";
+import {
+  CliError,
+  EXIT,
+  type FlagSpec,
+  flagBool,
+  fmtAgo,
+  kv,
+  loadInstall,
+  type OpsCtx,
+  opsClient,
+  usage,
+} from "./ops-lib.ts";
 
-export const sandboxFlags: FlagSpec = { all: { type: "boolean" } };
+export const sandboxFlags: FlagSpec = { all: { type: "boolean" }, apply: { type: "boolean" } };
 
 /** Set the top-level `"sandbox": "on|all|off"` in the JSONC text, keeping comments; insert it after `{` when absent. */
 export function setSandboxKey(text: string, v: "on" | "all" | "off"): string {
@@ -13,7 +25,7 @@ export function setSandboxKey(text: string, v: "on" | "all" | "off"): string {
   if (re.test(text)) return text.replace(re, `$1"${v}"`);
   const i = text.indexOf("{");
   if (i < 0) throw new CliError("oc-host.jsonc is not an object", "run ochost config pull, or ochost init");
-  return `${text.slice(0, i + 1)}\n  "sandbox": "${v}",                       // off | on (every chat but your main one) | all: exec and file tools in a Cloudflare sandbox${text.slice(i + 1)}`;
+  return `${text.slice(0, i + 1)}\n  "sandbox": "${v}",                       // off | on (every channel chat, Telegram too; not the Control UI chat) | all: exec and file tools in a Cloudflare sandbox${text.slice(i + 1)}`;
 }
 
 interface Use {
@@ -22,10 +34,10 @@ interface Use {
   pct: number;
 }
 
-export async function sandbox(ctx: OpsCtx): Promise<number> {
+export async function sandbox(ctx: OpsCtx, hooks: AccessHooks = realAccessHooks): Promise<number> {
   const sub = ctx.args.positionals[0] ?? "status";
   if (sub === "on" || sub === "off")
-    return sandboxSet(ctx, sub === "on" && ctx.args.flags.all === true ? "all" : sub);
+    return sandboxSet(ctx, sub === "on" && ctx.args.flags.all === true ? "all" : sub, hooks);
   const ops = opsClient(ctx);
   if (sub === "sleep") {
     const r = (await ops.call("POST", "/ops/sandbox/sleep")).body as { slept?: boolean; why?: string };
@@ -57,7 +69,7 @@ export async function sandbox(ctx: OpsCtx): Promise<number> {
   return EXIT.ok;
 }
 
-function sandboxSet(ctx: OpsCtx, v: "on" | "all" | "off"): number {
+async function sandboxSet(ctx: OpsCtx, v: "on" | "all" | "off", hooks: AccessHooks): Promise<number> {
   const path = join(ctx.dir, "oc-host.jsonc");
   let text: string;
   try {
@@ -66,7 +78,32 @@ function sandboxSet(ctx: OpsCtx, v: "on" | "all" | "off"): number {
     throw new CliError(`no oc-host.jsonc in ${ctx.dir}`, "run ochost config pull, or ochost init");
   }
   writeFileSync(path, setSandboxKey(text, v));
-  const next = "ochost deploy, then ochost restart (the gateway renders its sandbox config at boot)";
+  if (flagBool(ctx.args, "apply")) {
+    if (!ctx.out.json) ctx.out.line(`oc-host.jsonc: sandbox = ${v}`);
+    try {
+      await hooks.deploy(ctx, loadInstall(ctx));
+    } catch (e) {
+      throw new CliError(
+        `deploy failed: ${(e as Error).message.slice(0, 120)}`,
+        "oc-host.jsonc is changed; fix the cause, then ochost deploy and ochost restart",
+      );
+    }
+    let restarted: string;
+    try {
+      restarted = await hooks.restart(ctx);
+    } catch (e) {
+      ctx.out.warn(
+        `restart failed (${(e as Error).message.slice(0, 80)}) — fix: ochost restart, so the gateway renders its sandbox config`,
+      );
+      restarted = "failed";
+    }
+    if (ctx.out.json)
+      ctx.out.result({ ok: true, sandbox: v, applied: true, deployed: true, restart: restarted });
+    else ctx.out.line(`deployed; restart: ${restarted}`);
+    return EXIT.ok;
+  }
+  const next =
+    "ochost deploy, then ochost restart (the gateway renders its sandbox config at boot), or run again with --apply";
   if (ctx.out.json) ctx.out.result({ ok: true, sandbox: v, applied: false, next });
   else {
     ctx.out.line(`oc-host.jsonc: sandbox = ${v}`);

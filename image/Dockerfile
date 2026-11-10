@@ -3,8 +3,7 @@
 #   Found with: docker buildx imagetools inspect ghcr.io/openclaw/openclaw:2026.10.9-slim
 #   linux/amd64 manifest: sha256:deab8686a863c1d2255a43bb4677f4907b9af45aff340c062834d16756fd4ff8
 # Tools stage is built FROM the same digest, so libjemalloc matches the base glibc (2.36, Debian 12).
-# The runtime stage has COPY only, no RUN. Plugins: slack, sms in /opt/oc-plugins (load paths); firecrawl (deprecated, kept one release for old configs), cf-capabilities in /app/dist/extensions (npm pack, tools stage)
-# and cf-capabilities (image/plugins).
+# The runtime stage has COPY only, no RUN. Plugins: slack, sms in /opt/oc-plugins (load paths); cf-capabilities and ochost-storage in /app/dist/extensions (image/plugins; COPY, tools stage). slack and sms are npm packed in the tools stage.
 # M1 adds: nft + its libs (owner-match rule, scope §1.1 [Z2.4], M0 T2 item 8), the dumpable shim
 # /opt/ocrt/nodump.so (T2 item 7; gcc only in the tools stage), ocio helpers. Litestream runs as
 # uid 1000 (binary root-owned, 0755).
@@ -23,13 +22,10 @@ ARG LITESTREAM_VERSION=0.5.17
 ARG LITESTREAM_SHA256=cfb371176d164437ae869f8351cfde49bd1804ae71c61923f75c9cba9c9c006d
 ARG NFTABLES_VERSION=1.0.6-2+deb12u2
 ARG GCC_VERSION=4:12.2.0-3
-# web_fetch plugin (docs/11 §7). Not in the base image. Baked here so no boot or Doctor needs npm;
-# bundled into /app/dist/extensions (no load path). Keep the version equal to the base release.
-# integrity: npm view @openclaw/firecrawl-plugin@2026.10.9 dist.integrity
-ARG FIRECRAWL_PLUGIN_VERSION=2026.10.9
-ARG FIRECRAWL_PLUGIN_INTEGRITY=sha512-b8vXHdgzi0rxm921RC2fjTcdXHEKu55vNTi26gI6/+7vSIHa7FGBv5lRDgRUF47Imn02Vq6BQ2D+INm/aZLD5A==
 # Channel plugins for the webhook channels (docs/14). Not in the base image: without them channels.slack and
-# channels.sms have no owner and /slack/events, /webhooks/sms answer 404 (M7 live F2). Loaded by path like firecrawl.
+# channels.sms have no owner and /slack/events, /webhooks/sms answer 404 (M7 live F2). Baked here so no boot or
+# Doctor needs npm; loaded by path. Keep the version equal to the base release.
+ARG OPENCLAW_PLUGIN_VERSION=2026.10.9
 ARG SLACK_PLUGIN_INTEGRITY=sha512-vKLT1uM1jrvHzZ3HPdGT1RMUm5DVdfjxBLfzRt8AxrQDTZq++G124I67+ck0rVrgj26ktga4uazD/Q46YQIkRQ==
 ARG SMS_PLUGIN_INTEGRITY=sha512-sJTu9VkYIi7NO4i2ENswMFmaHvNCxWMjGIJ52J08TPRhM585YWgHVuwCOCcmWvq+U3N885KCjkyDP/TjSSWFbw==
 RUN set -eux; \
@@ -52,19 +48,11 @@ RUN set -eux; \
   done; \
   ls /out/lib; \
   chown root:root /usr/local/bin/litestream; chmod 0755 /usr/local/bin/litestream
-# The package bundles its one dependency (typebox), so extracting the tarball is the whole install.
-RUN set -eux; mkdir -p /tmp/fc /opt/oc-bundled/firecrawl; cd /tmp/fc; \
-  npm pack --silent "@openclaw/firecrawl-plugin@${FIRECRAWL_PLUGIN_VERSION}" > name; \
-  got="sha512-$(openssl dgst -sha512 -binary "$(cat name)" | openssl base64 -A)"; \
-  [ "$got" = "${FIRECRAWL_PLUGIN_INTEGRITY}" ] || { echo "firecrawl plugin integrity $got" >&2; exit 1; }; \
-  tar -xzf "$(cat name)" --no-same-owner --strip-components=1 -C /opt/oc-bundled/firecrawl; \
-  test -f /opt/oc-bundled/firecrawl/openclaw.plugin.json; test -d /opt/oc-bundled/firecrawl/node_modules/typebox; \
-  rm -rf /tmp/fc
-# Slack and SMS bundle their dependencies too. Same version as the base release (FIRECRAWL_PLUGIN_VERSION).
+# Slack and SMS bundle their dependencies too. Same version as the base release (OPENCLAW_PLUGIN_VERSION).
 RUN set -eux; mkdir -p /tmp/ch; cd /tmp/ch; \
   for p in "slack ${SLACK_PLUGIN_INTEGRITY}" "sms ${SMS_PLUGIN_INTEGRITY}"; do \
     set -- $p; mkdir -p "/opt/oc-plugins/$1"; \
-    npm pack --silent "@openclaw/$1@${FIRECRAWL_PLUGIN_VERSION}" > name; \
+    npm pack --silent "@openclaw/$1@${OPENCLAW_PLUGIN_VERSION}" > name; \
     got="sha512-$(openssl dgst -sha512 -binary "$(cat name)" | openssl base64 -A)"; \
     [ "$got" = "$2" ] || { echo "$1 plugin integrity $got" >&2; exit 1; }; \
     tar -xzf "$(cat name)" --no-same-owner --strip-components=1 -C "/opt/oc-plugins/$1"; \
@@ -81,7 +69,7 @@ COPY probe.sh /opt/ocrt/probe.sh
 COPY native/nodump.c /tmp/nodump.c
 RUN gcc -shared -fPIC -O2 -Wall -Werror -o /opt/ocrt/nodump.so /tmp/nodump.c && \
   chmod 0755 /opt/ocrt/probe.sh && chmod -R a+rX,go-w /opt/ocrt /opt/oc-plugins /opt/oc-bundled && chown -R root:root /opt/oc-plugins /opt/oc-bundled
-# The firecrawl plugin imports `openclaw/plugin-sdk/*`. The CLI (`openclaw infer web fetch`) loads it with plain Node, which
+# The bundled plugins import `openclaw/plugin-sdk/*`. The CLI (`openclaw infer web fetch`) loads it with plain Node, which
 # needs /app/node_modules/openclaw; the base has none (M8 live: "Cannot find package 'openclaw'"). A symlink to /app.
 RUN mkdir -p /opt/oc-nm && ln -s /app /opt/oc-nm/openclaw
 # Label check last, so a new value does not rebuild the apt and gcc layers.
@@ -98,7 +86,7 @@ COPY --from=tools /out/sbin/nft /usr/sbin/nft
 COPY --from=tools /out/lib/ /usr/lib/x86_64-linux-gnu/
 COPY --from=tools /opt/ocrt /opt/ocrt
 COPY --from=tools /opt/oc-plugins /opt/oc-plugins
-# firecrawl, cf-capabilities and ochost-storage are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
+# cf-capabilities and ochost-storage are bundled extensions: a plugin loaded by path is untrusted and slows boot ~6 s (docs/13).
 COPY --from=tools /opt/oc-bundled/ /app/dist/extensions/
 COPY --from=tools /opt/oc-nm/ /app/node_modules/
 USER root

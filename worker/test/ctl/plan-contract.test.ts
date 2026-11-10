@@ -41,7 +41,7 @@ describe("sandbox flag (docs/12)", () => {
       };
       expect(doc.agents?.defaults?.sandbox !== undefined).toBe(want);
       if (want)
-        expect((doc.agents?.defaults?.sandbox as { mode?: string }).mode).toBe(
+        expect((doc.agents?.defaults?.sandbox as { mode?: string } | undefined)?.mode).toBe(
           (settings as { sandbox?: string }).sandbox === "all" ? "all" : "non-main",
         );
       // The gate reads the same setting through the ledger.

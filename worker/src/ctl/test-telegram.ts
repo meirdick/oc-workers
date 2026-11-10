@@ -4,7 +4,7 @@
 
 const PREFIX = "https://api.telegram.org/bot";
 
-export type TestRing = (src: string, kind: string, detail?: unknown) => void | Promise<unknown>;
+export type TestRing = (src: string, kind: string, detail?: unknown) => unknown;
 
 export function testTelegramFetch(
   real: typeof fetch,

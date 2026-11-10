@@ -5,7 +5,6 @@
 // overlay. A proposal = the file with every managed key set back to the selected version's value.
 // `auth.password` and `auth.token` never go into the file (Z2.5); CLI calls get the password by env.
 import crypto from "node:crypto";
-import { CAP_PROXY_URL } from "./cap-proxy.mjs";
 
 /** M4 F9: model of the default config document (the M3 e2e doc, checked by `openclaw config validate`). */
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
@@ -88,7 +87,6 @@ export function managedKeys(plan = {}, base = {}) {
     { path: "gateway.auth.trustedProxy.allowLoopback", value: false },
     // CLI bookkeeping (ochost.renderVersion, cli/src/render-config.ts): OpenClaw rejects unknown root keys.
     { path: "ochost", value: undefined },
-    ...webFetchKeys(base),
     ...capabilitiesKeys(base),
     ...(plan.sandbox === true ? sandboxKeys(base, plan.sandboxMode) : sandboxOffKeys(base)),
     ...originKeys(plan),
@@ -102,7 +100,7 @@ export function managedKeys(plan = {}, base = {}) {
 }
 
 /**
- * Cold-reply regression (docs/13): firecrawl and cf-web-search are bundled extensions of the image now
+ * Cold-reply regression (docs/13): cf-web-search was a bundled extension (firecrawl too, until 1.2)
  * (/app/dist/extensions). Loaded by path they were untrusted, which cost ~6 s of gateway boot. A config version from
  * before that still lists their old dirs in plugins.load.paths; the dirs are gone, so take them out at render time.
  */
@@ -117,25 +115,11 @@ function dropBundledPaths(m, base) {
   return m;
 }
 
-/** Where config versions written before the loopback forwarder point the firecrawl plugin. */
-const FIRECRAWL_URL_PATH = "plugins.entries.firecrawl.config.webFetch.baseUrl";
-const CAP_GATE_URL_RE = /^http:\/\/15\.0\.0\.3(:80)?\/?$/;
-
-/**
- * docs/11 §7: OpenClaw refuses the public address 15.0.0.3 as a firecrawl baseUrl. A version that still has it (init
- * before the forwarder, or a hand edit) gets ocsup's loopback forwarder (lib/cap-proxy.mjs) at render time; the owner's
- * version is not rewritten. Any other value (a real private firecrawl host) stays.
- */
-export function webFetchKeys(base = {}) {
-  const v = getPath(base, FIRECRAWL_URL_PATH);
-  return typeof v === "string" && CAP_GATE_URL_RE.test(v)
-    ? [{ path: FIRECRAWL_URL_PATH, value: CAP_PROXY_URL }]
-    : [];
-}
-
 /** docs/11 §11: the entry of the plugin cf-capabilities, and of its former id (cf-web-search, search only). */
 const CAPS_ENTRY = "plugins.entries.cf-capabilities";
 const OLD_SEARCH_ENTRY = "plugins.entries.cf-web-search";
+const FIRECRAWL_ENTRY = "plugins.entries.firecrawl";
+const FETCH_PROVIDER = "tools.web.fetch.provider";
 const isObj = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const mergeObj = (a, b) => {
   const out = { ...a };
@@ -147,15 +131,25 @@ const mergeObj = (a, b) => {
  * Compatibility for installs whose config still has plugins.entries.cf-web-search: the image has no plugin of that id
  * any more, so its entry becomes the entry of cf-capabilities (an entry already there wins) and the old one is removed.
  * The search provider id (cloudflare-web-search) did not change, so tools.web.search.provider keeps working.
+ *
+ * Same for the firecrawl package (gone from the image in 1.2): `tools.web.fetch.provider = firecrawl` renders as
+ * `cloudflare-web-fetch` (the cf-capabilities provider, served by the gate), and `plugins.entries.firecrawl` is removed.
+ * Another fetch provider the owner chose stays.
  */
 export function capabilitiesKeys(base = {}) {
+  const keys = [];
   const old = getPath(base, OLD_SEARCH_ENTRY);
-  if (old === undefined) return [];
-  const cur = getPath(base, CAPS_ENTRY);
-  return [
-    { path: CAPS_ENTRY, value: mergeObj(isObj(old) ? old : {}, isObj(cur) ? cur : {}) },
-    { path: OLD_SEARCH_ENTRY, value: undefined },
-  ];
+  if (old !== undefined) {
+    const cur = getPath(base, CAPS_ENTRY);
+    keys.push(
+      { path: CAPS_ENTRY, value: mergeObj(isObj(old) ? old : {}, isObj(cur) ? cur : {}) },
+      { path: OLD_SEARCH_ENTRY, value: undefined },
+    );
+  }
+  if (getPath(base, FETCH_PROVIDER) === "firecrawl")
+    keys.push({ path: FETCH_PROVIDER, value: "cloudflare-web-fetch" });
+  if (getPath(base, FIRECRAWL_ENTRY) !== undefined) keys.push({ path: FIRECRAWL_ENTRY, value: undefined });
+  return keys;
 }
 
 /**
@@ -168,12 +162,9 @@ export function deprecations(base = {}) {
     out.push(
       `${OLD_SEARCH_ENTRY} is now ${CAPS_ENTRY}; rendered from the old entry. Run: ochost config render`,
     );
-  if (
-    getPath(base, "tools.web.fetch.provider") === "firecrawl" ||
-    getPath(base, "plugins.entries.firecrawl") !== undefined
-  )
+  if (getPath(base, FETCH_PROVIDER) === "firecrawl" || getPath(base, FIRECRAWL_ENTRY) !== undefined)
     out.push(
-      "web_fetch through the firecrawl plugin is deprecated and the package goes in the next release; cf-capabilities replaces it. Run: ochost config render",
+      "the firecrawl package is not in the image any more; web_fetch is rendered as cloudflare-web-fetch (cf-capabilities). Run: ochost config render",
     );
   return out;
 }
@@ -206,11 +197,22 @@ const SANDBOX_BACKEND = "ochost";
  * sandboxed, so web search, web fetch, the browser, memory, media and the message tool vanished (demo, 2026-11-06).
  * These run in the gateway container and reach the gate, not the sandbox, so they are safe to allow.
  */
-export const SANDBOX_ALSO_ALLOW = ["group:web", "group:memory", "group:media", "group:messaging", "browser"];
+export const SANDBOX_ALSO_ALLOW = [
+  "group:web",
+  "group:memory",
+  "group:media",
+  "group:messaging",
+  "browser",
+  "file_store",
+];
+/** Earlier renders of the same list; `sandbox off` removes these too. */
+const OLD_ALSO_ALLOW = [["group:web", "group:memory", "group:media", "group:messaging", "browser"]];
 
 /**
  * docs/12 §5: plan.sandbox → sessions sandboxed on backend `ochost` (the bundled plugin), remote root /workspace in
- * the SandboxSession container. Mode `non-main` (default) keeps the owner's main chat on the gateway, as OpenClaw's
+ * the SandboxSession container. Mode `non-main` (default) keeps only the Control UI chat on the gateway: OpenClaw 2026.10.9 classifies a channel DM
+ * by a per-peer policy key (`resolveRuntimePolicySessionKey`), so a Telegram DM is sandboxed even in the main session.
+ * As OpenClaw's
  * own example does; `all` sandboxes every session. load.paths keeps the user's entries and adds ours.
  */
 export function sandboxKeys(base = {}, mode = "non-main") {
@@ -244,7 +246,10 @@ export function sandboxOffKeys(base = {}) {
   if (getPath(base, "plugins.entries.ochost-sandbox") !== undefined)
     out.push({ path: "plugins.entries.ochost-sandbox", value: undefined });
   const also = getPath(base, "tools.sandbox.tools.alsoAllow");
-  if (Array.isArray(also) && JSON.stringify(also) === JSON.stringify(SANDBOX_ALSO_ALLOW))
+  if (
+    Array.isArray(also) &&
+    [SANDBOX_ALSO_ALLOW, ...OLD_ALSO_ALLOW].some((l) => JSON.stringify(also) === JSON.stringify(l))
+  )
     out.push({ path: "tools.sandbox.tools.alsoAllow", value: undefined });
   const paths = getPath(base, "plugins.load.paths");
   if (Array.isArray(paths) && paths.includes(SANDBOX_PLUGIN_DIR))

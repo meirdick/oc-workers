@@ -8,6 +8,7 @@ import {
   overlayEntries,
   proposalFrom,
   render,
+  sandboxOffKeys,
   SANDBOX_PLUGIN_DIR,
   sensitiveChanges,
   setPath,
@@ -210,27 +211,36 @@ describe("doctor", () => {
   });
 });
 
-describe("web fetch address (docs/11 §7)", () => {
-  const P = "plugins.entries.firecrawl.config.webFetch.baseUrl";
-  const docWith = (u) => ({
-    doc: { plugins: { entries: { firecrawl: { config: { webFetch: { baseUrl: u } } } } } },
+describe("firecrawl package gone (1.2)", () => {
+  const P = "plugins.entries.firecrawl";
+  const old = (extra = {}) => ({
+    ver: 1,
+    doc: {
+      tools: { web: { fetch: { provider: "firecrawl" } } },
+      plugins: {
+        entries: { firecrawl: { enabled: true, config: { webFetch: { baseUrl: "http://15.0.0.3" } } } },
+      },
+      ...extra,
+    },
   });
 
-  it("a version that points firecrawl at 15.0.0.3 renders the loopback forwarder; the version stays as written", () => {
-    const v = docWith("http://15.0.0.3");
+  it("provider firecrawl renders as cloudflare-web-fetch and the firecrawl entry is gone; the version stays as written", () => {
+    const v = old();
     const r = render(v, { mode: "prod" });
-    assert.equal(getPath(r.doc, P), "http://127.0.0.1:18791");
-    assert.equal(getPath(v.doc, P), "http://15.0.0.3");
-    assert.equal(getPath(render(docWith("http://15.0.0.3/"), {}).doc, P), "http://127.0.0.1:18791");
+    assert.equal(getPath(r.doc, "tools.web.fetch.provider"), "cloudflare-web-fetch");
+    assert.equal(getPath(r.doc, P), undefined);
+    assert.equal(getPath(v.doc, "tools.web.fetch.provider"), "firecrawl");
+    assert.notEqual(getPath(v.doc, P), undefined);
   });
 
-  it("another baseUrl (a private firecrawl host) and a missing key stay as they are", () => {
-    assert.equal(getPath(render(docWith("http://10.1.2.3:3002"), {}).doc, P), "http://10.1.2.3:3002");
-    assert.equal(getPath(render({ doc: {} }, {}).doc, P), undefined);
+  it("another fetch provider stays; no firecrawl key, no change", () => {
+    const v = { ver: 1, doc: { tools: { web: { fetch: { provider: "my-own" } } } } };
+    assert.equal(getPath(render(v, {}).doc, "tools.web.fetch.provider"), "my-own");
+    assert.deepEqual(capabilitiesKeys({}), []);
   });
 
-  it("a file the gateway wrote with the loopback URL gives no proposal (managed key goes back to the version)", () => {
-    const v = { ...docWith("http://15.0.0.3"), ver: 1, schemaSha: "s" };
+  it("a file the gateway wrote with the rendered values gives no proposal", () => {
+    const v = { ...old(), schemaSha: "s" };
     const r = render(v, { mode: "prod" });
     assert.equal(proposalFrom(r.doc, r, v), null);
   });
@@ -282,7 +292,7 @@ describe("cf-capabilities entry (docs/11 §11)", () => {
     const d = deprecations(old);
     assert.equal(d.length, 2);
     assert.match(d[0], /cf-web-search is now plugins\.entries\.cf-capabilities/);
-    assert.match(d[1], /firecrawl plugin is deprecated/);
+    assert.match(d[1], /firecrawl package is not in the image/);
     assert.deepEqual(deprecations({ tools: { web: { fetch: { provider: "cloudflare-web-fetch" } } } }), []);
   });
 });
@@ -338,6 +348,7 @@ describe("sandbox keys (docs/12)", () => {
       "group:media",
       "group:messaging",
       "browser",
+      "file_store",
     ]);
     assert.deepEqual(getPath(r.doc, "plugins.load.paths"), ["/u/p1", SANDBOX_PLUGIN_DIR]);
     assert.deepEqual(getPath(r.doc, "plugins.entries.ochost-sandbox.config"), {
@@ -346,6 +357,14 @@ describe("sandbox keys (docs/12)", () => {
     });
     // Managed keys never become a proposal: a file equal to the render proposes nothing.
     assert.equal(proposalFrom(r.doc, r, v), null);
+    // sandbox off: an alsoAllow list from an earlier render goes too
+    const old = structuredClone(r.doc);
+    old.tools.sandbox.tools.alsoAllow = ["group:web", "group:memory", "group:media", "group:messaging", "browser"];
+    assert.ok(
+      sandboxOffKeys(old).some((k) => k.path === "tools.sandbox.tools.alsoAllow" && k.value === undefined),
+    );
+    old.tools.sandbox.tools.alsoAllow = ["mine"];
+    assert.ok(!sandboxOffKeys(old).some((k) => k.path === "tools.sandbox.tools.alsoAllow"));
   });
 
   it("sandbox off (absent or false) renders no sandbox key; a user's own sandbox block is kept", () => {

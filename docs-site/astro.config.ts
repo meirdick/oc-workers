@@ -16,7 +16,7 @@ const nimbusConfig = defineNimbusConfig({
   description: "Run your own OpenClaw on your own Cloudflare account. Install, operate and understand oc-host.",
   locale: "en",
   // CHANGE_ME: your repository — shown as the GitHub link in the header.
-  github: "https://github.com/meirdick/oc-host",
+  github: "https://github.com/meirdick/oc-workers",
   socialImageAlt: "oc-host documentation",
   // No landing page yet: the Worker redirects / to /docs/, so these docs publish no /.well-known files.
   agents: { discovery: false },

@@ -1032,35 +1032,59 @@ export async function selfTest(
 ): Promise<string> {
   const { ui } = ctx;
   const done: string[] = [];
-  const anon = makeOps(ctx, url, undefined);
-  const a = await anon.get("/");
-  if (a.status === 404) {
-    ui.step("self-test: anonymous GET / → 404 (no wake)", "selftest");
-    done.push("anonymous 404");
-  } else ui.warn(`self-test: anonymous GET / returned ${a.status}, expected 404 — fix: ochost doctor`);
-  // owner login link → session cookie → the Control UI page through the proxy
+  // Anonymous `/` serves the login form (docs/18): 200, no wake, nothing of the install.
+  const anon = await ctx.fetch(`${url}/`, {
+    headers: { accept: "text/html" },
+    redirect: "manual",
+    signal: AbortSignal.timeout(30_000),
+  });
+  const anonBody = await anon.text();
+  if (anon.status === 200 && /action="\/_ochost\/login"/.test(anonBody)) {
+    ui.step("self-test: anonymous GET / → login form (no wake)", "selftest");
+    done.push("anonymous sees the login form");
+  } else
+    ui.warn(
+      `self-test: anonymous GET / returned ${anon.status}${anon.status === 200 ? " without the login form" : ""} — fix: ochost doctor`,
+    );
+  // owner login link (docs/15): a GET shows the Continue page and spends nothing; the page's same-origin POST
+  // spends the code and sets the session cookie; then the Control UI page through the proxy.
   const code = await ops.post("/ops/auth/code");
   const link = typeof code.body.url === "string" ? code.body.url : undefined;
   if (link) {
     registerSecret(String(code.body.code ?? ""));
     try {
       const r1 = await ctx.fetch(link, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
-      const cookie = (r1.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-      const r2 = cookie
+      const confirm = await r1.text();
+      const r2 =
+        r1.status === 200 && /<button[^>]*>Continue<\/button>/.test(confirm)
+          ? await ctx.fetch(link, {
+              method: "POST",
+              headers: { origin: new URL(url).origin, "content-type": "application/x-www-form-urlencoded" },
+              body: "h=",
+              redirect: "manual",
+              signal: AbortSignal.timeout(30_000),
+            })
+          : undefined;
+      const cookie = (r2?.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+      const r3 = cookie
         ? await ctx.fetch(`${url}/`, { headers: { cookie }, signal: AbortSignal.timeout(60_000) })
         : undefined;
-      const body = r2 ? await r2.text() : "";
-      if (r2?.status === 200 && /OpenClaw/i.test(body)) {
-        ui.step("self-test: owner link → session → Control UI 200", "selftest");
+      const body = r3 ? await r3.text() : "";
+      if (r3?.status === 200 && /OpenClaw/i.test(body)) {
+        ui.step("self-test: owner link → Continue → session → Control UI 200", "selftest");
         done.push("UI opens");
       } else
         ui.warn(
-          `self-test: owner link gave ${r1.status}, UI ${r2?.status ?? "no cookie"} — fix: ochost open, then ochost doctor`,
+          `self-test: owner link page ${r1.status}, sign-in ${r2?.status ?? "not sent"}, ${cookie ? `UI ${r3?.status}` : "no cookie"} — fix: ochost open, then ochost doctor`,
         );
       // end this test session so it does not hold the install awake
       if (cookie)
         await ctx
-          .fetch(`${url}/_ochost/logout`, { method: "POST", headers: { cookie }, redirect: "manual" })
+          .fetch(`${url}/_ochost/logout`, {
+            method: "POST",
+            headers: { cookie, origin: new URL(url).origin },
+            redirect: "manual",
+          })
           .catch(() => {});
     } catch (e) {
       ui.warn(`self-test: owner link check failed (${(e as Error).message}) — fix: ochost open`);
@@ -1113,7 +1137,7 @@ export function initOptions(ctx: Ctx, existingName?: string): InitOptions {
   };
 }
 
-/** --sandbox on|all|off (docs/12; `on` = every session but the owner's main chat). */
+/** --sandbox on|all|off (docs/12; `on` = every channel chat, Telegram included; the Control UI chat is not sandboxed). */
 export function sandboxOf(v: string | undefined): "on" | "all" | "off" | undefined {
   if (v === undefined) return undefined;
   if (v === "on" || v === "all" || v === "off") return v;

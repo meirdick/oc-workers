@@ -15,6 +15,7 @@ import type {
 import type { GateLedger } from "../gates/ledger";
 import { filesProbe } from "../gates/replica";
 import { ADAPTERS, adapterByRoute } from "./adapters";
+import { opsChannels } from "./adopt";
 import {
   alert,
   alertAck,
@@ -25,11 +26,13 @@ import {
   listAlerts,
   outboxSize,
   resolveAlert,
+  setAlertSink,
   sinkInfo,
 } from "./alerts";
 import {
   archiveCanRun,
   archiveDirty,
+  archiveFreshForRestart,
   archiveSleepBlockers,
   archiveStallAt,
   archiveStallCheck,
@@ -82,6 +85,7 @@ import {
   pitrGen,
   secretHash,
 } from "./gens";
+import { importSleepBlockers, opsImport } from "./imports";
 import {
   blocksSleep,
   chatSummary,
@@ -92,6 +96,7 @@ import {
   inboxRows,
   markReplicated,
   nextWakeRetryAt,
+  noReplyCheck,
   noteOutbound,
   type PutIn,
   parseTelegram,
@@ -103,6 +108,7 @@ import {
 import { finishOp, getOp, openOp, openOps, pruneOps } from "./journal";
 import { autoApproveOwner, listSnapshots, opsPairing, type PairingDeps, telegramInternal } from "./owner-ops";
 import { ownerPanel, type Panel, type PanelDeps } from "./panel";
+import { adoptView } from "./panel-adopt";
 import {
   notePhase,
   progressDueAt,
@@ -693,6 +699,7 @@ export class ControlCore {
       const st = await this.rtStatus();
       if (st && (st.state === "asleep" || st.state === "asleep-unconfirmed")) await this.wake("maint");
     });
+    await step("no-reply", () => noReplyCheck(c, this.rtState() === "running"));
     await step("typing", () => typingTick(c));
     await step("progress", () => progressTick(c));
     await step("driver", () => this.kickDriver());
@@ -722,7 +729,7 @@ export class ControlCore {
   async archiveBeforeRestart(): Promise<"fresh" | "taken" | "failed" | "timeout" | "stalled" | "skipped"> {
     const c = this.c;
     if (this.rtState() !== "running") return "skipped";
-    if (!archiveDirty(c)) return "fresh";
+    if (!archiveDirty(c) || archiveFreshForRestart(c)) return "fresh";
     const req = requestArchive(c, "pre-upgrade");
     const end = Date.now() + RESTART_ARCHIVE_WAIT_MS;
     for (;;) {
@@ -860,6 +867,7 @@ export class ControlCore {
     // N8: a deploy since the last boot may make the next boot an archive-path boot; take an archive first.
     ensurePreBootArchive(c);
     blockers.push(...archiveSleepBlockers(c));
+    blockers.push(...importSleepBlockers(c));
     const ib = blocksSleep(c);
     const cost = costCheck(c);
     const k = counts(c);
@@ -961,7 +969,16 @@ export class ControlCore {
             String(upd),
             c.now(),
           );
-          if (r.wake) await this.wake("webhook");
+          // Soak senders are strangers to the gateway's wake list (N11), so once a Telegram channel exports
+          // one, their rows are held while asleep and never wake (live oc-m7-soak, 2026-11-10: s4 cycle held).
+          // The soak measures the wake path, not the filter: on this test-only port the row wakes like an
+          // allowed sender's.
+          let wake = r.wake;
+          if (!r.dup && r.state === "held") {
+            c.db.run("UPDATE inbox SET state = 'pending', quiet = 0 WHERE id = ? AND state = 'held'", r.id);
+            wake = true;
+          }
+          if (wake) await this.wake("webhook");
         }
         return r.status === 200 && !r.malformed
           ? { status: 200, id: r.id, dup: r.dup }
@@ -1134,9 +1151,9 @@ export class ControlCore {
   panelProbes?: Pick<PanelDeps, "hop" | "sandbox" | "env">;
 
   /** GET /ops/doctor and the owner panel: one JSON for the CLI and the page (ctl/panel.ts). Never wakes. */
-  ownerPanel(o: { origin: string | null; fresh?: boolean }): Promise<Panel> {
+  async ownerPanel(o: { origin: string | null; fresh?: boolean }): Promise<Panel> {
     const p = this.panelProbes;
-    return ownerPanel(
+    const panel = await ownerPanel(
       this.c,
       {
         status: () => this.status(),
@@ -1151,6 +1168,8 @@ export class ControlCore {
       },
       o,
     );
+    // Channel adoption (ctl/panel-adopt.ts): the Setup tab row.
+    return { ...panel, channels: { ...panel.channels, adopt: adoptView(this.c) } } as Panel;
   }
 
   /**
@@ -1395,6 +1414,8 @@ export class ControlCore {
       }
       case "pairing":
         return opsPairing(c, r, this.pairingDeps());
+      case "channels":
+        return opsChannels(c, r, this.pairingDeps());
       case "caps": {
         if (!this.ledger) return { status: 503, body: { error: "no-ledger" } };
         if (r.method === "GET")
@@ -1408,6 +1429,21 @@ export class ControlCore {
       }
       case "files":
         return this.opsFiles(r);
+      case "import":
+        return opsImport(c, r, () => this.wake("cli"));
+      case "sandbox-set": {
+        // POST /ops/sandbox/set {value}: the console's choice, kept over the deploy value (settings() in do.ts).
+        // The boot plan reads it, so a restart applies it; no deploy is needed.
+        const v = r.body.value;
+        if (r.method !== "POST" || (v !== "on" && v !== "all" && v !== "off"))
+          return { status: 400, body: { error: "value must be off, on or all" } };
+        c.db.setMeta("sandboxChoice", v);
+        ring(c, "settings", "sandbox", { value: v });
+        return {
+          status: 200,
+          body: { ok: true, sandbox: v, applied: c.db.meta("sandboxBooted") === v, next: "restart" },
+        };
+      }
       case "telegram-int":
         return telegramInternal(c, r);
       case "soak-plan":
@@ -1584,6 +1620,8 @@ export class ControlCore {
       }));
     }
     if (r.sub[0] === "ack" && r.method === "POST") return alertAck(c, r.body.code);
+    // The console saves the sink here: the Worker cannot set its own secret.
+    if (r.sub[0] === "sink" && r.method === "POST") return setAlertSink(c, r.body.url);
     if (r.sub[0] === "resolve" && r.method === "POST" && typeof r.body.class === "string") {
       resolveAlert(c, r.body.class);
       return { status: 200, body: { ok: true } };

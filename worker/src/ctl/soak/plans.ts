@@ -1,6 +1,6 @@
 // The plan catalog. A plan is a list of steps (steps.ts types) with params; `all` runs the catalog in order
 // (destructive plans last). Bounds: docs/01-plan.md §1 and worker/test/results/M4-STATUS.md §5.
-import { HOUR, MIN, SEC } from "./lib";
+import { HOUR, MIN, POISON_WATCH_MS, SEC } from "./lib";
 import type { StepSpec } from "./types";
 
 type P = Record<string, any>;
@@ -124,11 +124,15 @@ export const PLANS: PlanDef[] = [
         type: "kill",
         params: { upMs: up, items: { run: "fault-to-running" }, ...params },
       });
+      // Restart faults also measure the SQLite window: M7 soak gen 32 lost 30 s of rows here (stale marker)
+      // and no bound saw it.
+      const loss = { run: "fault-to-running", sql: "fault-mix-sqlite", rows: "fault-mix-rows-lost" };
       return [
         ...hold,
-        k("sigkill", { fault: "sigkill" }),
-        k("destroy", { fault: "destroy" }),
-        k("signal-15", { fault: "signal", sig: 15, settleMs: 3 * MIN }),
+        k("sigkill", { fault: "sigkill", items: loss }),
+        k("destroy", { fault: "destroy", items: loss }),
+        // SIGTERM = platform drain (plan §4.5): drain, final snapshot, exit, new gen.
+        k("signal-15", { fault: "signal", sig: 15, newGen: true, items: loss }),
         k("deploy-abort", { fault: "abort", ms: 2000, settleMs: 3 * MIN }),
         { id: "throttle", type: "throttle", params: { delayMs: 3000, holdMs: 2 * MIN } },
         { id: "disk-82", type: "disk-fill", params: { pct: 82 } },
@@ -178,6 +182,7 @@ export const PLANS: PlanDef[] = [
       const steps: StepSpec[] = [
         { id: "awake-off", type: "awake", params: { on: false } },
         { id: "up", type: "up" },
+        { id: "r2-start", type: "r2-mark" },
       ];
       for (let i = 0; i * per < total; i++)
         steps.push({
@@ -209,7 +214,8 @@ export const PLANS: PlanDef[] = [
     all: true,
     build: (p) => [
       ...hold,
-      { id: "poison", type: "poison", params: { watchMs: num(p, "watchMs", 45 * MIN) } },
+      // l5-pending needs 2 h in `slow` (timers l5PendingMs) after the ladder gets there; 45 min never could.
+      { id: "poison", type: "poison", params: { watchMs: num(p, "watchMs", POISON_WATCH_MS) } },
     ],
   },
   {

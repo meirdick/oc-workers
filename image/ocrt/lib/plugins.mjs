@@ -96,27 +96,3 @@ export function createPluginRetry(manifest, missing, deps) {
     },
   };
 }
-
-/**
- * Bundled extensions an older install may hold an npm record for (firecrawl was an npm install before the image baked
- * it; image/Dockerfile puts it in /app/dist/extensions). cf-capabilities (and its former id cf-web-search) were never npm installs, so no older record.
- */
-export const RECORDED_BUNDLED_DIRS = ["/app/dist/extensions/firecrawl"];
-
-/** argv that records a bundled plugin as a path install (a link, so nothing is copied or fetched). */
-export function pathInstallArgs(dir) {
-  return ["plugins", "install", "--link", "--force", "--accept-capabilities", "--no-enable", dir];
-}
-
-/**
- * Bundled plugin dirs whose install record is not a path install of that dir. An install from before the image baked
- * the plugin (npm, firecrawl) left an npm record in the state DB; with its npm dir gone, Doctor and `config validate`
- * say "settings cannot be checked until its data/settings upgrade finishes" and Doctor tries npm again.
- * dirs: [{dir, id}], records: {<id>: {source, installPath}}. A plugin with no record is fine.
- */
-export function staleInstalls(dirs, records) {
-  return dirs.filter(({ dir, id }) => {
-    const r = records?.[id];
-    return !!r && !(r.source === "path" && r.installPath === dir);
-  });
-}

@@ -7,6 +7,13 @@ export const FILL_DIR = "/home/node/soak-fill";
 export const CREDS_DIR = `${ST}/credentials/whatsapp/default`;
 
 /**
+ * pgrep/pkill -f pattern for a soak script that does not match the `sh -c` running the check. A plain
+ * `pgrep -f soak-churn.mjs` matched its own shell, so churn always looked alive and never started; a plain
+ * `pkill -f` killed its own shell before the next command (M7 soak).
+ */
+export const procPat = (name: string) => `'[${name.slice(0, 1)}]${name.slice(1)}'`;
+
+/**
  * Writer: managed SQLite 20 rows/s (table soak_w, the row counter), non-managed SQLite 1 row/s (journal DELETE,
  * the shadow class) and a workspace state file every 2 s (rootfs bulk). argv: run, lifeMs.
  */
@@ -87,8 +94,9 @@ const db = new DatabaseSync(${JSON.stringify(STATE_DB)});
 db.exec("PRAGMA busy_timeout=5000");
 db.exec("CREATE TABLE IF NOT EXISTS soak_pitr(id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, phase TEXT)");
 const ins = db.prepare("INSERT INTO soak_pitr(ts, phase) VALUES (?, ?)");
-const phase = process.argv[1] || "a";
-const n = Number(process.argv[2] || 100);
+// argv[1] is the script path; the args start at argv[2] (M7 soak: argv[1] gave n = NaN, 0 rows written).
+const phase = process.argv[2] || "a";
+const n = Number(process.argv[3] || 100);
 for (let i = 0; i < n; i++) { ins.run(Date.now(), phase); await new Promise((r) => setTimeout(r, 50)); }
 const r = db.prepare("SELECT count(*) n, max(ts) m FROM soak_pitr").get();
 console.log(JSON.stringify({ n: Number(r.n), max: Number(r.m) }));

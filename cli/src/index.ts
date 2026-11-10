@@ -65,7 +65,7 @@ export const COMMANDS: Record<string, Command> = {
       "--fake-telegram          test install: OC_TEST=1, Telegram is a fake in the Worker (no real bot); --no-fake-telegram goes back",
       "--telegram-owner <id>    your Telegram user id: your first DM to the bot is approved, no pairing code",
       "--telegram-token-file f  connect Telegram right after the install (file with the bot token)",
-      "--sandbox on|all|off     tool sandbox from the first deploy: on = every session but your main chat",
+      "--sandbox on|all|off     tool sandbox from the first deploy: on = every channel chat, including your Telegram DM; the Control UI chat stays out",
       "--alerts ntfy|webhook    set up alerts after the install; webhook needs --alerts-url https://…",
       "--access-domain <host>   put the console behind Cloudflare Access on this hostname",
       "--access-token-file f    token with Access Apps+Policies edit (else the wrangler login must have it)",

@@ -172,6 +172,18 @@ function panelOf(fx: Fx, now: number): Panel {
       ],
       nextMaintenanceAt: now + 15 * H,
     },
+    toggles: {
+      sandbox: { value: fx === "running" ? "on" : "off", pending: fx === "backoff" },
+      alerts: { source: "secret", kind: "ntfy" },
+      model: {
+        primary: "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+        choices: [
+          "@cf/deepseek-ai/deepseek-v4.1-flash-1017",
+          "@cf/moonshotai/kimi-k3",
+          "@cf/zai-org/glm-5.3-flash",
+        ],
+      },
+    },
     files: { prefix: "f/oc-meir/", used: 312e6, limit: 5e9 },
     channels: {
       wake: { userIds: ["51234987"], groupChatIds: [] },

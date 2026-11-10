@@ -103,8 +103,15 @@ export const ROWS: readonly Row[] = Object.freeze([
   r(52, "asleep-unconfirmed", "wake", "", "flag; start after row 49 or lastHb + 200 s", "*"),
   r(53, "stopping", "op:stop-done", "settled", "", "stopped"),
   r(54, "stopping", "op:stop-done", "destroy timeout", "stop unconfirmed", "stopped"),
-  r(55, "stopped", "start", "", "desired=running; start op user", "starting"),
-  r(56, "stopped", "ensure|wake", "", "none", "stopped"),
+  r(
+    55,
+    "stopped",
+    "start|tick|ensure|wake",
+    "owner start, or open start op / desired=running",
+    "desired=running; start op user",
+    "starting",
+  ),
+  r(56, "stopped", "ensure|wake", "desired=stopped, no start op", "none", "stopped"),
   r(57, "any-but-retired", "retire", "", "pre-empt; destroy; settle", "retired"),
   r(58, "any", "constructor", "epoch retiring/retired and running", "destroy(retired)", "retired"),
 ]);

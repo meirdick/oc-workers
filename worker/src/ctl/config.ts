@@ -2,6 +2,7 @@
 import { sha256Hex } from "../core/ids";
 import { CAPS, pruneConfigRows } from "../gates/ledger";
 import { hookPath } from "../ingress/telegram";
+import { heldReason } from "./adopt-spec";
 import { alert } from "./alerts";
 import { type Ctx, ring } from "./ctx";
 import { heartbeatDefault } from "./schedule";
@@ -98,8 +99,9 @@ export function getConfig(c: Ctx, ver: number): ConfigRow | null {
   return c.db.one<ConfigRow>("SELECT * FROM config WHERE ver = ?", ver);
 }
 
+/** The newest version an owner op may build on. A `held` candidate (a UI token waiting for adoption) is not one. */
 export function newestConfig(c: Ctx): ConfigRow | null {
-  return c.db.one<ConfigRow>("SELECT * FROM config ORDER BY ver DESC LIMIT 1");
+  return c.db.one<ConfigRow>("SELECT * FROM config WHERE status <> 'held' ORDER BY ver DESC LIMIT 1");
 }
 
 /**
@@ -148,12 +150,34 @@ export async function configPropose(
   const sha = p.sha ?? (await sha256Hex(text));
   const newest = newestConfig(c);
   if (newest && newest.sha === sha) return { status: 200, body: { ok: true, ver: newest.ver, same: true } };
+  // Channel adoption: a gateway (UI) candidate with a channel credential in clear is held, not offered to a boot.
+  // The owner adopts it (POST /ops/channels/adopt) or removes the token; the gateway keeps the last good config.
+  const reason = p.source === "owner" ? null : heldReason(p.doc);
+  if (reason) {
+    const held = c.db.one<{ ver: number }>("SELECT ver FROM config WHERE status = 'held' AND sha = ?", sha);
+    if (held) return { status: 200, body: { ok: true, ver: held.ver, held: true, same: true, reason } };
+    const hv = (c.db.one<{ m: number | null }>("SELECT MAX(ver) AS m FROM config")?.m ?? 0) + 1;
+    c.db.run(
+      `INSERT INTO config (ver, schema_sha, status, source, sha, dark_origin, base_ver, doc, created_at)
+       VALUES (?, ?, 'held', ?, ?, 0, ?, ?, ?)`,
+      hv,
+      p.schemaSha ?? null,
+      p.source,
+      sha,
+      p.baseVer ?? newest?.ver ?? null,
+      text,
+      c.now(),
+    );
+    c.db.setMeta("configChangedAt", c.now());
+    ring(c, "config", "held", { ver: hv, source: p.source, reason });
+    return { status: 200, body: { ok: true, ver: hv, held: true, reason } };
+  }
   const base = p.baseVer !== undefined ? getConfig(c, p.baseVer) : newest;
   const baseDoc = base ? pj<unknown>(base.doc, {}) : {};
   const changed = SENSITIVE_PATHS.filter(
     (k) => JSON.stringify(get(baseDoc, k)) !== JSON.stringify(get(p.doc, k)),
   );
-  const ver = (newest?.ver ?? 0) + 1;
+  const ver = (c.db.one<{ m: number | null }>("SELECT MAX(ver) AS m FROM config")?.m ?? 0) + 1;
   c.db.run(
     `INSERT INTO config (ver, schema_sha, status, source, sha, dark_origin, base_ver, doc, created_at)
      VALUES (?, ?, 'candidate', ?, ?, ?, ?, ?, ?)`,

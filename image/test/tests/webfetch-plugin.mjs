@@ -25,7 +25,7 @@ const CFG = {
     web: { fetch: { provider: "cloudflare-web-fetch" }, search: { provider: "cloudflare-web-search" } },
   },
   plugins: {
-    // Production: firecrawl baseUrl is ocsup's loopback forwarder (127.0.0.1:18791 -> 15.0.0.3:80, cli FETCH_URL), since
+    // Production: the cf-capabilities fetch baseUrl is ocsup's loopback forwarder (127.0.0.1:18791 -> 15.0.0.3:80, cli FETCH_URL), since
     // OpenClaw refuses the public-looking 15.0.0.3. Here the real forwarder (lib/cap-proxy.mjs) fronts the mock gate.
     entries: {
       "cf-capabilities": {
@@ -59,19 +59,19 @@ echo "@@mock"; cat /tmp/mock.out
 export default {
   name: "webfetch-plugin",
   source: "docs/11 §7 (web_fetch through the CapGate); M6 capgate live F2",
-  rule: "Image ships cf-capabilities (and firecrawl, deprecated) as root-owned bundled extensions (no load path); offline: config validate has no 'plugin not installed', Doctor never mentions npm or EAI_AGAIN, plugins list shows cf-capabilities enabled, and a mock-model turn runs web_fetch http://example.com so the mock gate gets POST /v2/scrape through ocsup's loopback forwarder (baseUrl http://127.0.0.1:18791) and the model sees its text; another runs web_search and the gate gets POST /search (plugin cf-capabilities, shown as a provider); `openclaw cf-capabilities status` reads GET /browser/status.",
+  rule: "Image ships cf-capabilities as a root-owned bundled extension (no load path) and no firecrawl package; offline: config validate has no 'plugin not installed', Doctor never mentions npm or EAI_AGAIN, plugins list shows cf-capabilities enabled, and a mock-model turn runs web_fetch http://example.com so the mock gate gets POST /v2/scrape through ocsup's loopback forwarder (baseUrl http://127.0.0.1:18791) and the model sees its text; another runs web_search and the gate gets POST /search (plugin cf-capabilities, shown as a provider); `openclaw cf-capabilities status` reads GET /browser/status.",
   timeoutMs: 600_000,
   async run(t) {
     const sh = (c) => dk(["run", "--rm", "--entrypoint", "sh", t.image, "-c", c]);
     const own = sh(
-      "stat -c '%U' /app/dist/extensions/firecrawl /app/dist/extensions/firecrawl/dist/index.js /app/dist/extensions/cf-capabilities /app/dist/extensions/cf-capabilities/index.js",
+      "stat -c '%U' /app/dist/extensions/cf-capabilities /app/dist/extensions/cf-capabilities/index.js",
     ).out;
     t.check(
       "plugin dir root-owned",
       own.split("\n").every((x) => x === "root"),
       own,
     );
-    t.check("typebox bundled", sh("test -d /app/dist/extensions/firecrawl/node_modules/typebox").code === 0);
+    t.check("no firecrawl package", sh("test ! -e /app/dist/extensions/firecrawl").code === 0);
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-"));
     fs.writeFileSync(path.join(dir, "openclaw.json"), JSON.stringify(CFG));
@@ -130,7 +130,7 @@ export default {
       !/EAI_AGAIN|npm (error|view)|openclaw plugins install/.test(doc),
       doc.slice(-400),
     );
-    const log = JSON.parse((/^LOG (.*)$/m.exec(part("mock")) || [, "[]"])[1]);
+    const log = JSON.parse((/^LOG (.*)$/m.exec(part("mock")) || [undefined, "[]"])[1]);
     const gate = log.find((x) => x.gate === "/v2/scrape");
     t.check("agent called web_fetch → gate got POST /v2/scrape", gate?.gate === "/v2/scrape", log);
     t.check(

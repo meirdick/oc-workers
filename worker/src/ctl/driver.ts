@@ -16,6 +16,8 @@ interface Queue {
   /** M7 F3: consecutive 404/501 answers for the head row (`nfRow`). */
   nfRow?: string | null;
   nfN?: number;
+  /** M7 soak: time of the first 404/501 in the current run for the head row. */
+  nfSince?: number | null;
 }
 
 /**
@@ -26,6 +28,16 @@ interface Queue {
  * secrets set) answers 404 while its route is down; the row waits and goes again after the restart.
  */
 export const BLOCKED_AFTER_MISSES = 3;
+
+/**
+ * M7 soak: a row the gateway keeps answering 404/501 goes `dead` (`http-404`, alert inbox-dead), so it no longer
+ * holds the install awake (sleep rule 5 counts pending rows) until inbox.deadHours (23 h). Both must hold: at
+ * least DEAD_AFTER_MISSES misses in a row for that row, and the first of them at least DEAD_MISS_MIN_MS ago. The
+ * time floor keeps S0.3: a gateway restart (route down for about 1-2 min) answers 404 and must not kill rows.
+ * The live soak had 61 such rows hold every sleep for 23 h (about 1.7 USD a day on 2/6/20).
+ */
+export const DEAD_AFTER_MISSES = 5;
+export const DEAD_MISS_MIN_MS = 5 * 60_000;
 
 /**
  * M7 F2: attempts were counted only while `ready`, so a row the gateway refused stayed at 0. Any answer but the
@@ -330,11 +342,14 @@ export async function pump(c: Ctx, maxRows = 200): Promise<PumpResult> {
     }
     const miss = status === 404 || status === 501;
     if (miss) {
-      q.nfN = q.nfRow === row.id ? (q.nfN ?? 0) + 1 : 1;
+      const same = q.nfRow === row.id;
+      q.nfN = same ? (q.nfN ?? 0) + 1 : 1;
+      q.nfSince = same ? (q.nfSince ?? at) : at;
       q.nfRow = row.id;
     } else {
       q.nfRow = null;
       q.nfN = 0;
+      q.nfSince = null;
     }
     c.db.tx(() => {
       if (timedOut && (q.toN ?? 0) >= DEAD_AFTER_TIMEOUTS) {
@@ -377,6 +392,24 @@ export async function pump(c: Ctx, maxRows = 200): Promise<PumpResult> {
         q.idx = 0;
         q.retryAt = 0;
         alert(c, "inbox-dead", "high", `update ${row.platform_key} dead: HTTP ${status}`);
+      } else if (miss && (q.nfN ?? 0) >= DEAD_AFTER_MISSES && at - (q.nfSince ?? at) >= DEAD_MISS_MIN_MS) {
+        c.db.run(
+          "UPDATE inbox SET state = 'dead', dead_reason = ? WHERE id = ? AND state = 'pending'",
+          `http-${status}`,
+          row.id,
+        );
+        out.dead++;
+        q.idx = 0;
+        q.retryAt = 0;
+        q.nfRow = null;
+        q.nfN = 0;
+        q.nfSince = null;
+        alert(
+          c,
+          "inbox-dead",
+          "high",
+          `update ${row.platform_key} dead: gateway answered ${status} on ${row.route} for ${Math.round(DEAD_MISS_MIN_MS / 60_000)} min (route missing)`,
+        );
       } else if (miss && (q.nfN ?? 0) >= BLOCKED_AFTER_MISSES) {
         if (q.nfN === BLOCKED_AFTER_MISSES)
           alert(c, "inbox-blocked", "high", blockedText(row, status, q.nfN));
@@ -407,6 +440,6 @@ function blockedText(row: InboxRow, status: number, n: number): string {
   const ch = a ? a.channel : "telegram";
   return (
     `gateway answered ${status} on ${row.route}${n > 1 ? ` ${n} times` : ""} (route missing: channel plugin not loaded or config drift). ` +
-    `Rows wait. Fix the channel, or drop them: ochost inbox drop --all --channel ${ch}`
+    `Rows wait ${Math.round(DEAD_MISS_MIN_MS / 60_000)} min, then go dead. Fix the channel, or drop them: ochost inbox drop --all --channel ${ch}`
   );
 }

@@ -4,11 +4,17 @@
 import { describe, expect, it } from "vitest";
 import { handleAdapter } from "../../src/ctl/adapter-webhook";
 import { adapterByPath } from "../../src/ctl/adapters";
-import { BLOCKED_AFTER_MISSES, countsAsAttempt, driverState } from "../../src/ctl/driver";
-import { routeOfChannel } from "../../src/ctl/inbox";
+import {
+  BLOCKED_AFTER_MISSES,
+  countsAsAttempt,
+  DEAD_AFTER_MISSES,
+  DEAD_MISS_MIN_MS,
+  driverState,
+} from "../../src/ctl/driver";
+import { blocksSleep, putWakeAllow, routeOfChannel } from "../../src/ctl/inbox";
 import { handleOps } from "../../src/ops";
 import { FakeGateway, FakeSlack, FakeTwilio } from "../harness/platforms";
-import { type World, world } from "./world";
+import { tg, type World, world } from "./world";
 
 /** Running, driver started (`/startupz`), not ingress-ready: the state of every live boot today. */
 async function bootNotReady(w: World) {
@@ -199,6 +205,68 @@ describe("F2/F3: attempts and inbox-blocked before the first accept", () => {
     w.rt(1).deliverFn = () => ({ status: 200, durable: true });
     await drive(w, 1);
     expect(rows(w)[0]?.state).toBe("accepted");
+  });
+
+  it("M7 soak: a row answered 404 for N misses and ≥ 5 min goes dead and stops holding the sleep", async () => {
+    const w = world();
+    await bootNotReady(w);
+    const p = new FakeTwilio();
+    w.ctx.secrets.platform = { OC_TWILIO_AUTH_TOKEN: p.authToken };
+    w.rt(1).deliverFn = () => ({ status: 404, durable: false });
+    await hook(w, { OC_TWILIO_AUTH_TOKEN: p.authToken })(p.send(p.sms("SM2", "+15551230000", "hi")));
+    await w.api.kickDriver();
+    // N misses in a few seconds (a gateway restart looks like this): the row waits.
+    await drive(w, DEAD_AFTER_MISSES + 2);
+    expect(rows(w)[0]?.state).toBe("pending");
+    expect(blocksSleep(w.ctx).pending).toBe(1);
+    // Past the time floor, the next miss makes it dead.
+    w.advance(DEAD_MISS_MIN_MS);
+    await drive(w, 1);
+    expect(rows(w)[0]?.state).toBe("dead");
+    expect(w.db.one<{ dead_reason: string }>("SELECT dead_reason FROM inbox LIMIT 1")?.dead_reason).toBe(
+      "http-404",
+    );
+    expect(alertRow(w, "inbox-dead")?.last_detail).toContain("404 on /webhooks/sms");
+    expect(blocksSleep(w.ctx).pending).toBe(0);
+  });
+
+  it("soak inject: a stranger's update wakes an asleep test install; a real stranger stays held", async () => {
+    // Live oc-m7-soak 2026-11-10: with the Telegram channel's wake list exported, the s4 cycle update was held.
+    const w = world();
+    w.install();
+    w.api.noteRtState(1, "asleep");
+    putWakeAllow(w.ctx, { userIds: ["5"], groupChatIds: [] });
+    const real = w.api.inboxPut({ body: tg(901, 999), headers: { host: "x" } });
+    expect(real).toMatchObject({ state: "held", wake: false });
+    const r = await w.api.core.soakPort().inject(777, "soak s4", { plan: "s4-500", step: "cycles-000" });
+    expect(r.status).toBe(200);
+    expect(
+      w.db.one<{ state: string; quiet: number }>("SELECT state, quiet FROM inbox WHERE id = ?", r.id ?? ""),
+    ).toEqual({
+      state: "pending",
+      quiet: 0,
+    });
+  });
+
+  it("a 404 run broken by an accept never kills a later row early", async () => {
+    const w = world();
+    await bootNotReady(w);
+    const p = new FakeTwilio();
+    w.ctx.secrets.platform = { OC_TWILIO_AUTH_TOKEN: p.authToken };
+    const h = hook(w, { OC_TWILIO_AUTH_TOKEN: p.authToken });
+    w.rt(1).deliverFn = () => ({ status: 404, durable: false });
+    await h(p.send(p.sms("SM3", "+15551230000", "a")));
+    await w.api.kickDriver();
+    await drive(w, DEAD_AFTER_MISSES);
+    w.advance(DEAD_MISS_MIN_MS - 60_000);
+    // The route mounts: SM3 is accepted; a new row starts its own run.
+    w.rt(1).deliverFn = () => ({ status: 200, durable: true });
+    await drive(w, 1);
+    expect(rows(w)[0]?.state).toBe("accepted");
+    w.rt(1).deliverFn = () => ({ status: 404, durable: false });
+    await h(p.send(p.sms("SM4", "+15551230000", "b")));
+    await drive(w, DEAD_AFTER_MISSES + 1);
+    expect(rows(w).find((r) => r.state === "dead")).toBeUndefined();
   });
 
   it("501 counts the same way; a 503 between misses resets the run", async () => {

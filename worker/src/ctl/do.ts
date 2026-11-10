@@ -11,10 +11,11 @@ import { type AiBinding, chat } from "../gates/ai";
 import { accessOrigin } from "../ingress/gateway";
 import { sbxName } from "../sbx/core";
 import { platformSecrets } from "./adapters";
+import { adoptedEnv } from "./adopt";
 import { ControlApi } from "./api";
 import { type Ctx, DEFAULT_SETTINGS, mergeSettings, normalizeSettings, ring, type Settings } from "./ctx";
 import { type ArchiveBucket, type DrillArgs, type DrillReport, drillRestoreInto } from "./drill";
-import { latestSettings, withoutTunables } from "./settings";
+import { latestSettings, withoutTunables, withSandboxChoice } from "./settings";
 import type { RawBucket } from "./soak/lib";
 import { resumeSoak } from "./soak/runner";
 import { Db } from "./sql";
@@ -47,10 +48,13 @@ export class Control extends DurableObject<Env> {
     const settings = (): Settings => {
       const row = latestSettings(db);
       const legacy = db.meta("settings");
-      const key = `${row?.ver ?? 0}|${row?.created_at ?? 0}|${legacy ?? ""}`;
+      const choice = db.meta("sandboxChoice");
+      const key = `${row?.ver ?? 0}|${row?.created_at ?? 0}|${legacy ?? ""}|${choice ?? ""}`;
       if (cached?.key !== key) {
         const doc = row ? safeJson(row.doc) : null;
-        cached = { key, s: mergeSettings(mergeSettings(base, doc), safeJson(legacy ?? undefined)) };
+        const merged = mergeSettings(mergeSettings(base, doc), safeJson(legacy ?? undefined));
+        // The owner's console choice (POST /ops/sandbox/set) wins over the deploy value.
+        cached = { key, s: withSandboxChoice(merged, choice) };
       }
       return cached.s;
     };
@@ -453,6 +457,10 @@ export class Control extends DurableObject<Env> {
   }
   webhookPrevOk() {
     return this.api.webhookPrevOk();
+  }
+  /** Credentials adopted from the UI (ctl/adopt.ts), for the hook route's signature check. */
+  adoptedSecrets(): Record<string, string> {
+    return adoptedEnv(this.api.c);
   }
   noteRtState(epoch: number, state: Parameters<A["noteRtState"]>[1]) {
     this.api.noteRtState(epoch, state);

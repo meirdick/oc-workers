@@ -41,11 +41,14 @@ Each tab is its own page. The tab names are links: Overview is `/`, Alerts and l
 |---|---|
 | Overview | Cost: this month at the last 24 hours' pace, the always-on month, percent saved, and the cost guard. An alerts summary that links to Alerts and log. Budgets: each daily cap with a bar, and **Raise** when one is at 80 percent. Connected checks: model (provider, model id, gateway, last test time), web search, browser and web fetch, media, each channel (transport, webhook, last platform error, whether it blocks sleep), the install (CLI, image, OpenClaw, upgrade available), config render, wake list and held inbox. Backups: newest archive age and verified flag, snapshots and chain length, replica lag, next maintenance. |
 | Alerts and log | Open alerts first: severity badge, detail, fix line, and **Acknowledge** (closes the alert). For `doctor-failed`, it also shows the tail of the Doctor output. Then the log of wakes, sleeps, restarts and archives of the last 30 days, newest first, with the time and how long each took. Filter the log by kind with the links above the table. Then closed alerts. |
-| Setup | Things to connect and set up, one row each with its state and one button or the command to run: Telegram, pairing requests with **Approve**, other channels, the alert channel, Access, the sandbox, the model, an upgrade or config render when one is due, and a daily limit near its cap with **Raise**. It also has **Archive now** and **Restore drill**. |
+| Setup | Things to connect and set up, one row each with its state and one button, one control, or the command to run: Telegram, pairing requests with **Approve**, other channels, the alert channel (a URL field with **Save**, **Test** and **Off**), Access (a command: it needs a Cloudflare API token on your computer), the sandbox (a list of off, on and all, with **Apply**), the model (a list of the models in the config, with **Apply**), an upgrade or config render when one is due, and a daily limit near its cap with **Raise**. It also has **Archive now** and **Restore drill**. |
 
 Notes:
 
 - **Approve** does the same as `ochost pairing approve telegram <code>`. **Raise** doubles a limit, up to 1,000,000,000. A second click on the same page does not double it again.
+- The three controls run the same `/ops` actions as the CLI. **Apply** on the sandbox saves the choice in the Control DO and restarts the install. It does not need a deploy. The row says "Applies at the next start" until the next boot. **Apply** on the model posts a new config version (source `owner`) with `agents.defaults.model.primary` changed, then restarts. If the install sleeps, it does not wake: the change applies at the next start.
+- **Save** on the alert channel stores the URL in the Control DO. The Worker cannot set its own secret, so the sender uses this URL first and the `ALERT_URL` secret second. **Off** stops all alerts, also when the secret is set. **Test** sends the same test alert as `ochost alerts test` and shows its code. Run `ochost alerts ack <code>` to confirm it. `ochost alerts setup` still works: it sets the secret, which applies when no URL is saved in the console.
+- A choice made in the console is kept over the value in `oc-host.jsonc`. After you use the sandbox control, `ochost sandbox on|off` and a deploy do not change the sandbox. Use the console.
 - A status is a dot and a word: OK, Warning or Failing. A warning or failing row has the fix line that `ochost doctor` prints.
 - After a button, the page returns to the tab that holds the button.
 - The page follows the light or dark setting of your system.
@@ -112,6 +115,17 @@ The Worker acknowledges the Telegram webhook at the edge while the container sle
 ## What keeps it awake
 
 A channel that needs a socket keeps the install always-on. The sleep check reads the live channel status. A running channel account that does not use the managed webhook blocks sleep. Other blockers are a running cron job, an open ingress event, a pending delivery and an event-driven job. `ochost status` names the blocker. See [Channels](/channels/) and [Cost](/cost/).
+
+## Design choices, and the failures they prevent
+
+oc-workers started from a reading of the earlier Cloudflare template for OpenClaw, [cloudflare/moltworker](https://github.com/cloudflare/moltworker), and the failures its users reported. Four of those reports shaped the design. The table says what we do instead and how it was tested.
+
+| Reported failure | Cause in the template | oc-workers | Tested |
+|---|---|---|---|
+| Stuck at "Container is starting up". | The start runs inside a web request. No supervisor, no time limit, no retry. | The Runtime DO owns the start. Each attempt has a time limit (30 s, 300 s on the first pull of a new image). A missed start is a step on the restart ladder. After 60 misses the ladder stops with the alert `start-loop`. The console shows the state and the fix. | 50 random kills, 0 restart timeouts. |
+| Ran for days, then the start never ends. | The backup expires after 7 days and is deleted. A restore can run again under a live gateway. | No expiry. An old backup is removed only after a newer one is verified. The restore runs before the gateway starts, never under it. | No empty boot in the loss tests. Rebuilt after a wiped Control DO in 69.3 s. |
+| The gateway runs, no reply comes. | No inbox. A message lost in a restart is gone. | The Control DO stores and acks every message before it wakes the container. A message accepted and not answered before a start is replayed once. A message not answered for 5 minutes while the gateway runs raises the alert `no-reply`. | 587 messages during 50 kills, 586 acked; 4 unanswered led to the replay rule. 15 of 15 answered once after a kill right after accept. |
+| Data loss, R2 mount failures. | State lives on a mounted bucket. A failed mount means an empty home and a fresh setup. | No mount. The database streams to R2 through a gate; the container holds no R2 key. Archives are verified by read-back and a monthly restore drill. An install with state refuses to boot empty. | See [State and backups](/state-and-backups/). |
 
 ## Platform reliability
 

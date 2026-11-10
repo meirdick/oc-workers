@@ -31,6 +31,7 @@ import {
 import { createRuntimeGuard, makeHeapReader, openclawCli } from "./guard.mjs";
 import { configStep, doctorStep, netfilterStep, startConfigWatch } from "./guard-boot.mjs";
 import { createHeartbeat } from "./heartbeat.mjs";
+import { createImporter } from "./importer.mjs";
 import { newIid, pinHostname, readBootIdentity, stepPidCounter, writeBootJson } from "./identity.mjs";
 import { Litestream } from "./litestream.mjs";
 import { LOCK_READER, runLockStep } from "./lock.mjs";
@@ -158,6 +159,10 @@ export async function main() {
   let creds = null;
   let shadow = null;
   let archiver = null;
+  let importer = null; // `ochost import` (lib/importer.mjs), prod mode only
+  // A heartbeat ack can name the request before the importer exists (first heartbeats of a wake, live check
+  // oc-m9-import): keep it and kick it when the importer is made. The Control DO hands it out once per take.
+  let pendingImport = null;
   let disk = null;
   let cw = null; // config watcher
   let heapFault = null; // test fault `heap <pct>`
@@ -277,6 +282,10 @@ export async function main() {
       }
       if (ls && ack.tier && ack.tier !== (ls.status().tier || "normal"))
         void ls.apply(ls.dbs, { tier: ack.tier });
+      if (ack.import) {
+        if (!importer) pendingImport = ack.import;
+        else if (importer.kick(ack.import)) log("import-kick", { id: ack.import.id });
+      }
     },
     onStale: () => void selfFenceStale(),
     onFence: () => void fence(),
@@ -1015,6 +1024,7 @@ export async function main() {
         dbs: v.dbs ?? [],
       };
     },
+    "import-status": async () => ({ ok: true, ...(importer ? importer.status() : { off: true }) }),
     "shadow-backup": async () => {
       if (!shadow) return { ok: false, error: "failed", detail: "shadow not running in this phase" };
       return await shadowRound("ctl");
@@ -1801,6 +1811,19 @@ export async function main() {
         if (disk?.low) return; // M4b N3: no archive while free space is under the reserve
         if (archiver.due()) void archiver.run("online", "6h").then((a) => log("archive", a));
       }, 60_000).unref();
+    if (plan.mode === "prod")
+      importer = createImporter({
+        gate: { fetchRaw: (r, x) => gate.fetchRaw(r, x), call: (m, r, b, x) => gate.call(m, r, b, x) },
+        state: C.state,
+        varDir: C.varDir,
+        ocio: (n, a, x) => runOcio(n, a, { ...x, cg: CG.io }),
+        cli: (a, x) => runCli(a, x),
+        ready: () => !!gw.state.startupz && !stopped() && !S.fenced,
+        chownForOcio: (f) => fs.chownSync(f, 0, 1000), // root's 0711 varDir; ocio reads it through group 1000
+        log,
+      });
+    if (importer && pendingImport && importer.kick(pendingImport)) log("import-kick", { id: pendingImport.id, held: true });
+    pendingImport = null;
   }
 
   async function seedWatch(capMs) {

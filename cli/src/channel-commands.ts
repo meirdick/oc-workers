@@ -59,8 +59,9 @@ async function saveState(ctx: OpsCtx, patch: Record<string, unknown>): Promise<v
 }
 
 export async function channels(ctx: OpsCtx): Promise<number> {
-  const s = sub(ctx, ["add", "list", "remove"], "list");
+  const s = sub(ctx, ["add", "list", "remove", "adopt"], "list");
   if (s === "list") return channelsList(ctx);
+  if (s === "adopt") return channelsAdopt(ctx);
   const ch = ctx.args.positionals[1];
   const hook = hookChannelOf(ch);
   if (hook) return s === "add" ? hookAdd(ctx, hook) : hookRemove(ctx, hook);
@@ -210,6 +211,27 @@ async function hookRemove(ctx: OpsCtx, ch: (typeof HOOK_CHANNELS)[number]): Prom
   );
   if (ctx.out.json) ctx.out.result({ ok: true, removed: true, configVer: v.ver, applied, dropped });
   else ctx.out.line(`${spec.label} removed (config version ${v.ver})`);
+  return EXIT.ok;
+}
+
+/** `ochost channels adopt <channel>`: the console's Adopt button (POST /ops/channels/adopt, worker/src/ctl/adopt.ts). */
+async function channelsAdopt(ctx: OpsCtx): Promise<number> {
+  const ch = ctx.args.positionals[1];
+  if (!ch) throw usage("no channel given", "ochost channels adopt <telegram|slack|discord|twilio>");
+  const r = await looseOps(opsClient(ctx)).post("/ops/channels/adopt", { channel: ch });
+  const b = (r.body ?? {}) as { error?: string; hint?: string; description?: string; missing?: string[] };
+  if (r.status === 404 && b.error === "nothing-to-adopt")
+    throw new CliError(
+      `no ${ch} token in a held config`,
+      "paste it in OpenClaw Settings > Channels and save, then rerun",
+    );
+  if (r.status !== 200)
+    throw new CliError(
+      `adopt failed (${r.status} ${b.description ?? b.error ?? ""}${b.missing ? `: missing ${b.missing.join(", ")}` : ""})`.trim(),
+      b.hint ?? "ochost logs --source ctl",
+    );
+  if (ctx.out.json) ctx.out.result(r.body);
+  else ctx.out.line(`${ch} adopted from the UI (config version ${(r.body as any).configVer})`);
   return EXIT.ok;
 }
 

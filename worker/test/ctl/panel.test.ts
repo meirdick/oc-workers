@@ -113,6 +113,27 @@ describe("ownerPanel rows", () => {
     expect(p.warns).toBeGreaterThan(0);
   });
 
+  it("channel telegram: accepted messages without a reply after 5 min make the row WARN with the count", async () => {
+    const { w, panel } = await setup();
+    for (const k of [1, 2]) {
+      await w.api.inboxPut({ body: tg(k, 700 + k, 700 + k), headers: { host: "oc.example.workers.dev" } });
+      w.ctx.db.run(
+        "UPDATE inbox SET state = 'accepted', accepted_at = ? WHERE platform_key = ?",
+        w.clock.t,
+        String(k),
+      );
+    }
+    w.advance(6 * 60_000);
+    const row = by((await panel({ fresh: true })).connected, "channel telegram");
+    expect(row.result).toBe("WARN");
+    expect(row.detail).toMatch(/blocks sleep no, 2 messages without a reply$/);
+    expect(row.fix).toMatch(/gateway runs but did not answer/);
+    // An asleep install is not judged: it has nothing to reply with.
+    w.rt(1).state = "asleep" as never;
+    const asleep = by((await panel({ fresh: true })).connected, "channel telegram");
+    expect(asleep.detail).not.toMatch(/without a reply/);
+  });
+
   it("file storage on: prefix and bytes for the Setup row; at 85 % WARN with caps set storage", async () => {
     const { w, panel } = await setup({
       doc: doc({ storage: { locations: { r2: { provider: "ochost-r2", settings: { prefix: "f/oc-x" } } } } }),

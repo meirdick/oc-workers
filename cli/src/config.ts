@@ -258,7 +258,7 @@ export interface OcHostConfig {
   telegram?: { wakeProgress?: "delete" | "ready" | "off" };
   /**
    * docs/12: agent exec and file tools in the SandboxSession container. Absent = off. `on` sandboxes every session
-   * except your own main chat (OpenClaw mode non-main); `all` sandboxes every session.
+   * except the Control UI chat (OpenClaw mode non-main: a channel DM, Telegram included, is sandboxed); `all` sandboxes every session.
    */
   sandbox?: "on" | "all" | "off";
   upgrade: { track: string; auto: boolean };
@@ -293,6 +293,12 @@ export interface OcHostConfig {
   idle?: { doubleCapMinutes?: number };
   cron?: { tailSeconds?: number; leadSeconds?: number };
   inbox?: { holdHours?: number; deadHours?: number };
+  /**
+   * Test installs only (init --fake-telegram, OC_TEST=1): control-plane timer overrides in ms, by Timers key
+   * (worker/src/core/timers.ts), deployed as OC_TIMERS. Example: {"l5PendingMs": 600000} for a short drill D.
+   * The Worker ignores OC_TIMERS without OC_TEST=1, and ochost does not deploy it on a real install.
+   */
+  testTimers?: Record<string, number>;
 }
 
 export const DEFAULT_MODEL = "@cf/deepseek-ai/deepseek-v4.1-flash-1017";
@@ -332,7 +338,7 @@ export function defaultConfigText(o: {
   "accountId": ${JSON.stringify(o.accountId)},${bucketLine}
   "instance": ${JSON.stringify(o.instance ?? DEFAULT_INSTANCE)},                    // vcpu/GiB/GB or {vcpu, memoryMib, diskMb}; floor 2/6/16 (D3)
   "timezone": ${JSON.stringify(o.timezone ?? defaultTimezone())},          // from the laptop; for proactive and maintenance
-  "sandbox": "off",                        // off | on (every chat but your main one) | all: exec and file tools in a Cloudflare sandbox
+  "sandbox": "off",                        // off | on (every channel chat, Telegram too; not the Control UI chat) | all: exec and file tools in a Cloudflare sandbox
   "sleep": {
     "mode": "auto",                        // auto | off
     "idleMinutes": 5,                      // doubles after a quick re-wake, up to idle.doubleCapMinutes. Each extra awake minute: $0.000984 at 2/6/20
@@ -426,6 +432,14 @@ export function validateConfig(raw: unknown): OcHostConfig {
   if (llm && llm.spendLimitUsd != null && !(typeof llm.spendLimitUsd === "number" && llm.spendLimitUsd > 0))
     fail("llm.spendLimitUsd must be a number above 0, or null");
   checkTunables(c);
+  if (c.testTimers !== undefined) {
+    const t = c.testTimers as unknown;
+    if (!t || typeof t !== "object" || Array.isArray(t))
+      fail("testTimers must be an object of timer name → ms");
+    for (const [k, v] of Object.entries(t as Record<string, unknown>))
+      if (!/^[a-zA-Z0-9]{1,40}$/.test(k) || typeof v !== "number" || !Number.isFinite(v) || v < 0)
+        fail(`testTimers.${k} must be a number of ms ≥ 0`);
+  }
   if (!llm || typeof llm.gateway !== "string" || !NAME_RE.test(llm.gateway))
     fail("llm.gateway must be a gateway id");
   if (typeof llm.primary !== "string" || !MODEL_RE.test(llm.primary))

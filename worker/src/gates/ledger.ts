@@ -6,6 +6,7 @@
 import { type LtxKey, parseLtxKey, seedClass, type Tier } from "../core/contract";
 import type { Severity } from "../core/types";
 import { adapterByChannel } from "../ctl/adapters";
+import { heldReason } from "../ctl/adopt-spec";
 import {
   type ArchiveCfg,
   type ArchiveQ,
@@ -17,6 +18,14 @@ import {
   FORCED_REASONS,
 } from "./archive-policy";
 import { CAP_DDL, Caps, type CapsView, type CapTake, type CapUse, type CapVerb } from "./caps";
+import {
+  ackOf,
+  IMPORT_META,
+  type ImportRequest,
+  importBundleKey,
+  importIdOk,
+  takeForHeartbeat,
+} from "./import-policy";
 import { type LtxCheck, ltxMatchesKey } from "./ltx";
 import { shaInit } from "./sha256";
 
@@ -1144,8 +1153,79 @@ export class GateLedger {
 
   // ---------- heartbeat, events ----------
 
-  heartbeatInfo(gen: number): { tier: Tier; replica: ReturnType<GateLedger["replicaState"]> } {
-    return { tier: this.budget().tier, replica: this.replicaState(gen) };
+  heartbeatInfo(gen: number): {
+    tier: Tier;
+    replica: ReturnType<GateLedger["replicaState"]>;
+    import?: ReturnType<typeof ackOf>;
+  } {
+    const imp = this.importTake(gen);
+    return { tier: this.budget().tier, replica: this.replicaState(gen), ...(imp ? { import: imp } : {}) };
+  }
+
+  // ---------- ochost import (gates/import-policy.ts) ----------
+
+  /** The open import request for this prod gen, once per take (the ack carries it); null otherwise. */
+  private importTake(gen: number): ReturnType<typeof ackOf> | null {
+    const r = this.metaGet<ImportRequest | null>(IMPORT_META, null);
+    if (!r || (r.state !== "pending" && r.state !== "running")) return null;
+    const mode = this.one<{ mode: string }>("SELECT mode FROM gens WHERE gen = ?", gen)?.mode;
+    if (mode !== "prod") return null;
+    const t = takeForHeartbeat(r, gen, this.now);
+    if (!t) return null;
+    this.metaSet(IMPORT_META, t.next);
+    this.ring("import", "taken", { id: r.id, gen, tries: t.next.tries });
+    return ackOf(t.give);
+  }
+  /** GET /v1/import/bundle: the key and digest of the open request with this id, or null. */
+  importFacts(id: string): { key: string; sha256: string; bytes: number } | null {
+    const r = this.metaGet<ImportRequest | null>(IMPORT_META, null);
+    if (!importIdOk(id) || !r || r.id !== id || (r.state !== "pending" && r.state !== "running")) return null;
+    return { key: importBundleKey(this.o.inst, id), sha256: r.sha256, bytes: r.bytes };
+  }
+  /** POST /v1/import/done: ocsup's outcome. A later answer for a closed request is ignored. */
+  importDone(
+    gen: number,
+    a: { id: string; ok: boolean; why?: string; result?: unknown },
+  ): { ok: boolean; why?: string } {
+    const r = this.metaGet<ImportRequest | null>(IMPORT_META, null);
+    if (!r || r.id !== a.id) return { ok: false, why: "no-request" };
+    if (r.state === "done" || r.state === "failed") return { ok: true, why: "closed" };
+    const next: ImportRequest = {
+      ...r,
+      state: a.ok ? "done" : "failed",
+      doneAt: this.now,
+      ...(a.why ? { why: String(a.why).slice(0, 500) } : {}),
+      result: a.result ?? null,
+    };
+    this.metaSet(IMPORT_META, next);
+    this.ring("import", a.ok ? "done" : "failed", { id: a.id, gen, why: a.why ?? null });
+    if (!a.ok) this.alert("import-failed", "warn", `import ${a.id}: ${String(a.why ?? "").slice(0, 300)}`);
+    return { ok: true };
+  }
+  /** Owner upload under f/<inst>/ (ochost import): the per-object and per-install caps, no gen needed. */
+  importFilePre(a: { key: string; bytes: number }): {
+    refuse?: { status: number; code: string; message: string };
+  } {
+    const { cap, objectMax } = this.filesLimits;
+    if (a.bytes > objectMax)
+      return {
+        refuse: {
+          status: 400,
+          code: "EntityTooLarge",
+          message: `object ${a.bytes} bytes is above files.maxObjectMb (${objectMax} bytes)`,
+        },
+      };
+    const old = this.one<{ bytes: number }>("SELECT bytes FROM files_obj WHERE key = ?", a.key)?.bytes ?? 0;
+    const used = this.filesUsed().used;
+    if (used - old + a.bytes > cap)
+      return {
+        refuse: {
+          status: 403,
+          code: "StorageCapExceeded",
+          message: `files.capGb reached: ${used} of ${cap} bytes used; this object needs ${a.bytes}`,
+        },
+      };
+    return {};
   }
 
   /** Control-side event hooks (spec §17.2): ring; `seeded` → gendb.seeded_at; `replica-set` → boot set. */
@@ -1232,7 +1312,9 @@ export class GateLedger {
       mode: number | null;
       b64: string | null;
       deleted: number;
-    }>("SELECT path, seq, sha256, mode, b64, deleted FROM creds ORDER BY path");
+    }>(
+      "SELECT path, seq, sha256, mode, b64, deleted FROM creds WHERE path NOT LIKE 'adopted/%' ORDER BY path",
+    );
     const seq = this.all<{ m: number | null }>("SELECT MAX(seq) AS m FROM creds")[0]?.m ?? 0;
     return {
       seq,
@@ -1264,7 +1346,8 @@ export class GateLedger {
       r2_key: string | null;
       deleted: number;
     }>("SELECT seq, sha256, mode, b64, r2_key, deleted FROM creds WHERE path = ?", path);
-    if (!r) return null;
+    // adopted/* rows are Worker-side secrets (ctl/adopt.ts): the container never restores them from the store.
+    if (!r || path.startsWith("adopted/")) return null;
     return {
       path,
       seq: r.seq,
@@ -1479,7 +1562,7 @@ export class GateLedger {
       doc: unknown;
     },
   ):
-    | { ok: true; ver: number; sensitive: string[]; dup?: boolean }
+    | { ok: true; ver: number; sensitive: string[]; dup?: boolean; held?: boolean }
     | { ok: false; error: "webhook-transport" | "ctl-full"; detail: string } {
     return this.tx(() => {
       const bad = webhookTransport(p.doc);
@@ -1493,10 +1576,30 @@ export class GateLedger {
       );
       if (dup) return { ok: true as const, ver: dup.ver, sensitive: [], dup: true };
       if (this.full("config")) return { ok: false as const, error: "ctl-full" as const, detail: "storage" };
+      // Channel adoption: a credential in clear in a UI config is held, never offered to a boot. The owner adopts
+      // it (POST /ops/channels/adopt) or removes it; the gateway keeps the last good config.
+      const why = heldReason(p.doc);
+      if (why) {
+        const hv = (this.one<{ m: number | null }>("SELECT MAX(ver) AS m FROM config")?.m ?? 0) + 1;
+        this.run(
+          `INSERT INTO config (ver, schema_sha, status, source, sha, dark_origin, base_ver, doc, created_at)
+           VALUES (?, ?, 'held', ?, ?, 0, ?, ?, ?)`,
+          hv,
+          p.schemaSha ?? null,
+          p.source,
+          p.sha,
+          p.baseVer ?? null,
+          JSON.stringify(p.doc),
+          this.now,
+        );
+        this.ring("gate", "config-held", { gen, ver: hv, source: p.source, reason: why });
+        return { ok: true as const, ver: hv, sensitive: [], held: true };
+      }
       const base =
         (p.baseVer !== undefined
           ? this.one<{ doc: string }>("SELECT doc FROM config WHERE ver = ?", p.baseVer)
-          : null) ?? this.one<{ doc: string }>("SELECT doc FROM config ORDER BY ver DESC LIMIT 1");
+          : null) ??
+        this.one<{ doc: string }>("SELECT doc FROM config WHERE status <> 'held' ORDER BY ver DESC LIMIT 1");
       const sensitive = sensitiveChanges(base ? JSON.parse(base.doc) : {}, p.doc);
       const ver = (this.one<{ m: number | null }>("SELECT MAX(ver) AS m FROM config")?.m ?? 0) + 1;
       this.run(
@@ -1513,7 +1616,9 @@ export class GateLedger {
       );
       this.pruned("config", pruneConfigRows(this.store), `newest ${CAPS.configRows}`);
       this.ring("gate", "config-proposal", { gen, ver, source: p.source, sensitive });
-      if (sensitive.length) this.alert("config-sensitive", "warn", sensitive.join(","));
+      // Doctor is the gateway's own repair at boot, not a UI session: its changes are in the ring row only.
+      if (sensitive.length && p.source !== "doctor")
+        this.alert("config-sensitive", "warn", sensitive.join(","));
       return { ok: true as const, ver, sensitive };
     });
   }
@@ -1848,7 +1953,8 @@ export class GateLedger {
       this.run("DELETE FROM archive_hash WHERE id = ?", id);
       // An owner/pre-upgrade request ends with its archive: done on complete (also after a stall mark), back to
       // pending on a failure (the next start serves it again until it stalls or requestHoldMs passes).
-      if (ok) this.run("UPDATE alerts SET open = 0 WHERE class = 'archive-stalled'"); // an archive landed: not stalled
+      // An archive landed: not stalled, and an earlier failure is over.
+      if (ok) this.run("UPDATE alerts SET open = 0 WHERE class IN ('archive-stalled', 'archive-failed')");
       const req = this.metaGet<ArchiveRequest | null>("archiveRequest", null);
       if (req && req.archiveId === id && (req.state === "running" || (ok && req.state === "failed")))
         this.metaSet(
@@ -2006,6 +2112,9 @@ export const GATE_CALLS = [
   "sbxAdmit",
   "filesPre",
   "filesPost",
+  "importFacts",
+  "importDone",
+  "importFilePre",
 ] as const;
 export type GateCall = (typeof GATE_CALLS)[number];
 type Fn = (...a: any[]) => any;

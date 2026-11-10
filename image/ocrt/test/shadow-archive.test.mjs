@@ -240,7 +240,7 @@ describe("L5: online archive reads a shadow tree, never the live DBs", () => {
     };
     const fresh = {
       calls: [],
-      async call(m, route) {
+      async call(_m, route) {
         this.calls.push(route);
         throw Object.assign(new Error('409 {"error":"fresh"}'), { status: 409 });
       },

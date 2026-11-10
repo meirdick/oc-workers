@@ -341,6 +341,12 @@ export class RuntimeCore {
     } else if (c.running && boot) {
       this.armMonitor(boot.gen);
     }
+    const r1 = this.rec();
+    if (r1.state === "stopped" && r1.desired === "running" && !this.store.openOp("start")) {
+      // A restart cut by a DO reset after row 53 (live oc-host 2026-11-10). Journal the start; the tick runs it.
+      this.startOp("user", "running");
+      this.ring("rt", "restart-resumed", { at: "init" });
+    }
     await this.arm(this.store.openOps().length ? this.now() + this.t.opTickMs : undefined);
   }
 
@@ -737,6 +743,7 @@ export class RuntimeCore {
             labels,
             planKind: res.plan?.sqlite?.kind ?? "unknown",
             markerId: res.markerId ?? null,
+            ...(res.adoptedEnv ? { adoptedEnv: res.adoptedEnv } : {}),
             snapshotId:
               res.plan?.rootfs?.kind === "snapshot" ? (res.plan.rootfs.snapshotId ?? res.snapshotId) : null,
             rootfsAt: typeof res.plan?.rootfs?.at === "number" ? res.plan.rootfs.at : null,
@@ -876,6 +883,8 @@ export class RuntimeCore {
             instance: this.d.instance,
             enableInternet: b.mode === "prod",
             env: {
+              // Adopted channel credentials first: a Worker secret of the same name wins.
+              ...(b.adoptedEnv ?? {}),
               ...this.d.secretEnv(),
               OCRT_INST: this.d.inst,
               OCRT_GEN: String(b.gen),
@@ -1391,6 +1400,7 @@ export class RuntimeCore {
     }
     switch (r.state) {
       case "asleep": {
+        if (this.resumeStopOp()) return { state: r.state, action: "after-stop" };
         this.store.put(K.wakeRequested, { reason, at: now });
         if (this.store.openOp("start")) {
           this.adaptIdle(`wake:${reason}`);
@@ -1444,8 +1454,11 @@ export class RuntimeCore {
         if (r.state === "starting") this.adaptIdle(`wake:${reason}`);
         if (r.state === "draining") this.store.put(K.wakeRequested, { reason, at: now });
         return { state: r.state, action: "none" };
-      case "stopping":
       case "stopped":
+        if (this.startStopped()) return { state: this.rec().state, action: "start" };
+        this.ring("rt", "row", { row: 56 });
+        return { state: r.state, action: "none" };
+      case "stopping":
         this.ring("rt", "row", { row: 56 });
         return { state: r.state, action: "none" };
       case "retired":
@@ -1479,6 +1492,7 @@ export class RuntimeCore {
         await this.tickBackoff();
         break;
       case "asleep": {
+        if (this.resumeStopOp()) break;
         const s = this.sleepRec();
         let pending = 0;
         try {
@@ -1504,7 +1518,7 @@ export class RuntimeCore {
         await this.unconfirmedTick();
         break;
       case "stopped":
-        this.ring("rt", "row", { row: 56 });
+        if (!this.startStopped()) this.ring("rt", "row", { row: 56 });
         break;
       case "retired":
         break;
@@ -1576,7 +1590,14 @@ export class RuntimeCore {
     const r = this.rec();
     if (r.state === "retired") return { ok: false, state: r.state };
     this.patchRec({ desired: "running", lastActivityAt: this.now() });
-    if (r.state === "stopped" || r.state === "new" || r.state === "asleep") {
+    if (this.store.openOp("stop")) {
+      // Restart (§19.2): journal the start op now. The stop op runs first (kick order) and starts it when
+      // done. `desired` alone is not enough: the sleep op overwrites it (rows 37, 39), and a DO reset can come
+      // at any point between here and the start.
+      this.startOp("user", "running");
+      this.ring("rt", "restart-queued", { state: r.state });
+      this.kick();
+    } else if (r.state === "stopped" || r.state === "new" || r.state === "asleep") {
       this.startOp("user", "running");
       this.tr(r.state === "stopped" ? 55 : r.state === "asleep" ? 43 : 1, "starting");
       this.kick();
@@ -1585,6 +1606,29 @@ export class RuntimeCore {
       await this.tickBackoff();
     }
     return { ok: true, state: this.rec().state };
+  }
+
+  /** Row 55 without an owner call (tick, ensure, wake): `stopped` with an open start op or desired=running is
+   * a restart whose start leg a DO reset cut. An owner stop (desired=stopped, no start op) stays: row 56. */
+  startStopped(): boolean {
+    const r = this.rec();
+    if (r.state !== "stopped" || this.active) return false;
+    if (!this.store.openOp("start")) {
+      if (r.desired !== "running") return false;
+      this.startOp("user", "running");
+      this.ring("rt", "restart-resumed", {});
+    }
+    this.tr(55, "starting");
+    this.kick();
+    return true;
+  }
+
+  /** A stop op left open in `asleep` (DO reset after row 37): run it. tick and ensure in `asleep` do not
+   * resume ops otherwise. */
+  resumeStopOp(): boolean {
+    if (this.active || !this.store.openOp("stop")) return false;
+    this.kick();
+    return true;
   }
 
   /** Owner stop (row 26, §10.6). Pre-empts a queued or waiting start. */
@@ -1712,8 +1756,16 @@ export class RuntimeCore {
     const settled = c.running ? await this.destroyFor("stop") : true;
     if (b) this.recordStop(this.mkClass("planned", "none", "owner stop", settled), false);
     this.store.endOp(op.opId, "done", { phase: "done", result: { settled } });
-    // §19.2 restart = stop + start: an owner start that came while `stopping` set desired=running.
-    const restart = this.rec().desired === "running";
+    // A sleep op cut by a DO reset is still open: this stop replaces it. Left open, it would run after the
+    // stop and move `stopped` back to quiescing.
+    for (const s of this.store.openOps().filter((o) => o.kind === "sleep")) {
+      const m = (s.args as { markerId?: string }).markerId;
+      if (m) await this.d.ctl.markerVoid({ id: m, reason: "owner-stop" }).catch(() => undefined);
+      this.store.endOp(s.opId, "aborted", { error: "owner stop", phase: "aborted" });
+    }
+    // §19.2 restart = stop + start: an owner start while the stop op was open journaled a start op. Not
+    // `desired`: the sleep op sets it (row 37 asleep, row 39 running) while the stop op waits.
+    const restart = !!this.store.openOp("start");
     this.tr(settled ? 53 : 54, "stopped", { desired: restart ? "running" : "stopped" });
     if (!settled) this.ring("rt", "stop-unconfirmed", {});
     if (restart) {
@@ -2236,6 +2288,7 @@ export class RuntimeCore {
     if (awake || this.d.container.running) await this.inactivity();
     if (r0.state === "retired") return;
     if (r0.state === "asleep") {
+      if (this.resumeStopOp()) return;
       const s = this.sleepRec();
       if (s.wakeAt !== null && this.now() >= s.wakeAt) {
         this.startOp(s.wakeReason ?? "wake:cron", "asleep");
@@ -2245,13 +2298,11 @@ export class RuntimeCore {
       return;
     }
     if (r0.state === "backoff" || r0.state === "waiting-capacity") return this.tickBackoff();
-    if (r0.state === "stopped" && !this.active && this.store.openOp("start")) {
-      // A start op journaled before an instance reset (restart after a deploy, runStop) runs now, row 55.
-      this.tr(55, "starting");
-      this.kick();
+    if (r0.state === "stopped") {
+      this.startStopped();
       return;
     }
-    if (r0.state === "new" || r0.state === "stopped") return;
+    if (r0.state === "new") return;
     // 2. epoch check (cached).
     let active = true;
     await this.step("epoch", async () => {

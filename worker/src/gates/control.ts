@@ -293,6 +293,7 @@ async function dispatch(
         at: d.now(),
         replica: info.replica,
         ...(a.stop ? { stop: true } : {}),
+        ...(info.import ? { import: info.import } : {}),
       });
     }
     case "POST /v1/event": {
@@ -372,6 +373,15 @@ async function dispatch(
       return archive(r.path, req, url, body, d);
     case "PUT /v1/shadow/:db":
       return shadow(req, url, d);
+    case "GET /v1/import/bundle":
+      return importBundle(url, d);
+    case "POST /v1/import/done": {
+      const res = await rpc(
+        ctl.importDone(P.gen, body as { id: string; ok: boolean; why?: string; result?: unknown }),
+        "ctl",
+      );
+      return res.ok ? json({ ok: true }) : fail(404, res.why ?? "no-request");
+    }
     case "POST /v1/export/:path":
       return fail(403, "mode", { detail: "files-only is v1.1" });
   }
@@ -557,6 +567,25 @@ async function archive(
       headers: { "content-type": "application/octet-stream", "content-length": String(o.size) },
     },
   );
+}
+
+/**
+ * `ochost import` bundle (gates/import-policy.ts): only the open request's object; size checked here, sha256 by
+ * ocsup on its copy (the Worker hashed it on upload with R2's own sha256 check).
+ */
+async function importBundle(url: URL, d: GateDeps): Promise<Response> {
+  const id = url.searchParams.get("id") ?? "";
+  const f = await rpc(d.ctl.importFacts(id), "ctl");
+  if (!f) return fail(404, "no-request");
+  const o = await r2(d.bucket.get(f.key));
+  if (!o) return fail(404, "not-found", { detail: "bundle missing in R2" });
+  if (o.size !== f.bytes) {
+    await o.body.cancel().catch(() => {});
+    return fail(409, "bundle-bad", { why: `size ${o.size} != ${f.bytes}` });
+  }
+  return new Response(o.body, {
+    headers: { "content-type": "application/octet-stream", "content-length": String(o.size) },
+  });
 }
 
 /** Pass bytes through; hash them; report once at the end (or never, when the reader stops early). */

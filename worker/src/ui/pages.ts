@@ -3,6 +3,7 @@
 // (ingress/headers.ts pageHeaders). Design rules: docs/18-owner-console-design.md.
 import type { OwnerView } from "../core/types";
 import type { Panel } from "../ctl/panel";
+import { adoptRows } from "../ctl/panel-adopt";
 import { alertFix, bytesStr, type Check } from "../ctl/panel-checks";
 
 /** Where "Open Control UI" goes. The Control UI is a single-page app: any path that is not `/` serves it. */
@@ -95,7 +96,7 @@ td small,.tm small{display:block;font-size:12px;color:var(--mut)}.mut{color:var(
 .dot.ok{background:var(--ok)}.dot.warn{background:var(--warn)}.dot.bad{background:var(--bad)}
 .cmd{display:inline-flex;align-items:flex-start;gap:6px;font-size:13px;text-align:left;max-width:100%}.cmd svg{margin-top:2px;color:var(--mut)}
 .fixr{display:block;margin-top:4px;font-size:13px;color:var(--mut)}.fixr code{color:var(--fg)}
-.ac form{display:inline-block}.ac button,.ex button{padding:4px 12px;font-size:13px}
+.ac form{display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}.ac select,.ac input{font:inherit;font-size:13px;padding:4px 8px;max-width:100%;border:1px solid var(--line2);border-radius:6px;background:var(--base);color:var(--fg)}.ac input{width:22em}.ac select{max-width:22em}.ac button,.ex button{padding:4px 12px;font-size:13px}
 .ex{position:relative;padding:12px 16px 12px 18px;border-top:1px solid var(--line)}.ex:first-child{border-top:0}
 .ex::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--neu)}
 .ex.hi::before{background:var(--bad)}.ex.wa::before{background:var(--warn)}
@@ -116,7 +117,7 @@ pre{margin:8px 0 0;padding:8px;border-radius:6px;background:var(--recess);font-s
 .filt a[aria-current=page]{border-color:var(--strong);color:var(--strong);font-weight:500}
 .tm{white-space:nowrap;font-variant-numeric:tabular-nums}
 @media (max-width:719px){thead{display:none}td.tm small,td:empty{display:none}tbody tr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:10px 16px;border-top:1px solid var(--line)}
-td{padding:0;border:0}td.w,td.cm{grid-column:1/-1}td.ac,td.tm{grid-column:2;grid-row:1}.ml{display:inline}td.r{text-align:left}}
+td{padding:0;border:0}td.w,td.cm{grid-column:1/-1}td.ac,td.tm{grid-column:2;grid-row:1}td.ac.f{grid-column:1/-1;grid-row:auto}td.ac.f form{display:flex;justify-content:flex-start}td.ac.f input,td.ac.f select{flex:1 1 12em;width:auto}.ml{display:inline}td.r{text-align:left}}
 @media (min-width:720px){.tabs{display:inline-flex;flex-wrap:wrap}.strip{grid-template-columns:repeat(4,minmax(0,1fr))}
 .strip>*{border-top:0}.strip>*+*{border-left:1px solid var(--line)}}
 @media (min-width:880px){.wrap{padding:0 24px 48px}.hero{grid-template-columns:minmax(160px,auto) minmax(0,1fr) auto;column-gap:40px;align-items:center;padding:20px 24px}
@@ -247,6 +248,13 @@ const NOTICES: Record<string, string> = {
   "drill-ok": "Restore drill passed",
   "drill-failed": "Restore drill failed",
   approved: "Pairing approved",
+  "saved-restart": "Saved. The install restarts now to apply it",
+  "saved-next": "Saved. It applies at the next start",
+  "model-same": "That model is already the main model",
+  "alerts-saved": "Alert channel saved. Press Test to check it",
+  "alerts-test": "Test alert sent. To confirm it, run ochost alerts ack with this code",
+  "alerts-off": "Alerts are off",
+  adopted: "Channel adopted. The gateway restarts to use it",
   "panel-failed": "That did not work",
   wake: "Wake requested. This page reloads while it starts",
   start: "Start requested. This page reloads while it starts",
@@ -499,6 +507,16 @@ const post = (act: string, fields: Record<string, string>, label: string) =>
     .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
     .join("")}<button type="submit">${esc(label)}</button></form>`;
 
+/** A form with fields and one or more submit buttons; `do` names the button when a form has several. No JavaScript. */
+const ctl = (act: string, fields: string, buttons: [label: string, value?: string][]) =>
+  `<form method="post" action="/_ochost/panel/${act}">${fields}${buttons
+    .map(([l, v]) => `<button type="submit"${v ? ` name="do" value="${v}"` : ""}>${esc(l)}</button>`)
+    .join("")}</form>`;
+const sel = (name: string, label: string, opts: string[], cur: string | null) =>
+  `<select name="${name}" aria-label="${esc(label)}">${opts
+    .map((o) => `<option value="${esc(o)}"${o === cur ? " selected" : ""}>${esc(o)}</option>`)
+    .join("")}</select>`;
+
 /** One Setup row: what, its state, and ONE button or the exact command. `todo`: counts on the tab and Overview. */
 interface SetupRow {
   group: "ch" | "in" | "bk";
@@ -507,6 +525,8 @@ interface SetupRow {
   /** null: a grey dot (off, not a problem); undefined: no dot (the row has no state, only a description). */
   result?: Res | null;
   button?: string;
+  /** The control is wide (an input or a long select): on a narrow screen it gets its own line. */
+  wide?: boolean;
   cmd?: string;
   todo: boolean;
 }
@@ -544,6 +564,7 @@ function setupRows(p: Panel): SetupRow[] {
       button: post("approve", { code: q.code }, "Approve"),
       todo: true,
     });
+  rows.push(...adoptRows(p, post));
   const other = p.connected.filter((r) => r.name.startsWith("channel ") && r.name !== "channel telegram");
   const otherBad = other.find((r) => r.result !== "PASS");
   rows.push({
@@ -561,7 +582,22 @@ function setupRows(p: Panel): SetupRow[] {
       name: "Alert channel",
       state: al.detail,
       result: al.result,
-      ...(al.fix ? { cmd: cmdOf(al.fix) } : {}),
+      ...(p.toggles
+        ? {
+            button: ctl(
+              "alerts",
+              `<input type="url" name="url" placeholder="https://ntfy.sh/your-topic or webhook URL" aria-label="ntfy topic URL or webhook URL" autocomplete="off">`,
+              [
+                ["Save", "save"],
+                ["Test", "test"],
+                ["Off", "off"],
+              ],
+            ),
+            wide: true,
+          }
+        : al.fix
+          ? { cmd: cmdOf(al.fix) }
+          : {}),
       todo: bad(al),
     });
   const ac = find("access");
@@ -582,9 +618,19 @@ function setupRows(p: Panel): SetupRow[] {
       name: "Sandbox",
       state: off ? "Off (opt-in)" : (sb.detail.split(";")[0] ?? ""),
       result: off ? null : sb.result,
-      cmd: sb.fix ? cmdOf(sb.fix) : off ? "ochost sandbox on" : "ochost sandbox status",
+      ...(p.toggles
+        ? {
+            button: ctl("sandbox", sel("value", "Sandbox", ["off", "on", "all"], p.toggles.sandbox.value), [
+              ["Apply"],
+            ]),
+          }
+        : { cmd: sb.fix ? cmdOf(sb.fix) : off ? "ochost sandbox on" : "ochost sandbox status" }),
       todo: !off && bad(sb),
     });
+    if (p.toggles?.sandbox.pending) {
+      const row = rows[rows.length - 1] as SetupRow;
+      row.state = `${row.state}. Applies at the next start`;
+    }
   }
   const fs = find("file storage");
   if (fs)
@@ -613,7 +659,14 @@ function setupRows(p: Panel): SetupRow[] {
       group: "in",
       name: "Model",
       state: mo.detail.split(", gateway")[0] ?? mo.detail,
-      cmd: "ochost model set <id>",
+      ...(p.toggles?.model.choices.length
+        ? {
+            button: ctl("model", sel("id", "Main model", p.toggles.model.choices, p.toggles.model.primary), [
+              ["Apply"],
+            ]),
+            wide: true,
+          }
+        : { cmd: "ochost model set <id>" }),
       todo: false,
     });
   const up = find("install");
@@ -668,7 +721,9 @@ function setupRows(p: Panel): SetupRow[] {
 function setupTab(rows: SetupRow[]): string {
   const tr = (r: SetupRow) =>
     `<tr><td class="nm">${esc(r.name)}</td><td class="w">${stat(r.result, r.state)}</td>${
-      r.button ? `<td class="ac">${r.button}</td>` : `<td class="cm">${r.cmd ? cmdHtml(r.cmd) : ""}</td>`
+      r.button
+        ? `<td class="ac${r.wide ? " f" : ""}">${r.button}</td>`
+        : `<td class="cm">${r.cmd ? cmdHtml(r.cmd) : ""}</td>`
     }</tr>`;
   const part = (g: SetupRow["group"], id: string, title: string, aside: string, link?: string) => {
     const rs = rows.filter((r) => r.group === g);
@@ -853,9 +908,9 @@ function costHtml(p: Panel): { strip: string; budgets: string } {
   )}${cell("Saved", `${k.savedPct}%`, "Under always-on")}${cell("Last 24 h", usd(k.spend24Usd), `${plural(k.wakes24, "wake")}, ${usd(perWake)} each`)}</div>`;
   const guard = `<div class="bd line">${
     k.holding
-      ? stat("WARN", "Cost guard is holding the install awake")
-      : stat("PASS", "Cost guard not holding")
-  }<span class="k"> Keeps the install awake when waking and sleeping would cost more than staying up.</span>${
+      ? stat("WARN", "Cost guard: holding the install awake, waking costs more than staying up")
+      : stat("PASS", "Cost guard: sleep is cheaper, the duty cycle is on")
+  }<span class="k"> The guard holds the install awake only when its wakes and sleeps cost more than staying up.</span>${
     k.holding ? `<span class="fixr">Fix: <code>ochost sleep status</code></span>` : ""
   }</div>`;
   return {

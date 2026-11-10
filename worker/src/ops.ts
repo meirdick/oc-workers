@@ -5,6 +5,7 @@ import { secretEnv } from "./core/secret-env";
 import { ctlName, type Env, rtName } from "./core/types";
 import { platformSecrets } from "./ctl/adapters";
 import type { FreshSecrets } from "./ctl/control";
+import { opsImportSandbox, opsImportUpload } from "./ops-import";
 import { handleTelegramOps, publicOrigin } from "./ops-telegram";
 import { sbxName } from "./sbx/core";
 
@@ -41,6 +42,8 @@ const ROUTES = new Set([
   "soak-plan",
   // M5 (docs/10-cli-spec.md §1.3): W1 pairing, W5 snapshot list, W8 Telegram webhook through the Worker.
   "pairing",
+  // Channel adoption from the OpenClaw UI (ctl/adopt.ts): POST /ops/channels/adopt, owner only.
+  "channels",
   "snapshots",
   "telegram",
   // D14 CapGate budgets: GET reads, POST raises (owner only).
@@ -49,6 +52,8 @@ const ROUTES = new Set([
   "files",
   // docs/12: GET sandbox state and budgets; POST /ops/sandbox/sleep backs up and stops it.
   "sandbox",
+  // `ochost import`: uploads (ops-import.ts, owner only), GET status and POST apply (Control DO, ctl/imports.ts).
+  "import",
   // Owner panel: GET /ops/doctor is the panel JSON (ctl/panel.ts); POST /ops/upgrade-check records `ochost upgrade check`.
   "doctor",
   "upgrade-check",
@@ -174,6 +179,16 @@ export async function handleOps(
   if (!role || !ROUTES.has(action)) return notFound();
   if (role === "ci" && !CI_ALLOWED.has(action)) return notFound();
   if ((action === "fault" || action === "soak-plan") && env.OC_TEST !== "1") return notFound();
+  if (action === "import" && role !== "owner") return notFound();
+  // Raw bodies (and the R2 listing) never go through the JSON parse below or the Control DO.
+  if (action === "import" && (req.method === "PUT" || parts[1] === "files"))
+    return opsImportUpload(
+      req,
+      env,
+      parts.slice(1),
+      url,
+      env.CONTROL.getByName(ctlName(env.OC_INST)) as unknown as Parameters<typeof opsImportUpload>[4],
+    );
   let body: Record<string, unknown> = {};
   if (req.method !== "GET" && req.method !== "HEAD") {
     const t = await req.text();
@@ -209,7 +224,9 @@ export async function handleOps(
     );
     return Response.json(r.body, { status: r.status });
   }
-  if (action === "sandbox") return opsSandbox(env, ctl, role, req.method, parts[1] ?? "");
+  if (action === "sandbox") return opsSandbox(env, ctl, role, req.method, parts[1] ?? "", body);
+  if (action === "import" && parts[1] === "sandbox" && req.method === "POST")
+    return opsImportSandbox(env, ctl as unknown as Parameters<typeof opsImportSandbox>[1], body);
   // /ops/wake?wait=1 long-polls to `started` (≤ 120 s).
   if (action === "wake" && query.wait === "1") {
     const first = await ctl.ops({
@@ -259,7 +276,14 @@ async function opsSandbox(
   role: OpsRole,
   method: string,
   sub: string,
+  body: Record<string, unknown>,
 ): Promise<Response> {
+  // The console's Apply and the console's sandbox setting (owner only): the Control DO keeps the choice; a restart applies it.
+  if (method === "POST" && sub === "set") {
+    if (role !== "owner") return notFound();
+    const r = await ctl.ops({ action: "sandbox-set", method, sub: [], query: {}, body, role });
+    return Response.json(r.body, { status: r.status });
+  }
   if (!env.SANDBOX) return Response.json({ error: "no SANDBOX binding; redeploy" }, { status: 503 });
   const sb = env.SANDBOX.getByName(sbxName(env.OC_INST)) as unknown as SbxOps;
   if (method === "POST" && sub === "sleep") return Response.json(await sb.sleep("owner"));

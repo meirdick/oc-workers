@@ -8,7 +8,8 @@ import { ctlName, type Env } from "../core/types";
 import { gatePort } from "../gates/ledger";
 import { MAX_S_HEADER } from "../gates/sbx";
 import { type BackupRecord, SandboxCore, SbxError, type SleepReason } from "./core";
-import { readHead } from "./wire";
+import { mergeCommand } from "./import";
+import { decodeFrames, readHead } from "./wire";
 
 /** R2 key prefix of the workspace backups in the install bucket. */
 export const backupPrefix = (inst: string) => `sbx/${inst}/`;
@@ -97,6 +98,29 @@ export class SandboxSession extends DurableObject<Env> {
 
   async status() {
     return (await this.c()).status();
+  }
+
+  /**
+   * `ochost import` (sbx/import.ts): merge the bundle at `key` into every seeded remote workspace. Wakes the sandbox
+   * (restore first), runs one exec of at most 10 min. Returns the per-workspace counts or {ok:false, why}.
+   */
+  async importBundle(a: { key: string; id: string; overwrite: string[]; remove: string[] }) {
+    const core = await this.c();
+    const o = await this.env.BUCKET.get(a.key);
+    if (!o) return { ok: false, why: "bundle missing" };
+    const r = await core.exec(
+      mergeCommand({ id: a.id, overwrite: a.overwrite, remove: a.remove }),
+      o.body,
+      600,
+    );
+    const buf = new Uint8Array(await new Response(r.body).arrayBuffer());
+    await r.done;
+    const f = decodeFrames(buf);
+    try {
+      const j = JSON.parse(f.stdout.trim().split("\n").pop() ?? "");
+      if (f.code === 0 && j?.ok) return j as { ok: true; targets: Record<string, unknown>[] };
+    } catch {}
+    return { ok: false, why: `exit ${f.code}: ${f.stderr.slice(-300)}` };
   }
 
   override async alarm(): Promise<void> {

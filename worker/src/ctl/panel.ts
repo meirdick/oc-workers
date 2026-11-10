@@ -8,7 +8,7 @@ import { redactHook } from "../ops-telegram";
 import { archiveStatus } from "./archives";
 import { snapshotSummary } from "./chain";
 import type { Ctx } from "./ctx";
-import { chatSummary, counts, getWakeAllow } from "./inbox";
+import { chatSummary, counts, getWakeAllow, noReplyCount } from "./inbox";
 import { pairRequests } from "./owner-ops";
 import {
   alertFix,
@@ -129,6 +129,12 @@ export interface Panel {
     savedPct: number;
     wakes24: number;
     holding: boolean;
+  };
+  /** The values behind the Setup tab's three controls (sandbox, alerts, model). */
+  toggles?: {
+    sandbox: { value: "off" | "on" | "all"; pending: boolean };
+    alerts: { source: string; kind: string | null };
+    model: { primary: string | null; choices: string[] };
   };
   /** Newest first: wakes, sleeps, archives and restarts. `ms`: how long the event took (ready, sleep op, upload). */
   events: { at: number; kind: EventKind; text: string; ms: number | null }[];
@@ -343,12 +349,22 @@ export async function ownerPanel(
     let err = "none";
     let result: Check["result"] = "PASS";
     let fix: string | undefined;
+    let noReply = "";
     if (n === "telegram") {
       const row = checkWebhook(o.origin, doc, s);
       hook = row.result === "PASS" ? "set" : "not set";
       if (wh?.lastError) err = wh.lastError;
       if (row.result !== "PASS") ({ result, fix } = row);
       else if (live && live.result !== "PASS") ({ result, fix } = live);
+      // no-reply (1.2): accepted messages the gateway did not answer in NO_REPLY_ALERT_MS, while it runs.
+      const nr = s.state === "running" ? noReplyCount(c) : 0;
+      if (nr) {
+        noReply = `, ${nr} message${nr === 1 ? "" : "s"} without a reply`;
+        if (result === "PASS") {
+          result = "WARN";
+          fix = "ochost logs --source gateway (the gateway runs but did not answer)";
+        }
+      }
     } else hook = seen ? `seen ${dur(now - seen.at)} ago` : "not seen yet";
     if (result === "PASS" && blocks) {
       result = "WARN";
@@ -357,7 +373,7 @@ export async function ownerPanel(
     connected.push({
       name: `channel ${n}`,
       result,
-      detail: `transport ${transport}, webhook ${hook}, last error ${err}, blocks sleep ${blocks ? "yes" : "no"}`,
+      detail: `transport ${transport}, webhook ${hook}, last error ${err}, blocks sleep ${blocks ? "yes" : "no"}${noReply}`,
       ...(fix ? { fix } : {}),
     });
   }
@@ -579,6 +595,20 @@ export async function ownerPanel(
       heldInbox: k.held,
     },
     cost,
+    toggles: {
+      sandbox: {
+        value: c.settings().sandbox ?? "off",
+        pending: (c.settings().sandbox ?? "off") !== (c.db.meta("sandboxBooted") ?? "off"),
+      },
+      alerts: { source: String(sink.source ?? "none"), kind: (sink.kind as string | null) ?? null },
+      model: {
+        // The catalogue the render wrote (models.providers.cfgw.models); the main model leads the list.
+        primary: gw?.provider === "cfgw" ? gw.model : null,
+        choices: (Array.isArray(doc?.models?.providers?.cfgw?.models) ? doc.models.providers.cfgw.models : [])
+          .map((m: { id?: unknown }) => m?.id)
+          .filter((id: unknown): id is string => typeof id === "string" && id.length < 120),
+      },
+    },
     events: events.slice(0, 40),
     chat: chatSummary(c),
   };

@@ -2,15 +2,16 @@
 // Control UI through the proxy could not connect. Rule: a fresh install with zero posted config renders a
 // default document (model + provider key ref + managed trusted-proxy auth); the gateway starts in
 // trusted-proxy mode; ocsup's CLI reaches it with the local password; no secret value in openclaw.json.
-import { gatewayPid } from "../harness/flows.mjs";
+
 import { GW_TOKEN } from "../harness/env.mjs";
+import { gatewayPid } from "../harness/flows.mjs";
 
 const KEY = "sk-ant-m4-f9-probe-7c1e4b2a";
 
 export default {
   name: "fresh-default-config",
   source: "M3 e2e F9; plan §4.9; M3 ingress (trusted-proxy keys)",
-  rule: "Plan with configVer null: openclaw.json has gateway.auth.mode trusted-proxy with trustedProxy.userHeader x-ochost-user, agents.defaults.model.primary, models.providers.anthropic.apiKey = ${OC_ANTHROPIC_KEY} (a ref, not the value); the gateway argv has no --auth; `gateway call health` with OPENCLAW_GATEWAY_PASSWORD succeeds; the config step logs default:true.",
+  rule: "Plan with configVer null: openclaw.json has gateway.auth.mode trusted-proxy with trustedProxy.userHeader x-ochost-user, agents.defaults.model.primary, models.providers.anthropic.apiKey = a $-ref to OC_ANTHROPIC_KEY (a ref, not the value); the gateway argv has no --auth; `gateway call health` with OPENCLAW_GATEWAY_PASSWORD succeeds; the config step logs default:true.",
   needs: ["m1", "configRender"],
   timeoutMs: 400_000,
   async run(t) {
@@ -27,7 +28,10 @@ export default {
     } catch {}
     t.measure("doc", doc);
     t.check("auth mode trusted-proxy", doc?.gateway?.auth?.mode === "trusted-proxy");
-    t.check("trustedProxy.userHeader x-ochost-user", doc?.gateway?.auth?.trustedProxy?.userHeader === "x-ochost-user");
+    t.check(
+      "trustedProxy.userHeader x-ochost-user",
+      doc?.gateway?.auth?.trustedProxy?.userHeader === "x-ochost-user",
+    );
     t.check("model set", typeof doc?.agents?.defaults?.model?.primary === "string");
     t.check(
       "provider key is a ref",

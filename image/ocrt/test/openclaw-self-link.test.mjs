@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { describe, it } from "node:test";
 
-// The firecrawl plugin imports `openclaw/plugin-sdk/*`. Plain Node (the `openclaw infer web fetch` CLI) resolves it only
+// The bundled plugins import `openclaw/plugin-sdk/*`. Plain Node (the `openclaw infer web fetch` CLI) resolves it only
 // through /app/node_modules/openclaw, so the image links it to /app (M8 live check 3).
 describe("image/Dockerfile openclaw self link", () => {
   const df = fs.readFileSync(new URL("../../Dockerfile", import.meta.url), "utf8");

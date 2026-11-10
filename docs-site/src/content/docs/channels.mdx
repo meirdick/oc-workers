@@ -135,6 +135,21 @@ The Worker keeps each message until the gateway takes it. A message that the gat
 
 Use `ochost channels add` for the channel token and `ochost pairing` for the first approval of a sender. Both must go through the Worker. The bot token is a Worker secret, the webhook URL points at the Worker, and an approved sender joins the wake list. After that, OpenClaw's own pairing page and `openclaw channels` commands work inside the gateway. A Telegram token set only in OpenClaw runs long-polling, which blocks sleep.
 
+## Adopt a channel from the OpenClaw UI
+
+You can paste a bot token in OpenClaw's Settings > Channels and save. The Worker does not use that config at once. It holds it, because a token in the UI config makes OpenClaw poll, and polling keeps the install awake. The gateway keeps its last good config.
+
+Open the Setup tab. The row says "token in the UI config, waiting for adoption". Push Adopt (or run `ochost channels adopt telegram`). The Worker then:
+
+1. sets the Telegram webhook (a wrong token stops here, and nothing changes);
+2. moves the token out of the config and keeps it in its own store;
+3. rewrites the channel to webhook mode and accepts the config;
+4. restarts the gateway.
+
+Slack, Discord and Twilio work the same way. Discord also needs its application id in the UI config; the public key is not a UI field, so Discord adopt stops with "missing" until you use `ochost channels add discord`.
+
+One difference from `channels add`: an adopted token is in the Worker's creds store, not a Worker secret. `ochost channels add` writes a Worker secret.
+
 ## Next
 
 Go to [Models](/models/).

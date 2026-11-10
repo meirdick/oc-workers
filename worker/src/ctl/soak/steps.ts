@@ -14,6 +14,7 @@ import {
   measure,
   nodeBg,
   nodeJs,
+  POISON_WATCH_MS,
   pct,
   probe,
   SEC,
@@ -29,6 +30,7 @@ import {
   PITR_COUNT,
   PITR_WRITE,
   POISON,
+  procPat,
   SCRUB_SH,
   USER_VERSION,
   WRITER,
@@ -49,6 +51,17 @@ async function ensureUp(x: StepCtx, tag = "up"): Promise<{ ok: boolean; s: Any }
   }
   return { ok: false, s };
 }
+
+/**
+ * Steps that count replies need a Telegram channel. With no bot token the gateway has no Telegram route: every
+ * update stays `pending` until inbox.deadHours (23 h), nothing is replied, and rule 5 (pending rows) refuses
+ * every sleep in that time (M7 soak: telegram-60, drill-a, s4-500). Fail at once with the fix.
+ */
+const NO_TELEGRAM = {
+  checks: { telegramChannel: false },
+  data: { why: "no bot token: ochost channels add telegram" },
+};
+const noTelegram = (x: StepCtx) => !x.port.c.secrets.botToken;
 
 const alertCounts = async (x: StepCtx): Promise<Record<string, number>> => {
   const r = await x.port.ops("alerts", "GET");
@@ -124,7 +137,9 @@ const writer: Handler = async (x) => {
 const kill: Handler = async (x) => {
   const { port, d, p } = x;
   const fault = String(p.fault ?? "sigkill");
-  const newGen = fault === "sigkill" || fault === "destroy";
+  // SIGTERM to the main process is the platform drain (plan §4.5): ocsup drains, takes the final snapshot and
+  // exits 0, so a new gen follows. Only `abort` (deploy stand-in) keeps the gen. Plans set `newGen` per step.
+  const newGen = typeof p.newGen === "boolean" ? p.newGen : fault === "sigkill" || fault === "destroy";
   const upMs = Number(p.upMs ?? 60 * SEC);
   const refKey = `soak:ref:${x.plan.name}`;
   switch (x.phase) {
@@ -288,6 +303,7 @@ const tgBatch: Handler = async (x) => {
   const db = port.c.db;
   switch (x.phase) {
     case "start":
+      if (noTelegram(x)) return finish(NO_TELEGRAM);
       return (await ensureUp(x)).ok ? wait(0, "inject") : wait(5000, "start");
     case "inject": {
       if (x.now < (d.nextAt ?? 0)) return wait(Math.min(2000, d.nextAt - x.now), "inject");
@@ -373,6 +389,7 @@ const cycles: Handler = async (x) => {
   const s = await port.status();
   switch (x.phase) {
     case "start": {
+      if (d.done === 0 && noTelegram(x)) return finish(NO_TELEGRAM);
       if (d.done >= n) return wait(0, "end");
       if (s.state !== "running" && s.state !== "asleep") {
         await ensureUp(x);
@@ -387,9 +404,17 @@ const cycles: Handler = async (x) => {
         return wait(0, "inject");
       }
       if (x.now - d.t > 8 * MIN)
-        return finish({ checks: { sleptEveryCycle: false }, data: { stuckAt: d.done, state: s.state } });
+        return finish({
+          checks: { sleptEveryCycle: false },
+          data: { stuckAt: d.done, state: s.state, refused: d.refused ?? {}, inbox: s.inbox ?? null },
+        });
       if (s.state === "running" && x.now - (d.sleepAt ?? 0) >= 15_000) {
-        await port.ops("sleep", "POST", {}, { force: "1" });
+        // Keep the gate's answer (rule, e.g. "5:inbox"): M7 soak dropped it and 50 steps failed with no reason.
+        const r = await port.ops("sleep", "POST", {}, { force: "1" });
+        if (r.status !== 200) {
+          const why = String(r.body?.reason ?? r.body?.error ?? r.status);
+          d.refused = { ...(d.refused ?? {}), [why]: (d.refused?.[why] ?? 0) + 1 };
+        }
         d.sleepAt = x.now;
       }
       return wait(3000, "sleep");
@@ -443,14 +468,33 @@ const cycles: Handler = async (x) => {
 };
 
 /** R2 bytes, snapshot sizes and rebase count after the cycles. */
-const s4Final: Handler = async (x) => {
-  const db = x.port.c.db;
+/** R2 bytes of the install (the soak's own prefixes left out). */
+async function installR2(x: StepCtx) {
   const u = await x.port.ctlFault("r2-usage");
   const by: Record<string, { n: number; bytes: number }> = u.body?.by ?? {};
   const own = ["results", "soak-resume", "soak-hold"];
-  const r2 = Object.entries(by)
+  const bytes = Object.entries(by)
     .filter(([k]) => !own.includes(k))
     .reduce((a, [, v]) => a + v.bytes, 0);
+  return { ok: u.status === 200, bytes, by };
+}
+const r2StartKey = (plan: string) => `soak:r2start:${plan}`;
+
+/** First step of s4-500: R2 bytes before the cycles, for the growth measure in s4-final. */
+const r2Mark: Handler = async (x) => {
+  const r = await installR2(x);
+  if (r.ok) x.port.c.db.setMeta(r2StartKey(x.plan.name), r.bytes);
+  return finish({ checks: { usageRead: r.ok }, data: { r2Bytes: r.bytes, byPrefix: r.by } });
+};
+
+const s4Final: Handler = async (x) => {
+  const db = x.port.c.db;
+  const u0 = await installR2(x);
+  const by = u0.by;
+  const r2 = u0.bytes;
+  // Owner decision (M7 soak): the bound is growth over the plan ("gen GC keeps R2 bytes flat", addendum S4),
+  // not R2 over state (that mixes in every gen of earlier plans; M7 6.28x, M4 2.65-4.85x). Ratio kept as info.
+  const start = db.metaNum(r2StartKey(x.plan.name), 0);
   const snaps = db.all<Any>(
     "SELECT id, size, kind, chain_base, created_at FROM snapshots ORDER BY created_at DESC LIMIT 60",
   );
@@ -462,9 +506,22 @@ const s4Final: Handler = async (x) => {
   const state = Math.max(1, newest + gdb);
   const bases = new Set(snaps.map((r) => r.chain_base)).size;
   return finish({
-    checks: { usageRead: u.status === 200 },
+    checks: { usageRead: u0.ok, r2StartRead: start > 0 },
     measures: [
-      measure("s4-r2-bytes", "R2 bytes over state", +(r2 / state).toFixed(2), "x", "≤ 3x state (guess)", 3),
+      ...(start > 0
+        ? [
+            measure(
+              "s4-r2-growth",
+              "R2 bytes end over start",
+              +(r2 / start).toFixed(2),
+              "x",
+              "≤ 1.5x start (guess)",
+              1.5,
+            ),
+            measure("s4-r2-growth-mb", "R2 growth", +((r2 - start) / 1e6).toFixed(1), "MB", "info"),
+          ]
+        : []),
+      measure("s4-r2-bytes", "R2 bytes over state", +(r2 / state).toFixed(2), "x", "info"),
       measure(
         "s4-rebases",
         "chain roots seen",
@@ -477,6 +534,7 @@ const s4Final: Handler = async (x) => {
     ],
     data: {
       r2Bytes: r2,
+      r2StartBytes: start || null,
       byPrefix: by,
       stateBytes: state,
       snapshotSizes: snaps.map((r) => ({ at: r.created_at, size: r.size, kind: r.kind })),
@@ -521,7 +579,7 @@ const churnHold: Handler = async (x) => {
   if (!u.ok) return wait(10_000);
   const alive = await exec(
     port,
-    ["sh", "-c", "pgrep -f soak-churn.mjs >/dev/null && echo alive || echo dead"],
+    ["sh", "-c", `pgrep -f ${procPat("soak-churn.mjs")} >/dev/null && echo alive || echo dead`],
     20_000,
   );
   if (!/alive/.test(String(alive.stdout))) {
@@ -549,17 +607,21 @@ const churnHold: Handler = async (x) => {
 /** Stop the churn, then CredStore must equal the disk within `settleMs` (creds bound 30 s). */
 const credsCompare: Handler = async (x) => {
   if (!x.d.stopAt) {
-    await sh(x.port, "pkill -f soak-churn.mjs; echo stopped", 20_000);
+    await sh(x.port, `pkill -f ${procPat("soak-churn.mjs")}; echo stopped`, 20_000);
     x.d.stopAt = x.now;
     return wait(5000);
   }
   const c = await sameCreds(x);
   if (!c.ok && x.now - x.d.stopAt < Number(x.p.settleMs ?? 90 * SEC)) return wait(5000);
   const lag = (x.now - x.d.stopAt) / 1000;
+  // A lag exists only when the two sides met. Without that, the wait cap (settleMs) is not a lag (M7 soak:
+  // 91 s reported while the creds dir did not exist).
   return finish({
-    checks: { credStoreEqualsDisk: c.ok },
-    measures: [measure("baileys-24h", "CredStore lag after stop", lag, "s", "≤ 30 s", BOUND.credsMs / 1000)],
-    data: { ...c },
+    checks: { credStoreEqualsDisk: c.ok, credsOnDisk: c.disk > 0 },
+    measures: c.ok
+      ? [measure("baileys-24h", "CredStore lag after stop", lag, "s", "≤ 30 s", BOUND.credsMs / 1000)]
+      : [],
+    data: { ...c, waitedS: lag },
   });
 };
 
@@ -601,8 +663,15 @@ const restoreAndWait = async (x: StepCtx, stamp: string) => {
   return r.status === 202;
 };
 
-const bootFlag = (s: Any) =>
-  s.gen?.reason === "l5" || /l5|pitr/.test(String(s.gen?.planKind ?? "")) || s.gen?.plan?.sqlite === "pitr";
+/**
+ * The running gen is the PITR boot. A PITR boot shows in status as planKind `gen` and plan.sqlite `gen`, never
+ * `l5` or `pitr` (ctl/gens.ts sets plan_kind = plan.sqlite.kind), so the old test never held (M7 soak). The
+ * Control DO records the boot in meta `l5Done` {bootGen} at onStarted.
+ */
+const bootFlag = (x: StepCtx, s: Any) => {
+  const done = x.port.c.db.metaJson<{ bootGen?: number } | null>("l5Done", null);
+  return done?.bootGen !== undefined && done.bootGen === genOf(s);
+};
 
 /** Write rows, note a time, write more, restore to the noted time: rows match, boot flag set. */
 const pitr: Handler = async (x) => {
@@ -640,7 +709,7 @@ const pitr: Handler = async (x) => {
           return finish({ checks: { restoreAccepted: true, running: false }, data: d });
         return wait(5000, "boot");
       }
-      d.flag = bootFlag(s);
+      d.flag = bootFlag(x, s);
       d.runMs = x.now - d.restoreFiredAt;
       d.settleAt = x.now + 8 * SEC;
       return wait(8000, "count");
@@ -653,6 +722,7 @@ const pitr: Handler = async (x) => {
           restoreAccepted: true,
           running: true,
           bootFlag: d.flag === true,
+          rowsWritten: (d.a?.n ?? 0) > 0 && (d.b?.n ?? 0) > (d.a?.n ?? 0),
           rowsMatch: c.a === d.a?.n && c.b === 0,
         },
         measures: [measure("pitr-boot", "restore to running", d.runMs / 1000, "s", "info")],
@@ -696,7 +766,7 @@ const poison: Handler = async (x) => {
         d.l5Min = +((x.now - d.killAt) / MIN).toFixed(1);
         return wait(0, "restore");
       }
-      if (x.now - d.killAt > Number(p.watchMs ?? 45 * MIN)) return wait(0, "restore");
+      if (x.now - d.killAt > Number(p.watchMs ?? POISON_WATCH_MS)) return wait(0, "restore");
       return wait(15_000, "watch");
     }
     case "restore":
@@ -716,7 +786,7 @@ const poison: Handler = async (x) => {
           });
         return wait(10_000, "boot");
       }
-      d.flag = bootFlag(s);
+      d.flag = bootFlag(x, s);
       d.settleAt = x.now + 8 * SEC;
       return wait(8000, "end");
     }
@@ -731,6 +801,7 @@ const poison: Handler = async (x) => {
           restoreAccepted: true,
           bootFlag: d.flag === true,
           userVersionRestored: uv === d.uv0,
+          rowsWritten: (d.a?.n ?? 0) > 0,
           rowsKept: c.a === d.a?.n,
         },
         measures:
@@ -755,6 +826,7 @@ const diskFill: Handler = async (x) => {
       d.base = await alertCounts(x);
       const df = await sh(port, "df -B1 --output=size,avail / | tail -1", 20_000);
       const [size, avail] = String(df.stdout).trim().split(/\s+/).map(Number);
+      d.usedBefore = usedPctOf(size, avail);
       const want =
         pctWant >= 100
           ? (avail ?? 0) - 1_048_576
@@ -766,10 +838,15 @@ const diskFill: Handler = async (x) => {
           : "";
       const r = await sh(
         port,
-        `setpriv --reuid=1000 --regid=1000 --clear-groups sh -c 'mkdir -p ${FILL_DIR} && fallocate -l ${want} ${FILL_DIR}/f${top}'; echo done`,
+        // One file per step: fallocate on the existing `f` with a smaller length allocates nothing, so disk-96
+        // after disk-82 filled no byte (M7 soak).
+        `setpriv --reuid=1000 --regid=1000 --clear-groups sh -c 'mkdir -p ${FILL_DIR} && fallocate -l ${want} ${FILL_DIR}/f${pctWant}${top}'; echo done`,
         50_000,
       );
       d.fillAt = x.now;
+      const df2 = await sh(port, "df -B1 --output=size,avail / | tail -1", 20_000);
+      const [size2, avail2] = String(df2.stdout).trim().split(/\s+/).map(Number);
+      d.usedAfterFill = usedPctOf(size2, avail2);
       d.fill = { want, out: String(r.stdout).slice(0, 100) };
       return wait(Number(p.waitMs ?? 75 * SEC), "check");
     }
@@ -778,19 +855,33 @@ const diskFill: Handler = async (x) => {
       const al = await alertCounts(x);
       const high = alertDelta(d.base, al, /^disk-high/).length > 0;
       const full = alertDelta(d.base, al, /^disk-full/).length > 0;
+      // ocsup raises disk-high once per excursion (diskwatch.mjs: only on the ok → alert edge) and disk-full once
+      // per degraded spell. A step that starts above a threshold expects no new alert for it.
+      const before = typeof d.usedBefore === "number" ? d.usedBefore : 0;
       return finish({
         checks: {
           running: s.state === "running",
           noRestart: genOf(s) === d.g0,
-          ...(pctWant >= 80 ? { diskHighAlert: high } : {}),
-          ...(pctWant >= 95 ? { diskFullAlert: full } : {}),
+          filled: typeof d.usedAfterFill === "number" && d.usedAfterFill >= Math.min(pctWant, 99) - 1,
+          ...(pctWant >= 80 && before < 80 ? { diskHighAlert: high } : {}),
+          ...(pctWant >= 95 && before < 95 ? { diskFullAlert: full } : {}),
           noReplicaDownAlert: alertDelta(d.base, al, /^replica-down/).length === 0,
         },
-        data: { pct: pctWant, fill: d.fill, degraded: s.degraded },
+        data: {
+          pct: pctWant,
+          usedBefore: d.usedBefore ?? null,
+          usedAfterFill: d.usedAfterFill ?? null,
+          fill: d.fill,
+          degraded: s.degraded,
+          newAlerts: { high, full },
+        },
       });
     }
   }
 };
+
+const usedPctOf = (size?: number, avail?: number): number | null =>
+  size ? +(100 * (1 - (avail ?? 0) / size)).toFixed(1) : null;
 
 const diskFree: Handler = async (x) => {
   const { port, d } = x;
@@ -897,17 +988,20 @@ const ctlWipe: Handler = async (x) => {
         }
         return wait(10_000, "wiped");
       }
+      // M7 soak: before.creds was 0 (the churn never ran), and `max(1, before - 1)` failed a drill that had
+      // nothing to rebuild. credsTested says whether the drill exercised the creds path at all.
+      const credsBefore = Number(d.before.creds ?? 0);
+      const credsAfter = c.one<Any>("SELECT COUNT(*) AS n FROM creds WHERE deleted = 0")?.n ?? 0;
       return finish({
         checks: {
           running: true,
           notRewoundBlocked: s.ctlState !== "ctl-rewound" || genOf(s) !== d.g0,
           gensRebuilt: rows >= 1,
-          credsBack:
-            (c.one<Any>("SELECT COUNT(*) AS n FROM creds WHERE deleted = 0")?.n ?? 0) >=
-            Math.max(1, (d.before.creds ?? 0) - 1),
+          credsTested: credsBefore > 0,
+          credsBack: credsAfter >= credsBefore - (credsBefore > 0 ? 1 : 0),
         },
         measures: [measure("drill-j-l", "wipe to running", (x.now - d.wipeAt) / 1000, "s", "info")],
-        data: { before: d.before, ctlState: s.ctlState },
+        data: { before: d.before, credsAfter, ctlState: s.ctlState },
       });
     }
   }
@@ -923,11 +1017,13 @@ const drillA: Handler = async (x) => {
       const u = await ensureUp(x);
       if (!u.ok) return wait(5000, "start");
       d.g0 = genOf(u.s);
+      if (noTelegram(x)) return finish(NO_TELEGRAM);
       await sh(
         port,
         `setpriv --reuid=1000 --regid=1000 --clear-groups sh -c 'mkdir -p /home/node/.openclaw/workspace/soak && echo a > /home/node/.openclaw/workspace/soak/a.marker'; echo ok`,
         20_000,
       );
+      d.markAt = port.c.now();
       d.chat = 780_000_000 + (Math.floor(x.now / 1000) % 1_000_000);
       const r = await port.inject(d.chat, "soak drill A m4b-slow", { plan: x.plan.name, step: x.spec.id });
       d.ack = r.status;
@@ -964,17 +1060,40 @@ const drillA: Handler = async (x) => {
         "test -f /home/node/.openclaw/workspace/soak/a.marker && echo yes || echo no",
         20_000,
       );
+      const kept = /yes/.test(String(has.stdout));
+      // destroy() is an unplanned stop: rootfs writes after the restored snapshot are lost by design (plan §1:
+      // rootfs bulk ≤ 60 min). The marker is written seconds before the destroy, so it survives only when the
+      // restored snapshot is newer. The check is the bound, not the marker (M7 soak: workspaceKept false).
+      const snapAt =
+        port.c.db.one<Any>("SELECT created_at FROM snapshots WHERE id = ?", String(d.plan?.snapshotId ?? ""))
+          ?.created_at ?? null;
+      const bulkAgeMs = typeof snapAt === "number" ? d.destroyAt - snapAt : null;
       return finish({
         checks: {
           acked: d.ack === 200,
           destroyOk: d.destroy?.ok !== false,
           restarted: true,
           snapshotPath: d.plan?.rootfs === "snapshot",
-          workspaceKept: /yes/.test(String(has.stdout)),
+          workspaceInBound:
+            kept || (bulkAgeMs !== null && snapAt < (d.markAt ?? 0) && bulkAgeMs <= BOUND.bulkMs),
           replied: n >= 1,
         },
-        measures: [measure("drill-a", "destroy to running", d.runMs / 1000, "s", "info")],
-        data: { plan: d.plan, replies: n },
+        measures: [
+          measure("drill-a", "destroy to running", d.runMs / 1000, "s", "info"),
+          ...(bulkAgeMs !== null
+            ? [
+                measure(
+                  "drill-a-bulk",
+                  "rootfs age at destroy",
+                  bulkAgeMs / 1000,
+                  "s",
+                  "≤ 60 min",
+                  BOUND.bulkMs / 1000,
+                ),
+              ]
+            : []),
+        ],
+        data: { plan: d.plan, replies: n, workspaceKept: kept, snapshotAt: snapAt },
       });
     }
   }
@@ -1180,6 +1299,7 @@ export const HANDLERS: Record<string, Handler> = {
   kill,
   "tg-batch": tgBatch,
   cycles,
+  "r2-mark": r2Mark,
   "s4-final": s4Final,
   "churn-hold": churnHold,
   "creds-compare": credsCompare,
@@ -1209,7 +1329,7 @@ export function timeoutOf(type: string, p: Record<string, any>): number {
     case "r2-outage":
       return Number(p.ms ?? 30 * MIN) + 40 * MIN;
     case "poison":
-      return Number(p.watchMs ?? 45 * MIN) + 40 * MIN;
+      return Number(p.watchMs ?? POISON_WATCH_MS) + 40 * MIN;
     case "wait":
       return Number(p.ms ?? MIN) + 5 * MIN;
     case "cycles":
