@@ -116,7 +116,7 @@ Change them with `ochost config set <key> <value>` or `ochost sleep set auto|off
 | `checkpoint.maxPerDay` | `30` | 0-96 | Checkpoints per UTC day. Then they stop. |
 | `snapshots.maxPerDay` | `40` | 10-200, at least `checkpoint.maxPerDay` + 2 | Planned, checkpoint and maintenance snapshots per UTC day before the alert `snapshot-budget`. |
 | `archive.everyHours` | `6` | 1-168 | An archive is due when the newest is older than this. |
-| `archive.minGapMinutes` | `15` | 5-1440 | Minimum time between two archives when the state changed. |
+| `archive.minGapMinutes` | `60` | 5-1440 | Minimum time between two archives when the state changed. Before 1.2.3 the default was `15`. |
 | `archive.maxPerDay` | `24` | 1-96 | Archives per UTC day. |
 | `archive.drillEveryDays` | `30` | 1-365 | Restore drill cadence. |
 | `chain.rebaseAfterHours` | `24` | 1-720 | A snapshot chain whose root is older than this is rebased at the next wake. |

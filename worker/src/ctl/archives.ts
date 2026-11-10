@@ -119,8 +119,8 @@ export function archiveFreshForRestart(c: Ctx): boolean {
 
 /**
  * N8 gate for a stop that precedes a boot: the sleep op waits for an archive newer than the last write. Asks for one
- * (forced reason, so the 6 h cadence and the 15 min gap do not apply) when the next boot may be an archive-path
- * boot and the newest archive is behind the last write; at most one ask per minGapMs, so a gateway that keeps writing
+ * (forced reason, so the 6 h cadence and the dirty gap do not apply) when the next boot may be an archive-path
+ * boot and the newest archive is behind the last write; at most one ask per preBootGapMs (15 min), so a gateway that keeps writing
  * cannot hold the sleep: the existing `archive-requested` hold ends at requestHoldMs; and at most one archive per
  * redeploy. Returns true when it asked.
  */
@@ -132,7 +132,7 @@ export function ensurePreBootArchive(c: Ctx): boolean {
   const n = newestComplete(q(c));
   if (n && n.created_at >= since) return false;
   const last = c.db.metaNum("preBootReqAt", 0);
-  if (c.now() - last < cfgOf(c).minGapMs) return false;
+  if (c.now() - last < cfgOf(c).preBootGapMs) return false;
   const cur = c.db.metaJson<ArchiveRequest | null>("archiveRequest", null);
   if (cur && (cur.state === "pending" || cur.state === "running")) return false;
   c.db.setMeta("preBootReqAt", c.now());

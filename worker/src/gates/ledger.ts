@@ -74,6 +74,8 @@ export const GATE_COLUMNS: readonly [string, string, string][] = [
   ["gendb", "l9_bytes", "INTEGER NOT NULL DEFAULT 0"],
   // sec F5: hello token bucket.
   ["gate_hello", "tokens", "REAL"],
+  // 1.2.3: hellos without a valid hello MAC. Only these count toward hello-flood. NULL on an old row = n.
+  ["gate_hello", "nu", "INTEGER"],
   // M4 archives: why it was taken, the newest replica write it covers, workspace facts at start, read-back
   // verification (restore or drill), and the bad mark.
   ["archives", "reason", "TEXT"],
@@ -520,32 +522,38 @@ export class GateLedger {
   /**
    * Hello counter per gen and plane (spec §17.1 step 2). sec F5: a token bucket (HELLO_BURST, +1 per
    * HELLO_REFILL_MS = 4/s) instead of a fixed 1/s slot, so a 1/s attacker loop cannot take every slot;
-   * `authed` (the caller proved bootSecret with a hello MAC) is never limited. Alert hello-flood above 200.
+   * `authed` (the caller proved bootSecret with a hello MAC) is never limited. `n` counts all served hellos;
+   * `nu` counts only unauthed ones. Alert hello-flood when `nu` > HELLO_ALERT: the replica proxy proves
+   * again every 5 s while Litestream uploads, so authed hellos are many and are not a flood.
    */
   hello(gen: number, plane: "control" | "replica", authed = false): { allow: boolean; n: number } {
     return this.tx(() => {
       const now = this.now;
-      const r = this.one<{ n: number; last_at: number; alerted: number; tokens: number | null }>(
-        "SELECT n, last_at, alerted, tokens FROM gate_hello WHERE gen = ? AND plane = ?",
-        gen,
-        plane,
-      );
+      const r = this.one<{
+        n: number;
+        nu: number | null;
+        last_at: number;
+        alerted: number;
+        tokens: number | null;
+      }>("SELECT n, nu, last_at, alerted, tokens FROM gate_hello WHERE gen = ? AND plane = ?", gen, plane);
       const had = r ? (r.tokens ?? 0) + (now - r.last_at) / HELLO_REFILL_MS : HELLO_BURST;
       const tokens = Math.min(HELLO_BURST, had);
       if (!authed && tokens < 1) return { allow: false, n: r?.n ?? 0 };
       const n = (r?.n ?? 0) + 1;
+      const nu = (r ? (r.nu ?? r.n) : 0) + (authed ? 0 : 1);
       let alerted = r?.alerted ?? 0;
-      if (n > HELLO_ALERT && !alerted) {
-        this.alert("hello-flood", "warn", `gen ${gen} ${plane}: ${n} hellos`);
+      if (nu > HELLO_ALERT && !alerted) {
+        this.alert("hello-flood", "warn", `gen ${gen} ${plane}: ${nu} hellos without a hello MAC`);
         alerted = 1;
       }
       this.run(
-        `INSERT INTO gate_hello (gen, plane, n, last_at, alerted, tokens) VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(gen, plane) DO UPDATE SET n = excluded.n, last_at = excluded.last_at,
+        `INSERT INTO gate_hello (gen, plane, n, nu, last_at, alerted, tokens) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(gen, plane) DO UPDATE SET n = excluded.n, nu = excluded.nu, last_at = excluded.last_at,
          alerted = excluded.alerted, tokens = excluded.tokens`,
         gen,
         plane,
         n,
+        nu,
         now,
         alerted,
         authed ? tokens : tokens - 1,

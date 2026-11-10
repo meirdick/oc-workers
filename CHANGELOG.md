@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3
+
+- Fix: The `hello-flood` alert no longer fires on a normal install after about 50 minutes awake. The container's replica proxy proves the replica gate again before an upload when its last proof is over 5 s old, and Litestream uploads about every 15 s, so a normal hour had about 240 hellos. The proxy and ocsup now send a hello MAC that proves the boot secret, and only hellos without it count toward the alert. This needs the new image: run `ochost deploy`, then `ochost restart`. An older image still works; its hellos count as before.
+- Backups: while the install is awake and its state changed, the extra archive now runs at most once an hour (was every 15 minutes). Litestream already keeps database loss after a crash to about 1 s; the archive is an extra restore point. The 6 hour archive, the pre-upgrade and owner archives and the daily cap do not change. An install made before 1.2.3 has `"minGapMinutes": 15` in `oc-host.jsonc` and keeps it; to use the new default, set `"minGapMinutes": 60` under `archive` in `oc-host.jsonc` and run `ochost deploy`.
+
 ## 1.2.2
 
 - Fix: A Control UI tab left open no longer keeps the install awake. After the idle close, the tab retries its connection and checks `/healthz` about every 15 s. Those requests reset the idle timer, so the install never slept. Now a tab that was idle-closed gets its requests answered without counting as activity and without waking the install. A health check from any tab is not activity either. Reload the tab to use it again.

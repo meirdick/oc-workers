@@ -357,7 +357,7 @@ export function defaultConfigText(o: {
   "alerts": { "channel": "none", "dedupeMinutes": 60, "minSeverity": "high" },  // channel: ntfy | webhook | none; set by ochost alerts setup
   "checkpoint": { "intervalMinutes": 60, "maxPerDay": 30 },
   "snapshots": { "maxPerDay": 40 },
-  "archive": { "everyHours": 6, "minGapMinutes": 15, "maxPerDay": 24, "drillEveryDays": 30 },
+  "archive": { "everyHours": 6, "minGapMinutes": 60, "maxPerDay": 24, "drillEveryDays": 30 },
   "chain": { "rebaseAfterHours": 24, "rebaseAfterSnapshots": 40, "tagWarn": 100 },
   "gens": { "churnPerDay": 10 },
   "storage": { "pruneAtMb": 1024, "refuseAtMb": 2048 },

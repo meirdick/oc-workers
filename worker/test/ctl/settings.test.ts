@@ -152,6 +152,13 @@ describe("settings document", () => {
 describe("consumers read the document at call time", () => {
   it("archive cadence: hours, minutes, per-day and drill days in ms", () => {
     const w = live();
+    // 1.2.3 defaults: dirty gap 60 min (was 15), 6 h age; the pre-boot ask gap stays 15 min
+    expect(cfgOf(w.ctx)).toMatchObject({
+      minGapMs: 60 * 60_000,
+      everyMs: 6 * 3_600_000,
+      preBootGapMs: 15 * 60_000,
+      perDay: 24,
+    });
     ok(
       put(w, {
         "archive.everyHours": 2,

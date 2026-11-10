@@ -1,6 +1,6 @@
 // WebCrypto helpers for the gates: HMAC-SHA256 hex, SHA-256 hex, constant-time compare, hex/b64.
 // Keys follow docs/07-gate-contract.md §1 (domain-separated HMAC with key = bootSecret).
-import { DOMAIN, replicaAccessKeyId, replicaKeyMessage } from "../core/contract";
+import { DOMAIN, HDR, helloMacMessage, replicaAccessKeyId, replicaKeyMessage } from "../core/contract";
 
 const te = new TextEncoder();
 export type Bytes = Uint8Array | ArrayBuffer | string;
@@ -80,9 +80,9 @@ export function b64len(s: string): number {
  * gate learns a MAC over a random challenge in its own domain, no use as a proof or key. A valid MAC skips the
  * hello rate, so a uid-1000 hello flood through the replica proxy cannot starve ocsup's proofs.
  */
-export const HELLO_MAC_HEADER = "x-ocrt-hello-mac";
+export const HELLO_MAC_HEADER: string = HDR.helloMac;
 export const helloMac = (secret: string, plane: "control" | "replica", challenge: string) =>
-  hmacHex(secret, `oc-hello-mac\0${plane}\0${challenge}`);
+  hmacHex(secret, helloMacMessage(plane, challenge));
 export async function helloMacOk(
   secret: string,
   plane: "control" | "replica",

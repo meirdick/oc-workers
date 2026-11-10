@@ -1,0 +1,38 @@
+# Publish the oc-workers CLI to npm when a version tag is pushed (v1.2.3 → oc-workers@1.2.3).
+# Uses npm trusted publishing (OIDC): no npm token is stored. Set it up once on npmjs.com:
+# package oc-workers → Settings → Trusted publisher → GitHub Actions, repository meirdick/oc-workers,
+# workflow release.yml.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm with trusted publishing
+        run: npm install -g npm@^11.5.1
+      - run: npm ci
+      - name: Tag matches the CLI version
+        run: |
+          want="v$(node -p "require('./cli/package.json').version")"
+          if [ "$want" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match cli/package.json ($want)"; exit 1
+          fi
+      - name: CLI tests
+        working-directory: cli
+        run: npx vitest run
+      - name: Publish
+        working-directory: cli
+        run: npm publish --provenance --access public

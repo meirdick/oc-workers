@@ -112,6 +112,11 @@ test("gate: hello proof before secret, boot binds iid, 409 -> stale once", async
   assert.equal(r.status, "ok");
   assert.equal(g1.calls[0].path, "/v1/hello");
   assert.equal(g1.calls[0].headers["x-ocrt-secret"], undefined);
+  // 1.2.3: hello MAC for the control plane, never the secret
+  assert.equal(
+    g1.calls[0].headers["x-ocrt-hello-mac"],
+    createHmac("sha256", "sec").update(`oc-hello-mac\0control\0${g1.calls[0].body.challenge}`).digest("hex"),
+  );
   assert.equal(g1.calls[1].headers["x-ocrt-secret"], "sec");
   await assert.rejects(gate.heartbeat({ seq: 1 }), StaleError);
   await assert.rejects(gate.heartbeat({ seq: 2 }), StaleError);

@@ -23,6 +23,7 @@ export const PV: number = C.PV;
 export const GATE = C.GATE;
 export const HDR = C.HDR;
 export const DOMAIN = C.DOMAIN;
+export const helloMacMessage: (plane: "control" | "replica", challenge: string) => string = C.helloMacMessage;
 export const EXIT = C.EXIT;
 export const MODES: string[] = C.MODES;
 export const SQLITE_KINDS: string[] = C.SQLITE_KINDS;

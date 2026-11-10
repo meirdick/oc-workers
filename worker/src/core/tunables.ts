@@ -48,7 +48,7 @@ export const SPECS: readonly Spec[] = Object.freeze([
   int("checkpoint.maxPerDay", 30, 0, 96),
   int("snapshots.maxPerDay", 40, 10, 200),
   int("archive.everyHours", 6, 1, 168),
-  int("archive.minGapMinutes", 15, 5, 1440),
+  int("archive.minGapMinutes", 60, 5, 1440),
   int("archive.maxPerDay", 24, 1, 96),
   int("archive.drillEveryDays", 30, 1, 365),
   int("chain.rebaseAfterHours", 24, 1, 720),

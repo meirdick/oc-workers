@@ -294,6 +294,47 @@ describe("F5 hello priority", () => {
     const other = await hello(w, await helloMac(w.props.bootSecret, "control", ch), ch);
     expect(other.status).toBe(429);
   });
+
+  it("1.2.3: proxy hellos with a valid MAC every 5 s for 2 h raise no hello-flood; MAC-less hellos still do", async () => {
+    const w = await bound();
+    const flood = () => w.sql("SELECT count FROM alerts WHERE class = 'hello-flood'");
+    for (let i = 0; i < 1440; i++) {
+      w.clock.t += 5000;
+      const ch = rid() + rid();
+      expect((await hello(w, await helloMac(w.props.bootSecret, "replica", ch), ch)).status).toBe(200);
+    }
+    expect(flood()).toEqual([]);
+    // an image before 1.2.3 sends no MAC: served as before and counted
+    for (let i = 0; i < 205; i++) {
+      w.clock.t += 1000;
+      expect((await hello(w)).status).toBe(200);
+    }
+    expect(flood()).toEqual([{ count: 1 }]);
+    expect(w.ledger.helloServed(w.props.gen)).toBe(true);
+  });
+
+  it("ledger: only unauthed hellos count toward hello-flood; a row from before 1.2.3 (nu NULL) counts n", () => {
+    const w = new World();
+    const flood = () => w.sql("SELECT count FROM alerts WHERE class = 'hello-flood'");
+    for (let i = 0; i < 500; i++)
+      expect(w.ledger.hello(9, "replica", true)).toEqual({ allow: true, n: i + 1 });
+    expect(w.ledger.helloServed(9)).toBe(true);
+    expect(flood()).toEqual([]);
+    // old row: 150 hellos counted before the nu column existed
+    for (let i = 0; i < 150; i++) {
+      w.clock.t += 1000;
+      w.ledger.hello(8, "replica");
+    }
+    w.sql("UPDATE gate_hello SET nu = NULL WHERE gen = 8");
+    for (let i = 0; i < 50; i++) {
+      w.clock.t += 1000;
+      w.ledger.hello(8, "replica");
+    }
+    expect(flood()).toEqual([]);
+    w.clock.t += 1000;
+    w.ledger.hello(8, "replica");
+    expect(flood()).toEqual([{ count: 1 }]);
+  });
 });
 
 describe("F7 requests without the key", () => {

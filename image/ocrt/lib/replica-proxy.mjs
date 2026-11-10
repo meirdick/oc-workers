@@ -2,9 +2,12 @@
 // Forwards a request to ReplicaGate only while a hello proof is < 5 s old; proves again first when
 // older. A failed proof -> 503, no byte forwarded, state `replica-unproven`. Headers pass unchanged
 // (Host included), so the gate checks the SigV4 signature Litestream made for 127.0.0.1:18790.
+// Each hello sends the hello MAC: Litestream uploads about every 15 s while awake, so the proxy proves about
+// 240 times per hour. With the MAC the gate does not count these toward `hello-flood`.
 import { createHmac, randomBytes } from "node:crypto";
 import http from "node:http";
-import { DOMAIN, REPLICA_HELLO_PATH, REPLICA_PROOF_MAX_AGE_MS } from "./contract.mjs";
+import { DOMAIN, HDR, REPLICA_HELLO_PATH, REPLICA_PROOF_MAX_AGE_MS } from "./contract.mjs";
+import { helloMac } from "./gate.mjs";
 
 export const PROXY_PORT = 18790;
 export const UPSTREAM_IDLE_MS = 60_000;
@@ -15,7 +18,7 @@ export async function proveReplica(base, secret, fetchFn = fetch) {
   try {
     const r = await fetchFn(`${base}${REPLICA_HELLO_PATH}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", [HDR.helloMac]: helloMac(secret, "replica", challenge) },
       body: JSON.stringify({ challenge }),
       signal: AbortSignal.timeout(5000),
     });

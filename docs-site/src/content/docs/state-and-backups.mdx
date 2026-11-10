@@ -17,7 +17,7 @@ A snapshot is a saved copy of the container disk, an archive is a portable backu
 | Credentials | Channel and login credentials | Written to the Control DO on each change, plus a copy to R2 at most every 15 minutes | Under 1 s typical, 30 s worst |
 | Files | Workspace, plugins, media | Disk snapshots, hourly while awake and at each planned stop | 60 min. 0 after a planned stop. |
 | Stored files | Files the agent saves to the storage location `r2` | Written to R2 (`f/<inst>/`) through the replica gate on each save | 0: durable when the save returns |
-| Archives | A portable backup of everything | `openclaw backup create` on a schedule while awake (every 6 hours by default), at maintenance and before upgrades | 6 h for files |
+| Archives | A portable backup of everything | `openclaw backup create` on a schedule while awake (every 6 hours by default, and at most once an hour when the state changed), at maintenance and before upgrades | 6 h for files |
 
 The config is a versioned document in the Control DO (the Durable Object that holds the install's records), and secrets are Worker secrets. oc-workers copies other SQLite files to R2 about every 15 minutes when they change.
 

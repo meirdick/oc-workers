@@ -17,6 +17,8 @@ export const HDR = Object.freeze({
   iid: "x-ocrt-iid",
   sha256: "x-ocrt-sha256",
   seq: "x-ocrt-seq",
+  /** Hello MAC (sec F5): HMAC(bootSecret, helloMacMessage(plane, challenge)). The gate does not rate-limit it. */
+  helloMac: "x-ocrt-hello-mac",
 });
 
 /** HMAC-SHA256 domain prefixes (key = bootSecret). Output hex. */
@@ -24,7 +26,11 @@ export const DOMAIN = Object.freeze({
   hello: "oc-hello\0",
   replicaHello: "oc-rhello\0",
   replicaKey: "oc-replica\0",
+  helloMac: "oc-hello-mac\0",
 });
+
+/** Message for the hello MAC. plane: "control" | "replica". */
+export const helloMacMessage = (plane, challenge) => `${DOMAIN.helloMac}${plane}\0${challenge}`;
 
 export const replicaAccessKeyId = (gen, iid) => `ocrt-g${gen}-${iid}`;
 /** Message for the replica secret: HMAC(bootSecret, replicaKeyMessage(gen, iid)). */

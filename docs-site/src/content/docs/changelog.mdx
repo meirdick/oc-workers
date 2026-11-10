@@ -5,6 +5,16 @@ sidebar:
   order: 15
 ---
 
+## 1.2.3
+
+Fixes:
+
+- The `hello-flood` alert no longer fires on a normal install after about 50 minutes awake. The container's replica proxy proves the replica gate again before an upload when its last proof is over 5 s old, and Litestream uploads about every 15 s, so a normal hour had about 240 hellos. The proxy and ocsup now send a hello MAC that proves the boot secret, and only hellos without it count toward the alert. This needs the new image: run `ochost deploy`, then `ochost restart`. An older image still works; its hellos count as before.
+
+Changes:
+
+- While the install is awake and its state changed, the extra archive now runs at most once an hour (was every 15 minutes). Litestream already keeps database loss after a crash to about 1 s; the archive is an extra restore point. The 6 hour archive, the pre-upgrade and owner archives and the daily cap do not change. An install made before 1.2.3 has `"minGapMinutes": 15` in `oc-host.jsonc` and keeps it; to use the new default, set `"minGapMinutes": 60` under `archive` in `oc-host.jsonc` and run `ochost deploy`.
+
 ## 1.2.2
 
 Fixes:

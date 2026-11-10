@@ -140,7 +140,11 @@ describe("M4 archive cadence (ControlGate start)", () => {
     upload(w, gen, 9); // state changed after the archive
     w.advance(MIN);
     expect(w.ledger.archiveStart(gen, "online", { reason: "6h" })).toMatchObject({ ok: false, why: "gap" });
-    w.advance(ARCHIVE_DEFAULTS.minGapMs);
+    // 1.2.3: the dirty gap is 60 min; 30 min after the archive it is still `gap`
+    expect(ARCHIVE_DEFAULTS.minGapMs).toBe(60 * MIN);
+    w.advance(28 * MIN);
+    expect(w.ledger.archiveStart(gen, "online", { reason: "6h" })).toMatchObject({ ok: false, why: "gap" });
+    w.advance(ARCHIVE_DEFAULTS.minGapMs - 30 * MIN);
     const s2 = w.ledger.archiveStart(gen, "online", { reason: "6h" });
     expect(s2.ok).toBe(true);
     if (!s2.ok) return;
@@ -650,7 +654,7 @@ describe("N8 pre-boot archive: a deploy since the last boot", () => {
     seen(w, NEW);
     expect(ensurePreBootArchive(w.ctx)).toBe(true);
     expect(archiveSleepBlockers(w.ctx)).toEqual(["archive-requested:pre-upgrade"]);
-    // once only: a pending request is not asked for again, and not within minGap after it
+    // once only: a pending request is not asked for again, and not within preBootGapMs after it
     expect(ensurePreBootArchive(w.ctx)).toBe(false);
     // the request is served by the next poll whatever the cadence says
     const a = w.ledger.archiveStart(gen, "online", { reason: "6h" });

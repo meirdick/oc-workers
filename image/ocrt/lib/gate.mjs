@@ -1,7 +1,7 @@
 // ControlGate client (contract §1-§5). No secret leaves before a good /v1/hello proof.
 // deps.fetch is injectable for tests. A 409 {error:"stale"} calls onStale() once and throws StaleError.
 import { createHmac, randomBytes } from "node:crypto";
-import { BootRes, DOMAIN, HDR, HelloRes, PV, validate } from "./contract.mjs";
+import { BootRes, DOMAIN, HDR, HelloRes, helloMacMessage, PV, validate } from "./contract.mjs";
 
 export class StaleError extends Error {
   constructor(route) {
@@ -19,6 +19,10 @@ export class GateError extends Error {
 
 export const helloProof = (secret, challenge, domain = DOMAIN.hello) =>
   createHmac("sha256", secret).update(`${domain}${challenge}`).digest("hex");
+
+/** Hello MAC (sec F5): proves bootSecret without sending it, so the gate does not count the hello as a flood. */
+export const helloMac = (secret, plane, challenge) =>
+  createHmac("sha256", secret).update(helloMacMessage(plane, challenge)).digest("hex");
 
 /**
  * createGate({base, secret, iid, envelope: () => ({inst, epoch, gen, bootId}), fetch, onStale, pv})
@@ -76,7 +80,12 @@ export function createGate(o) {
     const challenge = randomBytes(32).toString("hex");
     let res;
     try {
-      res = await call("POST", "/v1/hello", { challenge, pv }, { auth: false });
+      res = await call(
+        "POST",
+        "/v1/hello",
+        { challenge, pv },
+        { auth: false, headers: { [HDR.helloMac]: helloMac(o.secret, "control", challenge) } },
+      );
     } catch (e) {
       return { ok: false, why: e.message };
     }

@@ -17,8 +17,14 @@
 // that got 429 archive-cap and its sleep hold was re-armed by each deploy for hours).
 
 export interface ArchiveCfg {
-  /** Min time between two cadence archives when the state changed. guess: 15 min. */
+  /**
+   * Min time between two cadence archives when the state changed. 60 min (1.2.3; was 15 min). Litestream already
+   * bounds a crash to about 1 s of database loss; the archive is an extra restore point, and the gateway writes
+   * its state DB about every 15 s while awake, so the state is nearly always dirty.
+   */
   minGapMs: number;
+  /** At most one pre-boot archive request per this time (ctl/archives.ts ensurePreBootArchive). 15 min. */
+  preBootGapMs: number;
   /** Max age of the newest complete archive while awake (plan §6.1 row 7: 6 h). */
   everyMs: number;
   /** Sleep waits this long at most for an open archive. guess: 10 min (2 GB at ~4 MB/s). */
@@ -42,7 +48,8 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
 export const ARCHIVE_DEFAULTS: ArchiveCfg = Object.freeze({
-  minGapMs: 15 * MIN,
+  minGapMs: 60 * MIN,
+  preBootGapMs: 15 * MIN,
   everyMs: 6 * HOUR,
   openHoldMs: 10 * MIN,
   dueHoldMs: 3 * MIN,
