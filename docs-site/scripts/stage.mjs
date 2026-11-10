@@ -14,6 +14,8 @@ if (!existsSync(join(dist, "index.html"))) {
 
 rmSync(out, { recursive: true, force: true });
 cpSync(dist, join(out, "docs"), { recursive: true });
+// The landing page is the site root.
+cpSync(join(root, "landing", "index.html"), join(out, "index.html"));
 
 // Workers reads only the root _headers file, so move it up and prefix its paths.
 const docsHeaders = join(out, "docs", "_headers");
@@ -23,4 +25,4 @@ if (existsSync(docsHeaders)) {
   writeFileSync(join(out, "_headers"), text);
 }
 
-console.log("Staged .deploy: docs at /docs/");
+console.log("Staged .deploy: landing at /, docs at /docs/");

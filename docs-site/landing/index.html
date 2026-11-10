@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>oc-workers: your own OpenClaw on Cloudflare</title>
+<meta name="description" content="Run your own OpenClaw assistant on your own Cloudflare account. It sleeps when idle and wakes on a message, so light use costs about $7 to $14 a month.">
+<meta property="og:title" content="oc-workers">
+<meta property="og:description" content="Your own OpenClaw assistant on your own Cloudflare account. Sleeps when idle, wakes on a message.">
+<meta property="og:image" content="/docs/og.png">
+<link rel="icon" href="/docs/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --paper: #eef1f6;
+  --ink: #16213a;
+  --muted: #56617a;
+  --rule: #cfd6e3;
+  --night: #c3ccdc;
+  --lamp: #e8a317;
+  --code-bg: #16213a;
+  --code-ink: #e9edf5;
+  --link: #1f4fbf;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0f1626;
+    --ink: #e6ebf4;
+    --muted: #9aa5bd;
+    --rule: #26314a;
+    --night: #222c44;
+    --lamp: #f2b632;
+    --code-bg: #182239;
+    --code-ink: #e6ebf4;
+    --link: #8fb2ff;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 "Schibsted Grotesk", system-ui, sans-serif;
+}
+a { color: var(--link); text-underline-offset: 0.18em; }
+a:focus-visible, .btn:focus-visible { outline: 3px solid var(--lamp); outline-offset: 3px; }
+.wrap { max-width: 68rem; margin: 0 auto; padding: 0 1.25rem; }
+.text { max-width: 40rem; }
+
+header.top {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1.25rem 0;
+}
+.brand { font-weight: 800; font-size: 1.125rem; color: var(--ink); text-decoration: none; letter-spacing: -0.01em; }
+nav a { margin-left: 1.25rem; color: var(--ink); text-decoration: none; font-weight: 500; }
+nav a:hover { text-decoration: underline; }
+
+.hero { padding: 4.5rem 0 2.5rem; }
+h1 {
+  font-weight: 800;
+  font-size: clamp(2.4rem, 6.2vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  margin: 0 0 1.5rem;
+  max-width: 14ch;
+}
+.lede { font-size: 1.25rem; line-height: 1.5; color: var(--muted); margin: 0 0 2rem; max-width: 36rem; }
+.lede strong { color: var(--ink); font-weight: 700; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.btn {
+  display: inline-block; padding: 0.8rem 1.3rem; border-radius: 0.4rem;
+  font-weight: 700; text-decoration: none; border: 2px solid var(--ink);
+}
+.btn.primary { background: var(--ink); color: var(--paper); }
+.btn.secondary { color: var(--ink); }
+.btn:hover { transform: translateY(-1px); }
+
+/* The one bold element: a day of the install, asleep and awake. */
+.day { margin: 3.5rem 0 0; }
+.bar {
+  position: relative; height: 4.5rem; border-radius: 0.5rem;
+  background: var(--night); overflow: hidden;
+}
+.awake {
+  position: absolute; top: 0; bottom: 0; min-width: 7px;
+  background: var(--lamp);
+}
+@media (prefers-reduced-motion: reduce) { .btn:hover { transform: none; } }
+.hours {
+  display: flex; justify-content: space-between;
+  font-size: 0.8125rem; color: var(--muted); margin-top: 0.4rem;
+  font-variant-numeric: tabular-nums;
+}
+.day figcaption { margin-top: 0.9rem; color: var(--muted); font-size: 0.9375rem; max-width: 40rem; }
+.day figcaption b { color: var(--ink); }
+.key { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 2px; vertical-align: -0.05em; margin-right: 0.3em; }
+.key.on { background: var(--lamp); }
+.key.off { background: var(--night); }
+
+section { padding: 3.5rem 0; border-top: 1px solid var(--rule); }
+h2 { font-size: 1.75rem; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 1.25rem; font-weight: 800; }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 2rem 2.5rem; margin: 0; }
+.facts dt { font-weight: 700; font-size: 1.125rem; margin-bottom: 0.35rem; }
+.facts dd { margin: 0; color: var(--muted); }
+
+table { border-collapse: collapse; width: 100%; max-width: 40rem; }
+th, td { text-align: left; padding: 0.75rem 0.5rem 0.75rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 0.9375rem; }
+td.price { white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+tr.us td { color: var(--ink); }
+tr.us td:first-child { font-weight: 700; }
+.note { color: var(--muted); font-size: 0.9375rem; margin-top: 1rem; max-width: 40rem; }
+
+ol.steps { list-style: none; counter-reset: step; padding: 0; margin: 0; max-width: 44rem; }
+ol.steps li { counter-increment: step; position: relative; padding-left: 2.75rem; margin-bottom: 1.75rem; }
+ol.steps li::before {
+  content: counter(step); position: absolute; left: 0; top: 0.05rem;
+  width: 1.85rem; height: 1.85rem; border-radius: 50%;
+  background: var(--lamp); color: #16213a; font-weight: 800;
+  display: grid; place-items: center; font-size: 0.95rem;
+}
+ol.steps p { margin: 0 0 0.5rem; }
+pre {
+  margin: 0; padding: 0.9rem 1rem; border-radius: 0.4rem; overflow-x: auto;
+  background: var(--code-bg); color: var(--code-ink);
+  font: 400 0.9375rem/1.55 "JetBrains Mono", ui-monospace, monospace;
+}
+code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.92em; }
+.needs { color: var(--muted); margin: 0 0 1.75rem; }
+
+footer { padding: 2.5rem 0 3.5rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.9375rem; }
+footer p { margin: 0.25rem 0; }
+.links a { margin-right: 1.25rem; }
+
+@media (max-width: 40rem) {
+  .hero { padding-top: 2.5rem; }
+  nav a { margin-left: 0.9rem; }
+  .bar { height: 3.5rem; }
+  .awake { min-width: 3px; }
+  .hours span:nth-child(even) { visibility: hidden; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/">oc-workers</a>
+    <nav aria-label="Main">
+      <a href="/docs/">Docs</a>
+      <a href="https://github.com/meirdick/oc-workers">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Your own AI assistant. Asleep until you need it.</h1>
+      <p class="lede">oc-workers runs your own <a href="https://github.com/openclaw/openclaw">OpenClaw</a> assistant on your Cloudflare account. It sleeps when idle and wakes when you message it, so light use costs <strong>about $7 to $14 a month</strong>.</p>
+      <div class="actions">
+        <a class="btn primary" href="#get-started">Get started</a>
+        <a class="btn secondary" href="/docs/">Read the docs</a>
+      </div>
+
+      <figure class="day">
+        <div class="bar" role="img" aria-label="A 24-hour bar. The install is asleep most of the day and awake for 18 short moments, about 2 hours in total.">
+          <span class="awake" style="left:2.78%;width:0.45%"></span>
+          <span class="awake" style="left:32.08%;width:0.62%"></span>
+          <span class="awake" style="left:33.33%;width:0.45%"></span>
+          <span class="awake" style="left:38.54%;width:0.56%"></span>
+          <span class="awake" style="left:41.67%;width:0.45%"></span>
+          <span class="awake" style="left:50.00%;width:0.45%"></span>
+          <span class="awake" style="left:52.15%;width:0.83%"></span>
+          <span class="awake" style="left:54.51%;width:0.49%"></span>
+          <span class="awake" style="left:58.33%;width:0.45%"></span>
+          <span class="awake" style="left:66.67%;width:0.45%"></span>
+          <span class="awake" style="left:74.17%;width:0.69%"></span>
+          <span class="awake" style="left:75.00%;width:0.45%"></span>
+          <span class="awake" style="left:80.56%;width:0.97%"></span>
+          <span class="awake" style="left:83.33%;width:0.45%"></span>
+          <span class="awake" style="left:87.15%;width:0.56%"></span>
+          <span class="awake" style="left:89.58%;width:0.62%"></span>
+          <span class="awake" style="left:91.67%;width:0.45%"></span>
+          <span class="awake" style="left:96.53%;width:0.45%"></span>
+        </div>
+        <div class="hours" aria-hidden="true"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>
+        <figcaption><span class="key on"></span>Awake <span class="key off"></span>Asleep. An example day at light use: 10 chats and a check every 2 hours from 08:00 to 22:00. <b>About 2 hours awake, 22 hours asleep.</b> A sleeping install has no compute charge.</figcaption>
+      </figure>
+    </div>
+
+    <section aria-labelledby="what">
+      <h2 id="what">What you get</h2>
+      <dl class="facts">
+        <div><dt>Your account, your data</dt><dd>The Worker, the container and the R2 bucket are on your Cloudflare account. No service in between.</dd></div>
+        <div><dt>Wakes on a message</dt><dd>A Telegram message, a timer or opening the Control UI wakes it. The first reply after a sleep takes about 30 seconds.</dd></div>
+        <div><dt>Backed up while it runs</dt><dd>State copies to R2 as it changes, plus archives you can restore. A crash loses seconds, not days.</dd></div>
+        <div><dt>No AI key to start</dt><dd>The default model runs on Workers AI through your AI Gateway, with logs and spend limits.</dd></div>
+        <div><dt>Tools without keys in the box</dt><dd>Browser, web search, web fetch, speech and image tools run through your Worker. The container holds no credential.</dd></div>
+        <div><dt>One CLI</dt><dd><code>ochost</code> installs, shows status, backs up, upgrades and removes the install.</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="cost">
+      <h2 id="cost">What it costs</h2>
+      <table>
+        <thead><tr><th scope="col">Option</th><th scope="col">Per month</th></tr></thead>
+        <tbody>
+          <tr class="us"><td>oc-workers, sleeps when idle</td><td class="price">$7 to $14</td></tr>
+          <tr><td>Same container, always on</td><td class="price">$50 to $69</td></tr>
+          <tr><td>A small VM you run yourself</td><td class="price">$10 to $12</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Includes the $5 Workers Paid plan. Up to about $25 if snapshot storage is priced high. A channel that needs an open socket cannot sleep. <a href="/docs/cost/">How the numbers are made</a></p>
+    </section>
+
+    <section aria-labelledby="get-started" id="get-started">
+      <h2>Get started</h2>
+      <p class="needs">You need Node 22.18 or later, Docker and a Cloudflare account on Workers Paid. Install takes 4 to 5 minutes.</p>
+      <ol class="steps">
+        <li><p>Install the CLI.</p><pre><code>npm install -g oc-workers</code></pre></li>
+        <li><p>Log in to Cloudflare.</p><pre><code>npx wrangler login</code></pre></li>
+        <li><p>Create the install. At the end it prints a login link to your Control UI.</p><pre><code>mkdir ~/my-oc &amp;&amp; cd ~/my-oc
+ochost init</code></pre></li>
+      </ol>
+      <p>Then connect Telegram: <a href="/docs/quickstart/">Quickstart</a>.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>oc-workers is a community project and is not affiliated with Cloudflare. Apache License 2.0.</p>
+    <p class="links"><a href="/docs/">Docs</a> <a href="https://github.com/meirdick/oc-workers">GitHub</a> <a href="/docs/limits-and-tradeoffs/">Limits and tradeoffs</a></p>
+  </footer>
+</div>
+</body>
+</html>
