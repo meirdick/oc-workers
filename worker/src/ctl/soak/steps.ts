@@ -3,9 +3,12 @@
 // than one exec call; the Control DO alarm calls them again. Assertions are computed here, in the Worker, from
 // status, ring/tables, R2 and probes of the container.
 
+import { credsCopyKey } from "../creds-copy";
 import type { Handler } from "./lib";
 import {
   BOUND,
+  CREDS_WAIT_MS,
+  DRAIN_WAIT_MS,
   exec,
   finish,
   genOf,
@@ -378,6 +381,56 @@ const tgBatch: Handler = async (x) => {
 
 // ---------------------------------------------------------------- sleep/wake cycles (s4-500)
 
+const inboxLeft = (x: StepCtx) => {
+  const r = x.port.c.db.one<Any>(
+    `SELECT SUM(state = 'pending') AS pending, SUM(state = 'held') AS held, MIN(received_at) AS oldest
+     FROM inbox WHERE state IN ('pending', 'held')`,
+  );
+  return { pending: Number(r?.pending ?? 0), held: Number(r?.held ?? 0), oldest: r?.oldest ?? null };
+};
+
+/**
+ * Wait until the inbox has no pending or held row (s4-500, before the cycles). Leftover rows of earlier plans
+ * make sleep rule 5 refuse every sleep: M7 soak, 50 cycle steps failed on `5:inbox`. Keeps the install awake so
+ * held rows go pending and the driver delivers them. Fails after `ms` with the counts.
+ */
+const inboxDrain: Handler = async (x) => {
+  const { d } = x;
+  d.t0 ??= x.now;
+  const left = inboxLeft(x);
+  if (left.pending + left.held === 0)
+    return finish({ checks: { inboxDrained: true }, data: { waitedMs: x.now - d.t0 } });
+  const ms = Number(x.p.ms ?? DRAIN_WAIT_MS);
+  if (x.now - d.t0 >= ms)
+    return finish({
+      checks: { inboxDrained: false },
+      data: {
+        why: `inbox not drained in ${Math.round(ms / MIN)} min: ${left.pending} pending, ${left.held} held (sleep rule 5 would refuse every cycle)`,
+        ...left,
+        oldestAgeMs: left.oldest === null ? null : x.now - Number(left.oldest),
+      },
+    });
+  await ensureUp(x);
+  return wait(10_000);
+};
+
+/** A failed inbox-drain earlier in this plan: the cycles cannot sleep, so they do not run. */
+const drainFailed = (x: StepCtx): string | null => {
+  const rows = x.port.c.db.all<{ result: string | null }>(
+    "SELECT result FROM soak_step WHERE plan = ? AND idx < ? AND state = 'done'",
+    x.plan.name,
+    x.step.idx,
+  );
+  for (const r of rows) {
+    let res: Any | null = null;
+    try {
+      res = r.result ? (JSON.parse(r.result) as Any) : null;
+    } catch {}
+    if (res?.type === "inbox-drain" && !res.ok) return `${res.id}: ${res.data?.why ?? "inbox not drained"}`;
+  }
+  return null;
+};
+
 /** `n` cycles: force sleep, one update wakes it, wait for the reply. Lost and repeated replies per step. */
 const cycles: Handler = async (x) => {
   const { port, d, p } = x;
@@ -390,6 +443,10 @@ const cycles: Handler = async (x) => {
   switch (x.phase) {
     case "start": {
       if (d.done === 0 && noTelegram(x)) return finish(NO_TELEGRAM);
+      if (d.done === 0) {
+        const why = drainFailed(x);
+        if (why) return finish({ skipped: `inbox not drained before the cycles (${why})` });
+      }
       if (d.done >= n) return wait(0, "end");
       if (s.state !== "running" && s.state !== "asleep") {
         await ensureUp(x);
@@ -865,6 +922,10 @@ const diskFill: Handler = async (x) => {
           filled: typeof d.usedAfterFill === "number" && d.usedAfterFill >= Math.min(pctWant, 99) - 1,
           ...(pctWant >= 80 && before < 80 ? { diskHighAlert: high } : {}),
           ...(pctWant >= 95 && before < 95 ? { diskFullAlert: full } : {}),
+          // Plan §4.12: at 95 % status is degraded, with the reason (1.2.1; M7 found it never set).
+          ...(pctWant >= 95
+            ? { degradedDiskFull: s.degraded === true && (s.degradedWhy ?? []).includes("disk-full") }
+            : {}),
           noReplicaDownAlert: alertDelta(d.base, al, /^replica-down/).length === 0,
         },
         data: {
@@ -873,6 +934,7 @@ const diskFill: Handler = async (x) => {
           usedAfterFill: d.usedAfterFill ?? null,
           fill: d.fill,
           degraded: s.degraded,
+          degradedWhy: s.degradedWhy ?? null,
           newAlerts: { high, full },
         },
       });
@@ -900,7 +962,7 @@ const diskFree: Handler = async (x) => {
       freed: usedPct !== null && usedPct < 90,
       notDegraded: s.degraded !== true,
     },
-    data: { usedPct },
+    data: { usedPct, degradedWhy: s.degradedWhy ?? null },
   });
 };
 
@@ -948,6 +1010,33 @@ const throttle: Handler = async (x) => {
   }
 };
 
+/**
+ * Drill J/L: does R2 `c/<inst>/<seq>.json` (plan §6.1 row 2) hold the creds the store holds now? The rebuild
+ * after the wipe reads the newest copy; a copy older than the store loses the newer creds. No creds: true.
+ */
+async function credsCopyState(x: StepCtx): Promise<Any> {
+  const c = x.port.c;
+  const rows = c.db.all<Any>("SELECT path, seq, sha256, deleted FROM creds");
+  if (!rows.length) return { match: true, seq: 0, rows: 0 };
+  const seq = Math.max(...rows.map((r) => Number(r.seq)));
+  const key = credsCopyKey(c.inst, seq);
+  const base = { seq, key, rows: rows.length };
+  const o = await x.port.rawBucket().get(key);
+  if (!o) return { ...base, match: false, why: "missing" };
+  let doc: Any;
+  try {
+    doc = JSON.parse(new TextDecoder().decode(await o.arrayBuffer()));
+  } catch {
+    return { ...base, match: false, why: "unreadable" };
+  }
+  const tag = (r: Any) => `${r.path}\0${r.seq}\0${r.sha256 ?? ""}\0${r.deleted ? 1 : 0}`;
+  const got: Any[] = Array.isArray(doc?.rows) ? doc.rows : [];
+  const inCopy = new Set(got.map(tag));
+  const notInCopy = rows.filter((r) => !inCopy.has(tag(r))).length;
+  const match = notInCopy === 0 && got.length === rows.length;
+  return { ...base, copyRows: got.length, match, ...(match ? {} : { why: "stale", notInCopy }) };
+}
+
 /** Control DO wipe through the test route (drills J, L). The plan survives through R2 `soak-resume/dump.json`. */
 const ctlWipe: Handler = async (x) => {
   const { port, d } = x;
@@ -962,8 +1051,30 @@ const ctlWipe: Handler = async (x) => {
         config: port.c.db.one<Any>("SELECT COUNT(*) AS n FROM config")?.n,
         creds: port.c.db.one<Any>("SELECT COUNT(*) AS n FROM creds WHERE deleted = 0")?.n,
       };
-      d.sleepAt = x.now + 70 * SEC; // one creds and config copy tick after the last write
-      return wait(70_000, "wipe");
+      d.t0 = x.now;
+      d.sleepAt = x.now + 70 * SEC; // one config copy tick after the last write
+      return wait(0, "creds-copy");
+    }
+    case "creds-copy": {
+      // M7 soak: a fixed 70 s is not one creds copy tick (live credsCopyMs is 15 min). Wait for the copy of the
+      // current store, so the rebuild can bring every cred back.
+      const cc = await credsCopyState(x);
+      d.credsCopy = cc;
+      if (cc.match) {
+        d.credsCopyWaitMs = x.now - d.t0;
+        return wait(Math.max(0, d.sleepAt - x.now), "wipe");
+      }
+      const ms = Number(x.p.credsWaitMs ?? CREDS_WAIT_MS);
+      if (x.now - d.t0 >= ms)
+        return finish({
+          checks: { credsCopied: false },
+          data: {
+            why: `R2 creds copy ${cc.key} ${cc.why} after ${Math.round(ms / MIN)} min (store seq ${cc.seq}, ${cc.rows} rows); no wipe`,
+            before: d.before,
+            credsCopy: cc,
+          },
+        });
+      return wait(15_000, "creds-copy");
     }
     case "wipe": {
       if (x.now < d.sleepAt) return wait(5000, "wipe");
@@ -980,7 +1091,10 @@ const ctlWipe: Handler = async (x) => {
       const s = await port.status();
       if (s.state !== "running" || genOf(s) === d.g0) {
         if (x.now - d.wipeAt > 25 * MIN)
-          return finish({ checks: { running: false }, data: { state: s.state, ctlState: s.ctlState } });
+          return finish({
+            checks: { credsCopied: true, running: false },
+            data: { state: s.state, ctlState: s.ctlState, credsCopy: d.credsCopy ?? null },
+          });
         // an owner wake after the wipe starts the rebuild and the boot
         if (x.now - (d.nudgeAt ?? 0) > 30_000) {
           await port.ops("wake");
@@ -994,6 +1108,7 @@ const ctlWipe: Handler = async (x) => {
       const credsAfter = c.one<Any>("SELECT COUNT(*) AS n FROM creds WHERE deleted = 0")?.n ?? 0;
       return finish({
         checks: {
+          credsCopied: true,
           running: true,
           notRewoundBlocked: s.ctlState !== "ctl-rewound" || genOf(s) !== d.g0,
           gensRebuilt: rows >= 1,
@@ -1001,7 +1116,13 @@ const ctlWipe: Handler = async (x) => {
           credsBack: credsAfter >= credsBefore - (credsBefore > 0 ? 1 : 0),
         },
         measures: [measure("drill-j-l", "wipe to running", (x.now - d.wipeAt) / 1000, "s", "info")],
-        data: { before: d.before, credsAfter, ctlState: s.ctlState },
+        data: {
+          before: d.before,
+          credsAfter,
+          ctlState: s.ctlState,
+          credsCopy: d.credsCopy ?? null,
+          credsCopyWaitMs: d.credsCopyWaitMs ?? null,
+        },
       });
     }
   }
@@ -1299,6 +1420,7 @@ export const HANDLERS: Record<string, Handler> = {
   kill,
   "tg-batch": tgBatch,
   cycles,
+  "inbox-drain": inboxDrain,
   "r2-mark": r2Mark,
   "s4-final": s4Final,
   "churn-hold": churnHold,
@@ -1334,6 +1456,10 @@ export function timeoutOf(type: string, p: Record<string, any>): number {
       return Number(p.ms ?? MIN) + 5 * MIN;
     case "cycles":
       return Number(p.n ?? 10) * 25 * MIN;
+    case "ctl-wipe":
+      return Number(p.credsWaitMs ?? CREDS_WAIT_MS) + 30 * MIN;
+    case "inbox-drain":
+      return Number(p.ms ?? DRAIN_WAIT_MS) + 10 * MIN;
     default:
       return 45 * MIN;
   }

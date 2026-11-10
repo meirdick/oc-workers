@@ -63,6 +63,21 @@ describe("status", () => {
     );
   });
 
+  it("a full disk: the disk row and the degraded warning with its reason (plan §4.12)", async () => {
+    f.status = statusBody({
+      state: "running",
+      degraded: true,
+      degradedWhy: ["disk-full"],
+      disk: { gen: 42, usedPct: 96.2, inodesPct: 2, at: T0 },
+      alerts: [{ class: "disk-full", severity: "high" }],
+    });
+    const r = await run("status", ["--dir", dir]);
+    expect(r.out).toMatch(/^disk\s+used 96\.2% · inodes 2%$/m);
+    expect(r.out + r.err).toMatch(/the install is degraded \(disk-full\) — fix: ochost doctor/);
+    const plain = await run("status", ["--dir", dir, "--json"]);
+    expect(JSON.parse(plain.out)).toMatchObject({ degraded: true, degradedWhy: ["disk-full"] });
+  });
+
   it("alternatives line: always-on here and the VM; with no usage data, an estimate for the cost", async () => {
     f.status = statusBody({ wake: undefined });
     const r = await run("status", ["--dir", dir]);

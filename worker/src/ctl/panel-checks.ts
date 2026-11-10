@@ -88,7 +88,15 @@ export function checkState(s: any): Check {
     return fail("state", `control state ${s.ctlState}`, "ochost logs --source ctl; ochost status");
   if (s?.state === "restore-blocked")
     return fail("state", "restore-blocked", "ochost backup list, then ochost backup restore <id>");
-  if (s?.degraded) return warn("state", `${s.state}, degraded`, "ochost logs --source rt; ochost restart");
+  if (s?.degraded) {
+    // Plan §4.12: an open disk-full sets degraded; the reasons come from the Control DO status.
+    const why: string[] = Array.isArray(s.degradedWhy) ? s.degradedWhy.map(String) : [];
+    return warn(
+      "state",
+      `${s.state}, degraded${why.length ? ` (${why.join(", ")})` : ""}`,
+      why.includes("disk-full") ? DISK_FIX : "ochost logs --source rt; ochost restart",
+    );
+  }
   const lv = s?.ladder?.level;
   if (lv === "slow" || (typeof lv === "number" && lv > 1))
     return warn("state", `${s.state}, start ladder level ${lv}`, "ochost logs --source rt");
@@ -298,8 +306,12 @@ export function checkBudget(verb: string, used: number, limit: number, unit: str
   return pass(verb, detail);
 }
 
+/** disk-high, disk-full: ocsup cleans its own caches at 90 %; the rest is the agent's files. */
+const DISK_FIX = "delete large files in the workspace; ochost logs --source ocsup";
+
 /** The fix line per open alert class (the panel's Alerts rows, the Retry now hint on `/`). */
 const ALERT_FIX: [RegExp, string][] = [
+  [/^disk-(full|high)$/, DISK_FIX],
   [/^restore-blocked|^ctl-rewound|^snapshots-lost/, "ochost backup list, then ochost backup restore <id>"],
   [/^doctor-failed/, "ochost logs --source rt; ochost restart"],
   [/^alert-test/, "ochost alerts ack <code>"],

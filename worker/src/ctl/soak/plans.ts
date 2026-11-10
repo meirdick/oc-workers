@@ -1,6 +1,6 @@
 // The plan catalog. A plan is a list of steps (steps.ts types) with params; `all` runs the catalog in order
 // (destructive plans last). Bounds: docs/01-plan.md §1 and worker/test/results/M4-STATUS.md §5.
-import { HOUR, MIN, POISON_WATCH_MS, SEC } from "./lib";
+import { DRAIN_WAIT_MS, HOUR, MIN, POISON_WATCH_MS, SEC } from "./lib";
 import type { StepSpec } from "./types";
 
 type P = Record<string, any>;
@@ -182,6 +182,8 @@ export const PLANS: PlanDef[] = [
       const steps: StepSpec[] = [
         { id: "awake-off", type: "awake", params: { on: false } },
         { id: "up", type: "up" },
+        // Leftover updates of earlier plans hold the install awake (sleep rule 5): wait them out first.
+        { id: "inbox-drain", type: "inbox-drain", params: { ms: num(p, "drainMs", DRAIN_WAIT_MS) } },
         { id: "r2-start", type: "r2-mark" },
       ];
       for (let i = 0; i * per < total; i++)

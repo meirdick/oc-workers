@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+- Fix: a full disk now shows. While alert `disk-full` is open (95 % used, or an out-of-space error in the container), `ochost status`, `ochost doctor` and the console say the install is degraded, with the reason `disk-full`. Before, status stayed not degraded at 100 % disk. `disk-high` (80 %) is listed with the alerts but does not set degraded. Both alerts close by themselves when the heartbeat shows the disk back under 90 % (`disk-full`) or 80 % (`disk-high`). `ochost status` shows a `disk` row with the last use the container reported.
+- Soak engine: `s4-500` waits until the inbox has no pending or held row before its cycles (step `inbox-drain`), and drill-jl waits until the R2 creds copy matches the CredStore before it wipes the Control DO. Each fails with the reason when the wait runs out.
+
 ## 1.2.0
 
 - `ochost import <seed-dir>` brings an old OpenClaw install in. `--dry-run` prints the plan. Workspace and `memory/` merge into the workspace; the bootstrap files replace the new defaults (old copies in `.ochost-import/<id>/backup/`), other files the install already has are kept. Records, raw transcripts, media and skills without a target go to file storage (`records/`, `history/`, `media/`; `history/INDEX.json` maps keys to the old names). Cron jobs are re-created with `openclaw cron add --declaration-key`. Config keys that OpenClaw 2026.10.9 has merge into a new version; the rest is listed. Credentials, `.env` files, keys and files that look like they hold a key never leave the laptop. Rules for one old install (vault paths that never copy, dirs that go to file storage, skills to park, cron jobs to skip or turn off, lines for the note) come from an optional local file, `--rules <file.json>`; `ochost import -h` shows the fields. `--feb <dir>` adds an older sessions dir. With the sandbox on, the same merge runs in the sandbox workspace.

@@ -277,6 +277,7 @@ async function dispatch(
           rpo: b.rpo,
           eventJobs: b.eventJobs,
           lastActivityAt: b.lastActivityAt,
+          disk: b.disk,
         })
         .catch(() => undefined);
       const [a, info] = await Promise.all([

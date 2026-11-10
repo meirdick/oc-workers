@@ -51,6 +51,7 @@ import { credHistory, credManifest, credRestore } from "./creds";
 import { copyConfigIfDue, copyCredsIfDue, restoreCredsFromCopy } from "./creds-copy";
 import { type Ctx, DAY, ring, STATE_DB, utcDay } from "./ctx";
 import { digestGuard } from "./digest";
+import { type DiskHb, diskDegraded, lastDisk, noteDisk } from "./disk";
 import {
   driverBootStarted,
   driverDueAt,
@@ -295,9 +296,11 @@ export class ControlCore {
     channels?: { channel: string; account: string; transport?: string; lifecycle?: string }[];
     rpo?: string | null;
     eventJobs?: { id: string; kind: string; name?: string }[];
+    disk?: DiskHb | null;
   }): void {
     const c = this.c;
     if (h.eventJobs) c.db.setMeta("eventJobs", h.eventJobs.slice(0, 32));
+    if (h.disk) noteDisk(c, h.gen, h.disk);
     if (typeof h.cpuS === "number") wakeCpu(c, h.gen, h.cpuS);
     if (h.telegramSecretVersion != null && h.telegramSecretVersion === c.db.metaNum("webhookSecretVer", 0))
       c.db.setMeta("webhookSecretPrevUntil", 0);
@@ -1049,6 +1052,10 @@ export class ControlCore {
     if (ib.unreplicated) blockers.push("inbox-unreplicated");
     if (c.db.one("SELECT k FROM meta WHERE k LIKE 'seeding:%' AND v = '1' LIMIT 1")) blockers.push("seeding");
     if (c.db.meta("costHold") === "1") blockers.push("cost-guard");
+    // Plan §4.12: a full disk sets degraded. ocsup reports it only as alert `disk-full`, so the Runtime DO flag
+    // alone never showed it (M7 soak, disk-100). The reasons list says why.
+    const rtWhy = Array.isArray(rt?.degradedWhy) ? (rt.degradedWhy as string[]) : [];
+    const degradedWhy = [...new Set([...rtWhy, ...diskDegraded(c)])];
     return {
       inst: c.inst,
       codeVersion: c.codeVersion,
@@ -1057,7 +1064,9 @@ export class ControlCore {
       epoch: ep ? { n: ep.n, imageKey: ep.image_key, digest: ep.digest, status: ep.status } : null,
       state: rt?.state ?? this.rtState(),
       desired: rt?.desired,
-      degraded: rt?.degraded ?? false,
+      degraded: (rt?.degraded ?? false) || degradedWhy.length > 0,
+      degradedWhy,
+      disk: lastDisk(c),
       awakeReason: rt?.awakeReason ?? (c.db.meta("costHold") === "1" ? "cost guard" : undefined),
       ladder: rt?.ladder,
       blockers,

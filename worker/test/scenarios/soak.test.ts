@@ -64,9 +64,12 @@ function fakeContainer(world: World, f: Fake) {
   };
 }
 
-async function setup(o: { windowMs?: number; noBot?: boolean } = {}) {
+async function setup(o: { windowMs?: number; noBot?: boolean; timers?: Record<string, number> } = {}) {
   // A test install with its fake Telegram channel added (ochost channels add telegram sets the token).
-  w = await fresh(sut, o.noBot ? {} : { vars: { OC_SECRET_OC_TELEGRAM_BOT_TOKEN: "123:fake" } });
+  w = await fresh(sut, {
+    ...(o.noBot ? {} : { vars: { OC_SECRET_OC_TELEGRAM_BOT_TOKEN: "123:fake" } }),
+    ...(o.timers ? { timers: o.timers } : {}),
+  });
   await toRunning(w);
   const f: Fake = { windowMs: o.windowMs ?? 700, killedAt: 0 };
   fakeContainer(w, f);
@@ -229,6 +232,7 @@ describe("soak runner", () => {
         params: { n: 2, kills: 1, killEvery: 1, gapMs: 1000, settleMs: 20_000, ...t },
       },
       { id: "cycles", type: "cycles", params: { n: 1, ...t } },
+      { id: "inbox-drain", type: "inbox-drain", params: { ms: 20_000 } },
       { id: "r2-mark", type: "r2-mark" },
       { id: "s4-final", type: "s4-final" },
       { id: "pitr", type: "pitr", params: t },
@@ -347,6 +351,104 @@ describe("M7 soak findings (docs/research/soak-m7-findings.md)", () => {
         ?.build({})
         .map((s) => s.type),
     ).toContain("r2-mark");
+  }, 120_000);
+
+  const sqlCtl = (q: string, ...b: (string | number)[]) => w.ctl().storage.sql.exec(q, ...b);
+  const leftover = (id: string, state: string) =>
+    sqlCtl(
+      `INSERT INTO inbox (id, route, account, platform_key, received_at, headers, body, state)
+       VALUES (?, 'telegram', 'default', ?, ?, '{}', '{}', ?)`,
+      id,
+      `k-${id}`,
+      Date.now(),
+      state,
+    );
+
+  const dataOf = <T>(r: StepResult | null) => (r?.data ?? {}) as T;
+  // Test timers kill a pending or held row after 30 s; leftover rows of earlier plans live 23 h.
+  const keepRows = { timers: { inboxDeadMs: 6 * 3_600_000 } };
+
+  it("s4-500 waits for the inbox to drain before the cycles", async () => {
+    await setup(keepRows);
+    expect(
+      PLANS.find((p) => p.name === "s4-500")
+        ?.build({})
+        .map((s) => s.type)
+        .slice(0, 4),
+    ).toEqual(["awake", "up", "inbox-drain", "r2-mark"]);
+    leftover("old-1", "held");
+    expect(
+      (await w.ops("soak-plan", { plan: "custom", steps: [{ id: "drain", type: "inbox-drain" }] })).status,
+    ).toBe(202);
+    const t0 = Date.now();
+    await finish("custom", 60 * 60_000, () => {
+      if (Date.now() - t0 > 60_000) sqlCtl("UPDATE inbox SET state = 'accepted' WHERE id = 'old-1'");
+    });
+    const r = await res("drain");
+    expect(r?.checks).toEqual({ inboxDrained: true });
+    expect(dataOf<{ waitedMs: number }>(r).waitedMs).toBeGreaterThanOrEqual(60_000);
+  }, 120_000);
+
+  it("an inbox that never drains fails with the counts, and the cycles do not run", async () => {
+    await setup(keepRows);
+    leftover("old-1", "held");
+    leftover("old-2", "held");
+    await custom([
+      { id: "drain", type: "inbox-drain", params: { ms: 60_000 } },
+      { id: "cy", type: "cycles", params: { n: 1 } },
+    ]);
+    const r = await res("drain");
+    expect(r?.ok).toBe(false);
+    expect(r?.checks).toEqual({ inboxDrained: false });
+    expect(r?.data).toMatchObject({ pending: 0, held: 2 });
+    expect(String(dataOf<{ why: string }>(r).why)).toMatch(/^inbox not drained in 1 min: 0 pending, 2 held/);
+    const cy = await res("cy");
+    expect(cy?.skipped).toMatch(/^inbox not drained before the cycles \(drain: inbox not drained/);
+  }, 120_000);
+
+  const cred = (seq: number, sha: string) =>
+    sqlCtl(
+      `INSERT OR REPLACE INTO creds (path, gen, seq, sha256, mode, b64, deleted, updated_at)
+       VALUES ('credentials/whatsapp/default/creds.json', 1, ?, ?, 384, 'e30=', 0, ?)`,
+      seq,
+      sha,
+      Date.now(),
+    );
+
+  it("drill-jl waits for the R2 creds copy of the current store before the wipe", async () => {
+    await setup();
+    cred(7, "sha-now");
+    await custom([{ id: "wipe", type: "ctl-wipe", params: { credsWaitMs: 5 * 60_000 } }]);
+    const r = await res("wipe");
+    // The copy matched and the wipe ran. (The World does not boot a new gen after the wipe: `running` is false.)
+    expect(r?.checks).toMatchObject({ credsCopied: true });
+    expect(r?.data).toMatchObject({ credsCopy: { match: true, seq: 7, rows: 1, copyRows: 1 } });
+    const key = dataOf<{ credsCopy: { key: string } }>(r).credsCopy.key;
+    expect(key).toMatch(/^c\/.+\/000000000007\.json$/);
+    expect(await w.r2.get(key)).not.toBeNull();
+  }, 120_000);
+
+  it("drill-jl with a stale creds copy fails with the reason and does not wipe", async () => {
+    await setup();
+    cred(7, "sha-now");
+    // write-once key: the Control DO tick will not replace this older content
+    await w.r2.put(
+      `c/${(await w.ops("status")).body.inst}/000000000007.json`,
+      JSON.stringify({
+        v: 1,
+        seq: 7,
+        rows: [{ path: "credentials/whatsapp/default/creds.json", seq: 7, sha256: "sha-old", deleted: 0 }],
+      }),
+    );
+    const gens = w.gens().length;
+    await custom([{ id: "wipe", type: "ctl-wipe", params: { credsWaitMs: 60_000 } }]);
+    const r = await res("wipe");
+    expect(r?.checks).toEqual({ credsCopied: false });
+    expect(String(dataOf<{ why: string }>(r).why)).toMatch(
+      /^R2 creds copy c\/.+\/000000000007\.json stale after 1 min \(store seq 7, 1 rows\); no wipe$/,
+    );
+    expect(dataOf<{ credsCopy: { notInCopy: number } }>(r).credsCopy.notInCopy).toBe(1);
+    expect(w.gens().length).toBe(gens); // no wipe, no rebuild
   }, 120_000);
 
   it("PITR_WRITE takes phase and count from argv[2] and argv[3]", () => {

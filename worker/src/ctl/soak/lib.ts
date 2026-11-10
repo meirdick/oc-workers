@@ -91,6 +91,10 @@ export const finish = (o: Omit<Extract<StepOut, { done: true }>, "done"> = {}): 
 
 /** Drill D watch: ladder to `slow` (about 45 min live) + l5PendingMs (2 h) + margin. */
 export const POISON_WATCH_MS = 210 * MIN;
+/** s4-500 inbox-drain wait. With a channel, 404/501 rows go dead after 5 misses and 5 min (ctl/driver.ts). */
+export const DRAIN_WAIT_MS = 30 * MIN;
+/** drill-jl wait for the R2 creds copy: live credsCopyMs (15 min) + margin. */
+export const CREDS_WAIT_MS = 20 * MIN;
 
 /** Bounds from docs/01-plan.md §1 and M4-STATUS §5. `ms` values in ms. */
 export const BOUND = {

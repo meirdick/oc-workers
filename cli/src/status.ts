@@ -183,6 +183,11 @@ export function summarize(s: any, cfg: Record<string, any> | null, now: number) 
     vm: vmLine(cost),
     alternatives: alternatives(cost),
     degraded: !!s?.degraded,
+    degradedWhy: Array.isArray(s?.degradedWhy) ? (s.degradedWhy as unknown[]).map(String) : [],
+    disk:
+      typeof s?.disk?.usedPct === "number"
+        ? { usedPct: s.disk.usedPct as number, inodesPct: Number(s.disk.inodesPct ?? 0) }
+        : null,
     snapshots: snapshotsOf(s?.snapshots),
     model: (cfg?.llm?.primary as string | undefined) ?? null,
     gateway: (cfg?.llm?.gateway as string | undefined) ?? null,
@@ -208,6 +213,7 @@ export function render(x: ReturnType<typeof summarize>, url: string): string {
     const i = x.inbox as Record<string, unknown>;
     rows.push(["inbox", ["pending", "held", "accepted", "dead"].map((k) => `${k} ${i[k] ?? 0}`).join(" · ")]);
   }
+  if (x.disk) rows.push(["disk", `used ${x.disk.usedPct}% · inodes ${x.disk.inodesPct}%`]);
   rows.push([
     "alerts",
     x.alerts.length ? x.alerts.map((a) => `${a.class} (${a.severity})`).join(", ") : "none open",
@@ -244,7 +250,10 @@ export async function status(ctx: OpsCtx): Promise<number> {
     else {
       if (i > 0) ctx.out.line("");
       ctx.out.line(render(x, ops.install.url));
-      if (x.degraded) ctx.out.warn("the install is degraded — fix: ochost doctor");
+      if (x.degraded)
+        ctx.out.warn(
+          `the install is degraded${x.degradedWhy.length ? ` (${x.degradedWhy.join(", ")})` : ""} — fix: ochost doctor`,
+        );
       if (x.snapshots?.warn) ctx.out.warn(`${x.snapshots.warn} — the registry cap is 50 GB per account`);
     }
     if (!watch || ctx.signal?.aborted) return EXIT.ok;

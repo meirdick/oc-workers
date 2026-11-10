@@ -143,14 +143,27 @@ describe("heartbeat, event, alert", () => {
       w.control(
         "POST",
         "/v1/heartbeat",
-        w.env({ seq: ++seq, phase: "running", draining: false, lastActivityAt: 5, channels: [] }),
+        w.env({
+          seq: ++seq,
+          phase: "running",
+          draining: false,
+          lastActivityAt: 5,
+          channels: [],
+          disk: { usedPct: 96, inodesPct: 3 },
+        }),
         { iid: w.iid },
       );
     const a = await ok(await hb(), "POST", "/v1/heartbeat");
     expect(a).toMatchObject({ ok: true, gen: 1, tier: "normal", at: w.now(), replica: { gen: 1, dbs: {} } });
     expect(a.stop).toBeUndefined();
     expect(w.rt.hb[0]).toMatchObject({ seq: 1, lastActivityAt: 5 });
-    expect(w.notes[0]).toMatchObject({ gen: 1, channels: [], lastActivityAt: 5 });
+    // Plan §4.12: the disk use goes to the Control DO, which closes disk-full and disk-high from it.
+    expect(w.notes[0]).toMatchObject({
+      gen: 1,
+      channels: [],
+      lastActivityAt: 5,
+      disk: { usedPct: 96, inodesPct: 3 },
+    });
     w.rtStop = true;
     expect((await ok(await hb(), "POST", "/v1/heartbeat")).stop).toBe(true);
     w.rtGen = 2;

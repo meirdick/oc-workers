@@ -2132,6 +2132,8 @@ export interface HeartbeatNote {
   rpo?: string | null;
   eventJobs?: { id: string; kind: string; name?: string }[];
   lastActivityAt?: number | null;
+  /** ocsup DiskWatch.hb(): disk use of the state tree; closes `disk-full` and `disk-high` (ctl/disk.ts). */
+  disk?: { usedPct?: number; inodesPct?: number } | null;
 }
 export type GateCallName = GateCall | (typeof CTL_EXTRA_CALLS)[number];
 /** What the gates hold: the ledger methods as async calls (DO RPC, or a direct call in tests). */

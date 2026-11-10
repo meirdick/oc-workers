@@ -5,7 +5,14 @@ sidebar:
   order: 15
 ---
 
-Version 1.2.0 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
+Version 1.2.1 is current. 1.0.0 was the first release; the sections after 1.1.0 list what it holds, by area.
+
+## 1.2.1
+
+Fixes:
+
+- A full disk now shows. While alert `disk-full` is open (95 % used), `ochost status`, `ochost doctor` and the console say the install is degraded, with the reason. `disk-high` (80 %) is listed with the alerts only. Both close by themselves when the disk is back under 90 % and 80 %. `ochost status` shows the disk use.
+- Soak engine: two waits for test installs, so leftover updates and a late creds copy no longer fail a run.
 
 ## 1.2.0
 
