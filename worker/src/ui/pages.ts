@@ -200,21 +200,31 @@ export function codeFailedPage(nonce: string): string {
   );
 }
 
-/** Waking page (add §2.4): 200 no-store, shows the phase and elapsed seconds, polls wake-status every 2 s, reloads the same path when started. */
+/**
+ * Waking page (add §2.4): 200 no-store, shows the phase and elapsed seconds, polls wake-status every 2 s, reloads
+ * the same path when started. If that reload gets this page again (the gateway is not ready yet), it must not
+ * flash in a loop. When the first poll already says started, it waits 5 s on the page before the reload. After
+ * recent reloads (sessionStorage, 60 s window) it waits 4, 8, 16, then at most 30 s.
+ */
 export function wakingPage(nonce: string): string {
   return shell(
     "OpenClaw is waking",
     nonce,
     `<h1>Waking, about 45 s</h1><p>The install was asleep. This page reloads when OpenClaw is ready.</p>
 <p id="s" role="status" aria-live="polite">Phase: restoring. 0 s.</p>`,
-    `(function(){var t0=Date.now(),el=document.getElementById('s');
+    `(function(){var t0=Date.now(),el=document.getElementById('s'),K='ocwake',n=0,first=true,hold=-1;
+try{var o=JSON.parse(sessionStorage.getItem(K)||'null');if(o&&Date.now()-o.t<60000)n=o.n}catch(e){}
 function ph(st){return st==='running'?'ready':st==='starting'||st==='maintenance'?'starting':'restoring'}
 var last='';function show(st){last=st;el.textContent='Phase: '+ph(st)+' ('+st+'). '+Math.round((Date.now()-t0)/1000)+' s.'}
+function reload(){try{sessionStorage.setItem(K,JSON.stringify({n:n+1,t:Date.now()}))}catch(e){}
+location.replace(location.pathname+location.search+location.hash)}
 function tick(){fetch('/_ochost/wake-status',{credentials:'same-origin',cache:'no-store'}).then(function(r){
 if(r.status===404||r.status===401){location.href='/_ochost/login';return null}return r.json()}).then(function(j){
-if(!j)return;if(j.started){show('running');location.replace(location.pathname+location.search+location.hash);return}
-show(j.state);setTimeout(tick,2000)
-}).catch(function(){setTimeout(tick,2000)})}
+if(!j)return;if(j.started){show('running');
+if(hold<0)hold=Math.max(first?5000:0,n?Math.min(30000,2000*Math.pow(2,n)):0);
+first=false;if(Date.now()-t0>=hold){reload();return}setTimeout(tick,Math.min(2000,hold-(Date.now()-t0)));return}
+first=false;show(j.state);setTimeout(tick,2000)
+}).catch(function(){first=false;setTimeout(tick,2000)})}
 setInterval(function(){if(last)show(last)},1000);
 tick()})();`,
   );
@@ -325,7 +335,7 @@ function powerHtml(b: PowerButton, refused: string | null): string {
   return `<div class="pw">${btn}${why}</div>${fix}`;
 }
 
-/** Reload every 5 s while the state moves on its own or right after a button. */
+/** Refresh every 5 s while the state moves on its own or right after a button; else every 30 s (with the panel). */
 const moving = (v: OwnerView, code?: string) =>
   ["starting", "waiting-capacity", "quiescing", "draining", "stopping", "asleep-unconfirmed"].includes(
     v.state,
@@ -362,23 +372,91 @@ function headline(v: OwnerView): { word: string; dot: string; since: string } {
 
 const signOut = `<form method="post" action="/_ochost/logout"><button type="submit" class="ghost">${icon(I.logout)}Sign out</button></form>`;
 
-/** Console frame: the bar (install name, Open Control UI, Sign out), the notice, then the body. */
-function consolePage(nonce: string, inst: string | null, note: string, body: string, script: string): string {
+/**
+ * Console refresh, in place (no full reload: no flash, scroll and typed text stay). `<main id="oc">` carries
+ * data-u (the URL to get), data-r (ms to the next refresh, 0 = none), data-st (the state) and data-wk (a wake or
+ * start is in progress). Each `#oc > [data-sw]` child (notice, state card, tab row, tab body) is a swap region.
+ * Every data-r ms: GET data-u as the browser would (Accept text/html, so `/` answers with the page and does not go
+ * to the gateway), drop its style and script (their nonce is not this page's, so parsing them logs a CSP
+ * error), parse it, and replace each region by the one with the same id. Skip and try at the next tick
+ * while the page is hidden, a form field has focus or unsaved edits, or a form was sent. One full
+ * location.replace instead when: the answer is not a 200 page (login, redirect, error), it has no #oc, its
+ * regions differ, or a wake reaches running (as before). A network error or a "status not available" page
+ * (data-na): keep this page and try again. With JavaScript off there is no refresh; the forms still work.
+ */
+export const REFRESH_JS = `(function(){var m=document.getElementById('oc');if(!m)return;
+var u=m.getAttribute('data-u'),wk=m.hasAttribute('data-wk'),sent=false,late=false;
+function ms(){return +m.getAttribute('data-r')||0}
+function next(t){if(t>0)setTimeout(tick,t)}
+function regs(d){var l=d.querySelectorAll('#oc>[data-sw]'),o=[];for(var i=0;i<l.length;i++)o.push(l[i]);return o}
+function ids(l){return l.map(function(e){return e.id}).join(' ')}
+function busy(){if(sent)return true;var a=document.activeElement;
+if(a&&a.form&&/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(a.tagName))return true;
+for(var i=0;i<document.forms.length;i++){var f=document.forms[i].elements;for(var j=0;j<f.length;j++){var x=f[j];
+if(x.options){for(var k=0;k<x.options.length;k++)if(x.options[k].selected!==x.options[k].defaultSelected)return true}
+else if(x.type==='checkbox'||x.type==='radio'){if(x.checked!==x.defaultChecked)return true}
+else if(typeof x.defaultValue==='string'&&x.value!==x.defaultValue)return true}}return false}
+function full(){location.replace(u)}
+function tick(){if(sent)return;if(document.visibilityState==='hidden'){late=true;return}
+if(busy())return next(ms());
+fetch(u,{credentials:'same-origin',cache:'no-store',redirect:'manual',headers:{accept:'text/html'}}).then(function(r){
+if(r.status!==200||r.redirected)return full();return r.text().then(function(t){
+t=t.replace(/<(style|script)\\b[\\s\\S]*?<\\/\\1>/g,'');
+var d=new DOMParser().parseFromString(t,'text/html'),n=d.getElementById('oc');
+if(n&&n.hasAttribute('data-na'))return next(ms());if(!n)return full();
+var a=regs(document),b=regs(d);if(ids(a)!==ids(b))return full();
+wk=wk||n.hasAttribute('data-wk');if(wk&&n.getAttribute('data-st')==='running')return full();
+if(busy())return next(ms());
+var x=window.scrollX,y=window.scrollY;
+for(var i=0;i<a.length;i++)a[i].replaceWith(document.importNode(b[i],true));
+window.scrollTo(x,y);m.setAttribute('data-r',n.getAttribute('data-r')||'0');m.setAttribute('data-st',n.getAttribute('data-st')||'');
+if(location.pathname+location.search!==u)history.replaceState(null,'',u+location.hash);next(ms())})
+}).catch(function(){next(ms())})}
+document.addEventListener('submit',function(){sent=true});
+window.addEventListener('pageshow',function(e){if(e.persisted&&sent){sent=false;next(ms())}});
+document.addEventListener('visibilitychange',function(){if(late&&document.visibilityState==='visible'){late=false;tick()}});
+next(ms())})();`;
+
+interface Live {
+  /** The URL the refresh gets: this tab, without the one-time notice. */
+  url: string;
+  /** ms to the next refresh; 0 = none (no script). */
+  every: number;
+  state: string;
+  waking: boolean;
+}
+
+/**
+ * Console frame: the bar (install name, Open Control UI, Sign out), the notice, then the body. `live`: the refresh
+ * attributes, and REFRESH_JS when `every` > 0. "na": the status is not available; a refresh that gets this page
+ * keeps the page it has.
+ */
+function consolePage(
+  nonce: string,
+  inst: string | null,
+  note: string,
+  body: string,
+  live: Live | "na",
+): string {
   const sep = `<svg class="i sep" viewBox="0 0 24 24" aria-hidden="true">${I.chev}</svg>`;
   const bar = `<header class="bar"><nav class="brand" aria-label="Breadcrumb">${icon(I.cloud)}<span>oc-workers</span>${
     inst ? `${sep}<h1>${esc(inst)}</h1>` : "<h1>oc-workers</h1>"
   }</nav><nav class="nav" aria-label="Install"><a class="ghost btn" href="${DOCS_URL}" rel="noopener">Docs</a><a class="btn" href="${CONTROL_UI_PATH}">Open Control UI${icon(I.out)}</a>${signOut}</nav></header>`;
+  const attrs =
+    live === "na"
+      ? " data-na"
+      : ` data-u="${esc(live.url)}" data-r="${live.every}" data-st="${esc(live.state)}"${live.waking ? " data-wk" : ""}`;
   return doc(
     inst ? `${inst} · oc-workers` : "oc-workers",
     nonce,
-    `<body><div class="wrap">${bar}<main>${note}${body}</main></div>`,
-    script,
+    `<body><div class="wrap">${bar}<main id="oc"${attrs}><div id="nt" data-sw>${note}</div>${body}</main></div>`,
+    live !== "na" && live.every > 0 ? REFRESH_JS : "",
   );
 }
 
 function heroHtml(v: OwnerView, meta: string, power: string): string {
   const h = headline(v);
-  return `<section class="hero" aria-label="Install state"><div><p class="k">Install state</p>
+  return `<section class="hero" id="hero" data-sw aria-label="Install state"><div><p class="k">Install state</p>
 <p class="sw" id="st"><span class="sd ${h.dot}" aria-hidden="true"></span>${esc(h.word)}</p>${
     h.since ? `<p class="since">${esc(h.since)}</p>` : ""
   }</div>${meta}${power}</section>`;
@@ -387,7 +465,7 @@ function heroHtml(v: OwnerView, meta: string, power: string): string {
 /**
  * GET `/` with an owner session. With the panel facts: the console (state card, tab row, one tab). Without (the
  * Control DO answered ownerView only): the state card with the two newest alerts. `v` null = the Control DO did not
- * answer. While the state moves the page reloads every 5 s.
+ * answer. The page refreshes in place (REFRESH_JS): every 5 s while the state moves, else every 30 s with the panel.
  */
 export function statusPage(
   nonce: string,
@@ -406,7 +484,7 @@ export function statusPage(
       null,
       note,
       `<section class="hero"><p>Status is not available now. Reload in a few seconds.</p></section>`,
-      "",
+      "na",
     );
   const power = powerButton(v, retryFix(v, panel));
   // A sleep refusal shows beside Sleep now (the rule's reason); the top notice is for everything else.
@@ -421,8 +499,14 @@ export function statusPage(
         ? { main: "On a message", sub: "or a login" }
         : { main: "None scheduled", sub: "" };
   const fast = moving(v, notice?.code);
+  const waking =
+    v.state === "starting" ||
+    v.state === "waiting-capacity" ||
+    notice?.code === "wake" ||
+    notice?.code === "start";
+  const live = (url: string, every: number): Live => ({ url, every, state: v.state, waking });
   const pw = powerHtml(power, refused);
-  if (panel) return panelPage(nonce, v, top, panel, fast, pw, { last, next }, q);
+  if (panel) return panelPage(nonce, v, top, panel, fast ? 5000 : 30000, pw, { last, next }, q, live);
   const alerts = v.alerts.length
     ? v.alerts
         .slice(0, 2)
@@ -435,13 +519,7 @@ export function statusPage(
   const meta = `<dl class="plain"><dt>Last activity</dt><dd>${esc(last)}</dd><dt>Next wake</dt><dd>${esc(next.main)}${
     next.sub ? ` (${esc(next.sub)})` : ""
   }</dd><dt>Snapshots</dt><dd>${v.snapshots}</dd><dt>Alerts</dt><dd>${alerts}</dd></dl>`;
-  return consolePage(
-    nonce,
-    v.inst,
-    top,
-    heroHtml(v, meta, pw),
-    fast ? "setTimeout(function(){location.replace('/')},5000);" : "",
-  );
+  return consolePage(nonce, v.inst, top, heroHtml(v, meta, pw), live("/", fast ? 5000 : 0));
 }
 
 // ---------------------------------------------------------------- owner console
@@ -945,10 +1023,11 @@ function panelPage(
   v: OwnerView,
   note: string,
   p: Panel,
-  fast: boolean,
+  every: number,
   power: string,
   st: { last: string; next: { main: string; sub: string } },
   q: { tab?: string | null; kind?: string | null },
+  live: (url: string, every: number) => Live,
 ): string {
   const k = p.cost ?? { monthUsd: Number.NaN, alwaysOnMonthUsd: Number.NaN };
   const meta = `<dl class="meta"><div><dt>Last activity</dt><dd>${esc(st.last)}</dd></div>
@@ -962,7 +1041,7 @@ function panelPage(
     setup: [rows.filter((r) => r.todo).length, false],
     log: [p.alerts.open.length, p.alerts.open.some((a) => a.severity === "high")],
   };
-  const nav = `<nav class="tabs" aria-label="Sections">${TABS.map(([t, label]) => {
+  const nav = `<nav class="tabs" id="tabs" data-sw aria-label="Sections">${TABS.map(([t, label]) => {
     const c = count[t];
     return `<a href="${tabHref(t)}"${t === tab ? ' aria-current="page"' : ""}>${label}${
       c?.[0]
@@ -976,7 +1055,7 @@ function panelPage(
     nonce,
     v.inst,
     note,
-    `${heroHtml(v, meta, power)}${nav}<div class="tp" id="tab-${tab}">${body}</div>`,
-    `setTimeout(function(){location.replace(${JSON.stringify(here)})},${fast ? 5000 : 30000});`,
+    `${heroHtml(v, meta, power)}${nav}<div class="tp" id="tab-${tab}" data-sw>${body}</div>`,
+    live(here, every),
   );
 }

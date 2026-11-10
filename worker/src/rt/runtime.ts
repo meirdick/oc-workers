@@ -48,6 +48,26 @@ const isNav = (req: Request) =>
   req.method === "GET" && !isWs(req) && (req.headers.get("accept") ?? "").includes("text/html");
 const LATCH_KEY = "uiLatch";
 const LATCH_MAX = 32;
+/** Gateway health probes. The Control UI probes /healthz between WS reconnects; a probe is not user intent. */
+const PROBE_PATHS = new Set(["/healthz", "/readyz"]);
+
+export type ProxyClass = "refuse" | "latched" | "probe" | "normal";
+
+/**
+ * Add §2.5: how the proxy treats a request. "refuse": a latched session's WS upgrade (503, no wake).
+ * "latched": a latched session's other non-navigation request: served while running, no activity, no wake.
+ * "probe": a health probe of a session that is not latched: no activity, but it can still wake.
+ * "normal": activity and wake. Before "latched" and "probe", a forgotten tab's reconnect loop (WS 503, then
+ * GET /healthz about every 15 s) held the install awake on rule 3.
+ */
+export function proxyClass(req: Request, latched: boolean): ProxyClass {
+  if (latched && isWs(req)) return "refuse";
+  if (latched && !isNav(req)) return "latched";
+  return PROBE_PATHS.has(new URL(req.url).pathname) ? "probe" : "normal";
+}
+
+/** proxyAllowed options for a class. */
+export const proxyGateOpts = (c: ProxyClass) => ({ activity: c === "normal", wake: c !== "latched" });
 
 /** Idle-close latch (add §2.5): {sid: at}, newest LATCH_MAX kept. */
 export class Latches {
@@ -311,21 +331,26 @@ export class Runtime extends DurableObject<Env> implements RuntimeRpc, RuntimeGa
     if (name && !this.core) await this.bind(name);
     const core = await this.c();
     const sid = req.headers.get(SID_HEADER);
+    let latched = false;
     if (sid) {
       const latches = new Latches(core.store);
+      latched = latches.has(sid);
       // Add §2.5 latch: a latched session's WS upgrade gets 503 and wakes nothing; its next page load clears it.
-      if (isWs(req) && latches.has(sid)) {
+      if (proxyClass(req, latched) === "refuse") {
         core.ring("ws", "latched upgrade refused", null);
         return new Response("idle-closed; reload the page", {
           status: 503,
           headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
       }
-      if (isNav(req) && latches.clear(sid)) core.ring("ws", "latch cleared", null);
+      if (isNav(req) && latches.clear(sid)) {
+        core.ring("ws", "latch cleared", null);
+        latched = false;
+      }
     }
     let gate: Awaited<ReturnType<RuntimeCore["proxyAllowed"]>>;
     try {
-      gate = await core.proxyAllowed();
+      gate = await core.proxyAllowed(proxyGateOpts(proxyClass(req, latched)));
     } catch (e) {
       core.ring("ws", "gate-error", errorText(e));
       return wakingResponse(req);

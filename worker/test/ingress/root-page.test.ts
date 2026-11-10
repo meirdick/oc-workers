@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { resetPointerCache } from "../../src/index";
 import { resetAccessCache } from "../../src/ingress/access";
 import { resetSessionCache } from "../../src/ingress/session";
-import { CONTROL_UI_PATH, DOCS_URL } from "../../src/ui/pages";
+import { CONTROL_UI_PATH, DOCS_URL, REFRESH_JS, statusPage } from "../../src/ui/pages";
 import { fakeAuthNs } from "./fake-auth";
 
 const TEAM = "acme.cloudflareaccess.com";
@@ -215,7 +215,18 @@ describe.each(HOSTS)("/ on $name", ({ origin, access }) => {
     const starting = mkEnv({ access, state: "waiting-capacity" });
     html = await (await go(starting.e, rq("/", { cookie: await cookieOf(starting.e), headers: nav }))).text();
     expect(html).toContain('Waking</p><p class="since">for 12 min · waiting-capacity</p>');
-    expect(html).toContain("setTimeout(");
+    // In-place refresh every 5 s, no timed full reload; a wake in progress (data-wk) reloads once at running.
+    expect(html).toContain(`<script nonce="`);
+    expect(html).toContain(REFRESH_JS);
+    expect(html).toContain('<main id="oc" data-u="/" data-r="5000" data-st="waiting-capacity" data-wk>');
+    expect(html).toContain('<section class="hero" id="hero" data-sw aria-label="Install state">');
+    expect(html).not.toMatch(/setTimeout\(function\(\)\{location\.replace/);
+  });
+
+  it("owner: Control DO does not answer → status not available, marked data-na, no script", async () => {
+    const html = statusPage("n0", null);
+    expect(html).toContain('<main id="oc" data-na>');
+    expect(html).not.toContain("<script");
   });
 
   it("owner: a WS upgrade or an API call on / still goes to the gateway; the UI path is proxied", async () => {
@@ -230,7 +241,7 @@ describe.each(HOSTS)("/ on $name", ({ origin, access }) => {
     expect(calls.filter((x) => x.cls === "rt" && x.m === "fetch")).toHaveLength(3);
   });
 
-  it("owner: Wake now → requestWake(ui), 303 to /; Sleep now → sleepNow (no force); refusal names the rule", async () => {
+  it("owner: Wake now → requestWake(ui), 303 to /; Sleep now → sleepNow (force: owner intent skips idle rules); refusal names the rule", async () => {
     const { e, calls } = mkEnv({ access, state: "asleep" });
     const c = await cookieOf(e);
     const w = await go(e, rq("/_ochost/wake", { method: "POST", cookie: c, headers: { origin } }));
@@ -238,7 +249,7 @@ describe.each(HOSTS)("/ on $name", ({ origin, access }) => {
     expect(calls.find((x) => x.m === "requestWake")?.a).toEqual(["ui"]);
     const s = await go(e, rq("/_ochost/sleep", { method: "POST", cookie: c, headers: { origin } }));
     expect([s.status, s.headers.get("location")]).toEqual([303, "/?n=sleep"]);
-    expect(calls.find((x) => x.m === "sleepNow")?.a).toEqual([{ force: false }]);
+    expect(calls.find((x) => x.m === "sleepNow")?.a).toEqual([{ force: true }]);
     const page = await (await go(e, rq("/?n=wake", { cookie: c, headers: nav }))).text();
     expect(page).toContain("Wake requested");
 
@@ -313,12 +324,12 @@ describe.each(HOSTS)("/ on $name", ({ origin, access }) => {
     expect((await p("act=nuke")).headers.get("location")).toBe("/");
     expect(calls.filter((x) => x.cls === "rt" && x.m !== "status").map((x) => [x.m, x.a])).toEqual([
       ["requestWake", ["ui"]],
-      ["sleepNow", [{ force: false }]],
+      ["sleepNow", [{ force: true }]],
       ["ownerStart", []],
     ]);
     const page = await (await go(e, rq("/?n=start", { cookie: c, headers: nav }))).text();
     expect(page).toContain("Start requested");
-    expect(page).toContain("setTimeout(");
+    expect(page).toContain('data-u="/" data-r="5000" data-st="stopped" data-wk>');
   });
 
   it("owner: Firefox's Origin: null form POST passes with Sec-Fetch-Site same-origin; cross-site does not", async () => {

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { Panel } from "../../src/ctl/panel";
 import worker, { resetPointerCache } from "../../src/index";
 import { resetSessionCache } from "../../src/ingress/session";
-import { DOCS_URL } from "../../src/ui/pages";
+import { DOCS_URL, REFRESH_JS } from "../../src/ui/pages";
 import { fakeAuthNs } from "./fake-auth";
 
 const ORIGIN = "https://oc.example.workers.dev";
@@ -229,18 +229,27 @@ describe("owner panel page", () => {
       ])
         expect(html).toContain(s);
       // The tab row: plain links, the current one marked; counts on Setup and Alerts.
-      expect(html).toContain('<nav class="tabs" aria-label="Sections">');
+      expect(html).toContain('<nav class="tabs" id="tabs" data-sw aria-label="Sections">');
       expect([...html.matchAll(/aria-current="page">([A-Za-z ]+)/g)].map((m) => m[1])[0]).toBe(
         { overview: "Overview", log: "Alerts and log", setup: "Setup" }[t],
       );
       expect(html).toMatch(
         /<a href="\/\?tab=log"( aria-current="page")?>Alerts and log<span class="n hot">1<span class="vh"> open<\/span>/,
       );
-      // CSP: one script, with the nonce: the refresh, back to this tab.
+      // CSP: one script, with the nonce: the in-place refresh of this tab, every 30 s. No timed full reload.
       expect([...html.matchAll(/<script/g)]).toHaveLength(1);
+      expect(html).toContain(`<script nonce="${nonce}">${REFRESH_JS}</script>`);
       expect(html).toContain(
-        `<script nonce="${nonce}">setTimeout(function(){location.replace(${JSON.stringify(t === "overview" ? "/" : `/?tab=${t}`)})},30000);</script>`,
+        `<main id="oc" data-u="${t === "overview" ? "/" : `/?tab=${t}`}" data-r="30000" data-st="running"><div id="nt" data-sw>`,
       );
+      // The swap regions, in this order: notice, state card, tab row, this tab's body.
+      expect([...html.matchAll(/<\w+ [^>]*id="([\w-]+)" data-sw/g)].map((m) => m[1])).toEqual([
+        "nt",
+        "hero",
+        "tabs",
+        `tab-${t}`,
+      ]);
+      expect(html).not.toMatch(/setTimeout\(function\(\)\{location\.replace/);
       expect(html).not.toMatch(/ style=/);
       expect(html.replace(DOCS_URL, "")).not.toMatch(/(src|href)=["']https?:/);
       expect(html).toContain(
@@ -331,7 +340,7 @@ describe("owner panel page", () => {
     const arch = (await get("?tab=log&kind=archive")).html;
     expect(arch).toContain("Archive (owner), complete, 12 MB");
     expect(arch).not.toContain("Woke on webhook");
-    expect(arch).toContain('location.replace("/?tab=log&kind=archive")');
+    expect(arch).toContain('data-u="/?tab=log&amp;kind=archive"');
   });
 
   it("owner: ownerPanel unavailable → the plain status page, not an error", async () => {

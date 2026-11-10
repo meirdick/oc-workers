@@ -2103,15 +2103,18 @@ export class RuntimeCore {
     return { verified: r.verified, why: r.verified ? null : `${r.rel ?? ""} ${r.why ?? ""}`.trim() };
   }
 
-  /** Proxy gate (§19.1): serve only in `running`; else 503 and wake reason ui. */
-  async proxyAllowed(): Promise<"serve" | "retired" | "waking"> {
+  /** Proxy gate (§19.1): serve only in `running`; else 503 and wake reason ui. activity false (latched session,
+   * health probe): no idle-timer reset. wake false (latched session): no wake (add §2.5). */
+  async proxyAllowed(
+    o: { activity?: boolean; wake?: boolean } = {},
+  ): Promise<"serve" | "retired" | "waking"> {
     const r = this.rec();
     if (r.state === "retired") return "retired";
     if (r.state === "running" && this.d.container.running) {
-      this.patchRec({ lastActivityAt: this.now() });
+      if (o.activity !== false) this.patchRec({ lastActivityAt: this.now() });
       return "serve";
     }
-    await this.requestWake("ui");
+    if (o.wake !== false) await this.requestWake("ui");
     return "waking";
   }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2
+
+- Fix: A Control UI tab left open no longer keeps the install awake. After the idle close, the tab retries its connection and checks `/healthz` about every 15 s. Those requests reset the idle timer, so the install never slept. Now a tab that was idle-closed gets its requests answered without counting as activity and without waking the install. A health check from any tab is not activity either. Reload the tab to use it again.
+- Fix: The owner console no longer reloads the whole page every 30 s (every 5 s while the state changes). It now updates the state card and the open tab in place, so the page does not flash, the scroll position stays, and a Setup form you are typing in is not cleared. It skips a refresh while the browser tab is hidden or a form has focus or edits. A login page or an error still causes one full reload.
+- Fix: **Sleep now** in the owner console now sleeps the install even if you used it in the last minutes. Before, it refused with `3:idle` until the idle timer ran out, and opening the console counted as use. An open archive, an import or an unsent message still refuses it, with the reason.
+
 ## 1.2.1
 
 - Fix: a full disk now shows. While alert `disk-full` is open (95 % used, or an out-of-space error in the container), `ochost status`, `ochost doctor` and the console say the install is degraded, with the reason `disk-full`. Before, status stayed not degraded at 100 % disk. `disk-high` (80 %) is listed with the alerts but does not set degraded. Both alerts close by themselves when the heartbeat shows the disk back under 90 % (`disk-full`) or 80 % (`disk-high`). `ochost status` shows a `disk` row with the last use the container reported.

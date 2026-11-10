@@ -138,7 +138,9 @@ export async function handleOchost(req: Request, env: IngressEnv, deps: IngressD
       if (r.ok) return seeOther("/?n=start");
       return seeOther(`/?n=start-failed&why=${encodeURIComponent(String(r.state ?? "").slice(0, 60))}`);
     }
-    const r = await rt.sleepNow({ force: false }).catch((e: unknown) => ({
+    // The owner pressed Sleep now: skip the idle, min-awake and next-wake rules (3, 4, 7), as `ochost sleep
+    // --force` does. Blockers (open archive, import, inbox) and an open WS still refuse it.
+    const r = await rt.sleepNow({ force: true }).catch((e: unknown) => ({
       ok: false,
       reason: e instanceof Error ? e.message : "error",
     }));

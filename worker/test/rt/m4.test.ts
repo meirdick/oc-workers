@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { bridgeDecision, classifyFrame, noteFrame, watchRound } from "../../src/rt/bridge-policy";
 import { Bridges, gatewayHeaders } from "../../src/rt/proxy";
 import { DEFAULT_RT_TIMERS, rtTimersFrom } from "../../src/rt/rt-timers";
-import { Latches } from "../../src/rt/runtime";
+import { Latches, proxyClass, proxyGateOpts } from "../../src/rt/runtime";
 import { world } from "./world";
 
 const req = (method: string) => JSON.stringify({ type: "req", id: "1", method, params: {} });
@@ -303,5 +303,50 @@ describe("WS bridge policy (plan §7; add §2.5 rule 2, latch)", () => {
     await w.clock.advance(5000);
     w.core.noteUiIntent();
     expect(w.core.rec().lastActivityAt).toBe(a0 + 5000);
+  });
+
+  it("proxyClass: latched WS refused; latched fetch and /healthz get no activity; latched fetch no wake", () => {
+    const r = (path: string, h: Record<string, string> = {}) =>
+      new Request(`https://oc.example${path}`, { headers: h });
+    const ws = { upgrade: "websocket" };
+    const html = { accept: "text/html" };
+    expect(proxyClass(r("/", ws), true)).toBe("refuse");
+    expect(proxyClass(r("/healthz"), true)).toBe("latched");
+    expect(proxyClass(r("/api/x"), true)).toBe("latched");
+    expect(proxyClass(r("/", html), true)).toBe("normal"); // a page load clears the latch
+    expect(proxyClass(r("/healthz"), false)).toBe("probe");
+    expect(proxyClass(r("/readyz"), false)).toBe("probe");
+    expect(proxyClass(r("/", ws), false)).toBe("normal");
+    expect(proxyClass(r("/api/x"), false)).toBe("normal");
+    expect(proxyGateOpts("latched")).toEqual({ activity: false, wake: false });
+    expect(proxyGateOpts("probe")).toEqual({ activity: false, wake: true });
+    expect(proxyGateOpts("normal")).toEqual({ activity: true, wake: true });
+  });
+
+  it("live 2026-11-10: a latched tab's /healthz every 15 s no longer holds the install awake (rule 3)", async () => {
+    const run = async (opts: { activity?: boolean; wake?: boolean }) => {
+      const w = world({ timers: { maintEveryMs: 24 * 3600_000 } });
+      await w.boot();
+      for (let i = 0; i < 60 && w.state() !== "asleep"; i++) {
+        expect(await w.core.proxyAllowed(opts)).toBe("serve");
+        await w.hb();
+        await w.tick(w.clock.now() + 1000);
+      }
+      return w;
+    };
+    const held = await run({});
+    expect(held.state()).toBe("running");
+    expect(held.core.sleepRec().blockedOn).toBe("3:idle");
+    const latched = proxyGateOpts("latched");
+    const w = await run(latched);
+    expect(w.state()).toBe("asleep");
+    // Asleep: the latched probe wakes nothing.
+    expect(await w.core.proxyAllowed(latched)).toBe("waking");
+    await w.idle();
+    expect(w.state()).toBe("asleep");
+    // A probe of a session that is not latched still wakes (the UI's reconnect after a sleep).
+    expect(await w.core.proxyAllowed(proxyGateOpts("probe"))).toBe("waking");
+    await w.idle();
+    expect(w.state()).not.toBe("asleep");
   });
 });
