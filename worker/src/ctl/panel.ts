@@ -53,6 +53,8 @@ export interface PanelDeps {
   files?(): Promise<{ ok: boolean; ms: number; error?: string }>;
   /** File storage usage against files.capGb (ledger filesView). */
   filesView?(): { used: number; limit: number } | null;
+  /** One bounded files reconcile step (ctl/files-reconcile.ts); `open`: the pass needs more steps. Never throws. */
+  filesReconcile?(): Promise<{ open: boolean } | null>;
   /** SandboxSession state; null when the binding is absent. Never starts it. */
   sandbox(): Promise<Record<string, any> | null>;
   env: { access: { domain: string | null; team: string | null } | null; gateway: string };
@@ -244,8 +246,16 @@ export async function ownerPanel(
   checks.push(checkWebhook(o.origin, doc, s));
   const live = checkWebhookLive(o.origin, wh);
   if (live) checks.push(stale(wh?.at, live));
+  // 1.2.4: doctor also counts files written straight to R2 (one bounded reconcile step) before it shows the usage.
+  const rec = filesOn && o.fresh === true && d.filesReconcile ? await d.filesReconcile() : null;
   const fv = d.filesView?.() ?? null;
-  const filesRow = checkFiles(doc, fp, fv, Math.min(10_000, Math.ceil(((fv?.limit ?? 5e9) / 1e9) * 2)));
+  const filesRow0 = checkFiles(doc, fp, fv, Math.min(10_000, Math.ceil(((fv?.limit ?? 5e9) / 1e9) * 2)));
+  const filesRow = rec?.open
+    ? {
+        ...filesRow0,
+        detail: `${filesRow0.detail} (R2 count not complete; more at the next doctor or alarm)`,
+      }
+    : filesRow0;
   checks.push(hopRow, checkReplica(s), checkArchive(archive, state), checkAlerts(s, sink), checkDeadman(s));
   if (doc) checks.push(filesRow);
   const fails = checks.filter((x) => x.result === "FAIL").length;
@@ -385,7 +395,7 @@ export async function ownerPanel(
   );
   connected.push(
     !sink.configured
-      ? warn("alerts sink", "not configured", "ochost alerts setup")
+      ? { ...pass("alerts sink", "off"), fix: "ochost alerts setup (opt-in)" }
       : sink.ackedAt
         ? pass("alerts sink", `${sink.kind ?? "sink"}, configured, acked ${dur(now - sink.ackedAt)} ago`)
         : warn(

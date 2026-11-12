@@ -28,11 +28,13 @@ export interface SummaryInput {
   self: string;
   /** printed after the command: `--dir <d>` when the install is not the current dir */
   dirArg: string;
+  /** alerts.channel, or the --alerts flag; "none" or unset = alerts off (the default) */
+  alerts?: string;
 }
 
 /** The commands the summary suggests, in order. Also the `nextCommands` field of the init JSON. */
 export function nextCommands(
-  i: Pick<SummaryInput, "self" | "dirArg" | "bot" | "model">,
+  i: Pick<SummaryInput, "self" | "dirArg" | "bot" | "model" | "alerts">,
 ): { cmd: string; why: string }[] {
   const c = (s: string) => `${i.self} ${s}${i.dirArg}`;
   return [
@@ -40,7 +42,9 @@ export function nextCommands(
     ...(i.model ? [] : [{ cmd: c("ai-gateway setup"), why: "no model yet (--skip-ai)" }]),
     { cmd: c("status"), why: "sleep state, next wake, cost" },
     { cmd: c("doctor"), why: "health checks" },
-    { cmd: c("alerts setup"), why: "alerts are off" },
+    ...(i.alerts && i.alerts !== "none"
+      ? []
+      : [{ cmd: c("alerts setup"), why: "alerts are off (the default); this turns them on" }]),
   ];
 }
 

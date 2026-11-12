@@ -65,6 +65,7 @@ An older Worker refused the login form post from Firefox with 403 `bad origin`, 
 | You see | Meaning |
 |---|---|
 | `alerts db-unclassified (warn)` in `status` on a new install | Harmless: the image scan flags a temp file. |
+| `doctor`: `alerts PASS off` | No action. Alerts to your phone are off (the default). `ochost alerts setup` turns them on. |
 | `status`: `degraded (disk-full)` | The container disk is 95 % full. Free space or raise the disk size. The state clears when use drops under 90 %. `disk-high` (80 %) is a warning only. |
 | A Telegram update shows as `dead` in `status` | The gateway answered it with 404 or 501 five times over at least 5 minutes. A dead row no longer keeps the install awake. |
 | `doctor`: `state WARN running, start ladder level 1` | No action. The start ladder counts failed starts, and a normal first start can leave it at level 1. |

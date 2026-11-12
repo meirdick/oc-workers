@@ -653,6 +653,50 @@ describe("alerts", () => {
     expect(JSON.parse(readFileSync(join(dir, ".oc-host", "alerts.json"), "utf8")).ackedAt).toBe(T0);
   });
 
+  it("ack asks the Worker: a test waiting there is confirmed with no local record (1.2.5)", async () => {
+    let acks = 0;
+    f.routes.push((q) => {
+      if (q.path !== "/ops/alerts/ack") return undefined;
+      acks++;
+      return (q.body as { code?: string }).code === "k7m2pq"
+        ? { status: 200, body: { ok: true, ackedAt: T0 } }
+        : { status: 409, body: { error: "code-mismatch" } };
+    });
+    const ok = await run("alerts", ["ack", "k7m2pq", "--dir", dir]);
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("alerts confirmed");
+    const bad = await run("alerts", ["ack", "zzzzzz", "--dir", dir]);
+    expect(bad.code).toBe(1);
+    expect(bad.err).toMatch(/does not match/);
+    expect(acks).toBe(2);
+  });
+
+  it("ack: the Worker has no test waiting → the fix is alerts test", async () => {
+    f.routes.push((q) =>
+      q.path === "/ops/alerts/ack" ? { status: 409, body: { error: "no-test" } } : undefined,
+    );
+    const r = await run("alerts", ["ack", "abcdef", "--dir", dir]);
+    expect(r.code).toBe(1);
+    expect(r.err).toMatch(/no test alert is waiting — fix: run ochost alerts test/);
+  });
+
+  it("close <class>: POST /ops/alerts/close; not open → exit 1", async () => {
+    f.routes.push((q) => {
+      if (q.path !== "/ops/alerts/close") return undefined;
+      return (q.body as { class?: string }).class === "hello-flood"
+        ? { status: 200, body: { ok: true, class: "hello-flood" } }
+        : { status: 404, body: { error: "not-open" } };
+    });
+    const r = await run("alerts", ["close", "hello-flood", "--dir", dir]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("closed alert hello-flood");
+    expect(f.calls("POST", "/ops/alerts/close")[0]?.body).toEqual({ class: "hello-flood", by: "cli" });
+    const n = await run("alerts", ["close", "doctor-failed", "--dir", dir]);
+    expect(n.code).toBe(1);
+    expect(n.err).toMatch(/no open alert doctor-failed/);
+    expect((await run("alerts", ["close", "--dir", dir])).code).not.toBe(0);
+  });
+
   it("setup: sink refuses → subscribe still printed, exit 1 with the webhook fix", async () => {
     f.routes.push((q) =>
       q.path === "/ops/alerts/test" ? { status: 502, body: { sent: 0, failed: 1 } } : undefined,
@@ -677,10 +721,33 @@ describe("alerts", () => {
     expect(r.err).toMatch(/WARN: the Control DO did not send it: .*\(W11\)/);
   });
 
-  it("list warns when not set up", async () => {
+  it("list with channel none: alerts off is a normal state, no warning; alerts are still listed", async () => {
+    f.routes.push((q) =>
+      q.path === "/ops/alerts"
+        ? {
+            status: 200,
+            body: {
+              alerts: [{ class: "gate-down", severity: "high", open: 1, count: 1, last_detail: "x" }],
+              outbox: 0,
+            },
+          }
+        : undefined,
+    );
     const r = await run("alerts", ["--dir", dir]);
-    expect(r.out).toMatch(/channel: none/);
-    expect(r.err).toMatch(/WARN: alerts: not set up — fix: ochost alerts setup/);
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/channel: none \(alerts off; ochost alerts setup turns them on\)/);
+    expect(r.out).toMatch(/gate-down\s+high\s+yes/);
+    expect(r.err).not.toMatch(/WARN/);
+  });
+
+  it("setup --channel none, then list: still no warning; test says alerts are off", async () => {
+    await run("alerts", ["setup", "--channel", "none", "--dir", dir], { run: fakeRunner().run });
+    const r = await run("alerts", ["--dir", dir]);
+    expect(r.out).toMatch(/channel: none \(alerts off/);
+    expect(r.err).not.toMatch(/WARN/);
+    const t = await run("alerts", ["test", "--dir", dir]);
+    expect(t.code).toBe(1);
+    expect(t.err).toMatch(/Failed: alerts are off — fix: run ochost alerts setup/);
   });
 });
 
@@ -702,7 +769,7 @@ describe("doctor", () => {
         ok("reach", "Control DO answered"),
         ok("state", "asleep"),
         ok("model hop", "200 in 412 ms (m) through the gate (cached 3m ago, install asleep)"),
-        { name: "alerts", result: "WARN", detail: "not set up", fix: "ochost alerts setup" },
+        { name: "dead-man", result: "WARN", detail: "no out-of-band dead-man", fix: "ochost ci setup" },
       ],
       connected: [ok("model", "x")],
     };
@@ -717,10 +784,10 @@ describe("doctor", () => {
   it("prints the panel's checks and fix lines from one GET; never wakes", async () => {
     const r = await run("doctor", ["--dir", dir]);
     expect(r.code).toBe(0);
-    for (const n of ["reach", "state", "model hop", "alerts"])
+    for (const n of ["reach", "state", "model hop", "dead-man"])
       expect(r.out).toMatch(new RegExp(`^${n}\\s+(PASS|WARN)`, "m"));
     expect(r.out).toMatch(/^model hop\s+PASS\s+200 in 412 ms .*install asleep\)/m);
-    expect(r.out).toMatch(/alerts: not set up -> ochost alerts setup/);
+    expect(r.out).toMatch(/dead-man: no out-of-band dead-man -> ochost ci setup/);
     expect(r.out).toMatch(/4 checks: 3 PASS, 1 WARN, 0 FAIL/);
     expect(f.reqs.map((q) => `${q.method} ${q.path}`)).toEqual(["GET /ops/doctor?fresh=1"]);
     expect(f.reqs[0]?.auth).toBe(`Bearer ${OWNER}`);

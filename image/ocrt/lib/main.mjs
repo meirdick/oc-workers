@@ -33,7 +33,7 @@ import { configStep, doctorStep, netfilterStep, startConfigWatch } from "./guard
 import { createHeartbeat } from "./heartbeat.mjs";
 import { createImporter } from "./importer.mjs";
 import { newIid, pinHostname, readBootIdentity, stepPidCounter, writeBootJson } from "./identity.mjs";
-import { Litestream } from "./litestream.mjs";
+import { ADMIT_HOLD_CAP_MS, Litestream } from "./litestream.mjs";
 import { LOCK_READER, runLockStep } from "./lock.mjs";
 import { createLog, createStatusWriter } from "./log.mjs";
 import { dbId, legacyMetaPath, metaPathFor } from "./ls-config.mjs";
@@ -99,6 +99,8 @@ export async function main() {
       ...(SRC.OCRT_LS_L0_RETENTION_CHECK ? { l0Check: SRC.OCRT_LS_L0_RETENTION_CHECK } : {}),
     },
     lsLegacyMeta: SRC.OCRT_LS_LEGACY_META === "1",
+    lsAdmitHold: SRC.OCRT_LS_ADMIT_HOLD !== "0",
+    lsStopHold: SRC.OCRT_LS_STOP_HOLD === "1", // off by default until the sleep and drain tests ran with it
     fakeBootId: SRC.OCRT_TEST_FAKE_BOOT_ID || "",
     cg: "/sys/fs/cgroup",
   };
@@ -489,8 +491,12 @@ export async function main() {
       return { ok: r.ok, reason: r.reason, tree: t };
     },
     onStarted: (ms) => {
+      releaseLsHold("startupz");
       if (!sigtermSeen && S.phase !== "quiescing") setPhase(S.seeding ? "seeding" : "running");
-      void gate.event("startupz", { detail: { ms } });
+      // Boot split for `ochost logs` (docs/13): readyMs = the gateway's own `ready` line; ms - readyMs is the
+      // agent database admission; lsHold says if Litestream was down for it.
+      const readyMs = gwReadyAt && gwReadyAt >= gw.state.startedAt ? gwReadyAt - gw.state.startedAt : null;
+      void gate.event("startupz", { detail: { ms, readyMs, lsHold: lsHoldNote } });
       S.gwDumpable = nonDumpable(gw.state.pid);
       void guard?.onStartupz().catch((e) => log("guard-error", { err: String(e) }));
       log("gateway-dumpable", { nonDumpable: S.gwDumpable });
@@ -529,6 +535,7 @@ export async function main() {
       if (!sigtermSeen && !exiting) setPhase("gateway-restart");
     },
     onLine: (line) => {
+      if (/\[gateway\] ready\s*$/.test(line)) gwReadyAt = Date.now();
       log("gw", { line: line.slice(0, 2000) });
       if (RELOAD_LINE.test(line)) S.lastConfigReloadAt = Date.now();
       cw?.onGatewayLine(line);
@@ -687,6 +694,18 @@ export async function main() {
       }
     } catch {}
   }
+  let lsHold = null;
+  let lsHoldNote = "none"; // none (no start gate), off, seeding, held
+  let gwReadyAt = 0;
+  /** End the admission hold (start-gate). A drain needs Litestream for its final sync, so SIGTERM ends it too. */
+  const releaseLsHold = (why) => {
+    if (!lsHold) return;
+    clearTimeout(lsHold);
+    lsHold = null;
+    if (exiting || S.fenced) return;
+    const pid = ls?.release(why) ?? null;
+    log("ls-hold-release", { why, pid });
+  };
   const lagTick = async () => {
     if (!ls) return;
     await refreshLocal().catch(() => {});
@@ -714,6 +733,13 @@ export async function main() {
       ls
         ? waitLag(capMs, () => ls.lag.report().every((r) => r.lag !== null && r.lag <= 1))
         : Promise.resolve({ ok: true }),
+    /** Admission hold around a gateway stop (sleep phase 4). null = nothing to hold. */
+    hold: async (why) => (ls?.pid() ? ls.hold(why) : null),
+    release: (why) => {
+      const pid = ls?.release(why) ?? null;
+      if (pid !== null) log("ls-hold-release", { why, pid });
+      return pid;
+    },
     stopFinal: async ({ capMs } = {}) => {
       if (!ls) return { clean: true, detail: "no litestream" };
       if (replica.final) return replica.final;
@@ -851,6 +877,7 @@ export async function main() {
   }
   sleepOps = createSleepOps({
     draining: () => sigtermSeen,
+    holdAtStop: C.lsStopHold,
     queryRows: async () => {
       const r = await runOcio(
         "sleep-read",
@@ -1172,6 +1199,8 @@ export async function main() {
     sigtermSeen = true; // synchronous (plan §4.2 "SIGTERM flag")
     guard?.stop();
     S.draining = true;
+    releaseLsHold("sigterm");
+    replica.release("sigterm"); // a sleep-stop hold: the drain needs Litestream for its final sync
     ls?.setDraining?.();
     shadow?.abort();
     archiver?.abort();
@@ -1589,13 +1618,25 @@ export async function main() {
         if (!ls?.dbs.length) return { rec: { skipped: "no dbs" } };
         if (!st.wait) {
           S.seeding = true;
+          lsHoldNote = "seeding";
           setTimeout(() => seedWatch(seedCapMs(st.setBytes)), 0);
           return { rec: { seeding: true } };
         }
         const end = Date.now() + st.capMs;
         while (Date.now() < end && !stopped()) {
           await lagTick();
-          if (ls.dbs.every((d) => (dbsRemote[d] || 0) > 0)) return { rec: { seeded: true } };
+          if (ls.dbs.every((d) => (dbsRemote[d] || 0) > 0)) {
+            // docs/13 "Wake database wait": the gen is seeded; Litestream stays down while the gateway admits
+            // the agent database, and starts again at /startupz (onStarted), on SIGTERM or at the cap.
+            if (C.lsAdmitHold && plan.replica?.admitHold !== false) {
+              const r = await ls.hold("admit");
+              lsHold = setTimeout(() => releaseLsHold("cap"), ADMIT_HOLD_CAP_MS);
+              lsHold.unref?.();
+              lsHoldNote = "held";
+              log("ls-hold", { clean: r.clean, ms: r.ms, reason: r.reason });
+            } else lsHoldNote = "off";
+            return { rec: { seeded: true } };
+          }
           await sleep(500);
         }
         if (stopped()) return {};

@@ -511,6 +511,7 @@ export async function runInit(ctx: Ctx, o: InitOptions, steps: InitStep[], g: Ga
     elapsedMs: ctx.now() - t0,
     self: selfCommand(),
     dirArg: dirArg(ctx.dir),
+    alerts: flagString(ctx.args, "alerts") ?? cfg.alerts?.channel,
   });
   const total = steps.filter((x) => x.kind !== "done").length + 1;
   ui.end({

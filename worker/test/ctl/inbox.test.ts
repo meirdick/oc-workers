@@ -1,7 +1,7 @@
 // Spec §12 (inbox, allowlist, driver, replicated, secret), add §2.2; scenarios §21 #40, #56-#64, #69.
 import { describe, expect, it } from "vitest";
-import { parseTelegram } from "../../src/ctl/inbox";
-import { handleWebhook } from "../../src/ctl/webhook";
+import { parseInline, parseTelegram } from "../../src/ctl/inbox";
+import { handleWebhook, INLINE_COLD_TEXT, inlineAnswer } from "../../src/ctl/webhook";
 import { tg, type World, world } from "./world";
 
 const put = (w: World, body: string) => w.api.inboxPut({ body, headers: { host: "oc.example.workers.dev" } });
@@ -218,6 +218,103 @@ describe("webhook handler (Worker)", () => {
     expect((await handleWebhook(new Request("https://x/telegram-webhook"), d)).status).toBe(405);
     const big = `{"update_id":1,"x":"${"a".repeat(1024 * 1024)}"}`;
     expect((await handleWebhook(req("new", big), d)).status).toBe(413);
+  });
+});
+
+describe("inline wake (docs/14)", () => {
+  const inline = (updateId: number, fromId = 111, id = "q1") =>
+    JSON.stringify({
+      update_id: updateId,
+      inline_query: { id, from: { id: fromId }, query: "he", offset: "" },
+    });
+  const chosen = (updateId: number) =>
+    JSON.stringify({
+      update_id: updateId,
+      chosen_inline_result: { result_id: "r", from: { id: 111 }, query: "x" },
+    });
+
+  it("parseInline: query id and sender; chosen result; other updates are not inline", () => {
+    expect(parseInline(inline(1))).toEqual({ queryId: "q1", fromId: "111" });
+    expect(parseInline(chosen(2))).toEqual({ queryId: null, fromId: null });
+    expect(parseInline(tg(3))).toBeNull();
+    expect(parseInline(tg(4, 111, 111, "inline_query in a text"))).toBeNull();
+    expect(parseInline("{inline")).toBeNull();
+  });
+
+  it("an allowed sender's query wakes an asleep install; no row, no typing", () => {
+    const w = world();
+    w.install();
+    w.api.noteRtState(1, "asleep");
+    w.api.gateCall("wakeAllow", [{ userIds: ["111"], groupChatIds: [] }]);
+    const r = put(w, inline(1));
+    expect(r).toMatchObject({ status: 200, inline: true, queryId: "q1", wake: true, cold: true });
+    expect(r.typing).toBeUndefined();
+    expect(rows(w)).toHaveLength(0);
+  });
+
+  it("awake: answered, no wake, not cold; starting: cold, no second wake", () => {
+    const w = world();
+    awake(w);
+    w.api.gateCall("wakeAllow", [{ userIds: ["111"], groupChatIds: [] }]);
+    w.api.core.ingressReady(1);
+    expect(put(w, inline(1))).toMatchObject({ inline: true, queryId: "q1", wake: false });
+    w.api.noteRtState(1, "starting");
+    expect(put(w, inline(2))).toMatchObject({ inline: true, queryId: "q1", wake: false, cold: true });
+    expect(rows(w)).toHaveLength(0);
+  });
+
+  it("a stranger, or no allowlist and no owner id: no wake and no answer", () => {
+    const w = world();
+    w.install();
+    w.api.noteRtState(1, "asleep");
+    expect(put(w, inline(1))).toMatchObject({ inline: true, queryId: null, wake: false }); // no list
+    w.api.gateCall("wakeAllow", [{ userIds: ["111"], groupChatIds: [] }]);
+    expect(put(w, inline(2, 999))).toMatchObject({ inline: true, queryId: null, wake: false });
+    expect(put(w, chosen(3))).toMatchObject({ inline: true, queryId: null, wake: false });
+    expect(rows(w)).toHaveLength(0);
+  });
+
+  it("the owner id wakes without an allowlist", () => {
+    const w = world();
+    w.install();
+    w.api.noteRtState(1, "asleep");
+    w.db.setMeta("ownerTelegramId", "111");
+    expect(put(w, inline(1))).toMatchObject({ queryId: "q1", wake: true });
+  });
+
+  it("handler: 200, one wake, one answer with the waking line; a stranger gets neither", async () => {
+    const w = world();
+    w.install();
+    w.api.noteRtState(1, "asleep");
+    w.api.gateCall("wakeAllow", [{ userIds: ["111"], groupChatIds: [] }]);
+    const wakes: number[] = [];
+    const answers: [string, boolean][] = [];
+    const d = {
+      env: { TELEGRAM_WEBHOOK_SECRET: "new" },
+      ctl: { inboxPut: async (p: never) => w.api.inboxPut(p), webhookPrevOk: async () => false },
+      wake: async () => wakes.push(1),
+      answerInline: async (id: string, cold: boolean) => void answers.push([id, cold]),
+      waitUntil: (p: Promise<unknown>) => void p,
+    };
+    const req = (body: string) =>
+      new Request("https://oc.example.workers.dev/telegram-webhook", {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": "new", "content-type": "application/json" },
+        body,
+      });
+    expect((await handleWebhook(req(inline(1)), d)).status).toBe(200);
+    expect((await handleWebhook(req(inline(2, 999, "q2")), d)).status).toBe(200);
+    expect(wakes).toEqual([1]);
+    expect(answers).toEqual([["q1", true]]);
+    expect(inlineAnswer("q1", true)).toEqual({
+      inline_query_id: "q1",
+      results: [],
+      cache_time: 0,
+      is_personal: true,
+      button: { text: INLINE_COLD_TEXT, start_parameter: "wake" },
+    });
+    expect(inlineAnswer("q1", false).button).toBeUndefined();
+    expect(INLINE_COLD_TEXT.length).toBeLessThanOrEqual(64);
   });
 });
 

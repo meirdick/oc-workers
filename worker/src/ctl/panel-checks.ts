@@ -253,11 +253,18 @@ export interface Sink {
 }
 
 export function checkAlerts(s: any, sink: Sink | null): Check {
-  const open: any[] = (s?.alerts ?? []).filter((a: any) => a.open !== 0 && a.open !== false);
+  // `alerts-none` (before 1.2.4): no sink was a fault. Now it is "alerts off", so an old open row does not count.
+  const open: any[] = (s?.alerts ?? []).filter(
+    (a: any) => a.open !== 0 && a.open !== false && a.class !== "alerts-none",
+  );
   const high = open.filter((a) => a.severity === "high");
   if (high.length)
     return fail("alerts", `open: ${high.map((a) => a.class).join(", ")}`, "ochost alerts list; ochost logs");
-  if (!sink?.configured) return warn("alerts", "not set up", "ochost alerts setup");
+  // No sink: alerts are off (the default, opt-in). Alerts are still recorded; open ones still show.
+  if (!sink?.configured)
+    return open.length
+      ? warn("alerts", `off; open: ${open.map((a) => a.class).join(", ")}`, "ochost alerts list")
+      : pass("alerts", "off");
   const kind = sink.kind ?? "sink";
   // Z2.9: a sink that never took an alert, or whose newest send failed, is a silent dead-man.
   if (!sink.lastOkAt)

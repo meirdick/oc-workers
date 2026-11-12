@@ -20,6 +20,7 @@ import {
   alert,
   alertAck,
   alertTest,
+  closeAlert,
   dailyHeartbeat,
   deadmanCheck,
   flushAlerts,
@@ -72,6 +73,13 @@ import {
   runEpochOp,
   startEpochOp,
 } from "./epochs";
+import {
+  filesReconcileStep,
+  RECONCILE_OP_PAGES,
+  type ReconcileOut,
+  reconcileDue,
+  reconcileLast,
+} from "./files-reconcile";
 import { planGc, runGc } from "./gc";
 import {
   beginBoot,
@@ -198,6 +206,7 @@ export class ControlCore {
   private hwmChecked = false;
   private pumping: Promise<unknown> | null = null;
   private rebuilding: Promise<unknown> | null = null;
+  private reconciling: Promise<ReconcileOut> | null = null;
   /** Set by ControlApi (gates ledger on the same store): archive verify marks. */
   ledger: GateLedger | null = null;
 
@@ -488,6 +497,10 @@ export class ControlCore {
       asleep: st === "asleep" || st === "asleep-unconfirmed",
       quiescing: st === "quiescing",
     });
+    if (r.status === 200 && "inline" in r) {
+      r.cold = this.gatewayCold(st);
+      return r;
+    }
     const a = p.route ? adapterByRoute(p.route) : undefined;
     if (a && r.status === 200 && !r.malformed) this.hookSeen(a.id, "event");
     if (r.status === 200 && !r.malformed && !r.dup && RUNNING.includes(st as RtState)) this.kickDriver();
@@ -707,6 +720,9 @@ export class ControlCore {
     await step("progress", () => progressTick(c));
     await step("driver", () => this.kickDriver());
     await step("r2probe", () => this.r2Probe());
+    await step("files-reconcile", async () => {
+      if (AWAKE_FOR_PROBE.includes(this.rtState() as RtState) && reconcileDue(c)) await this.filesReconcile();
+    });
     await step("daily", () => this.dailyIfDue());
     await step("drill", async () => {
       if (!drillDue(c) || !this.ledger) return;
@@ -962,6 +978,7 @@ export class ControlCore {
       inject: async (chat, text, who) => {
         const { upd, body } = soakUpdate(chat, text, c.now(), ++this.soakSeq);
         const r = this.inboxPut({ body, headers: { host: "soak.local" } });
+        if (r.status === 200 && "inline" in r) return { status: 200 }; // not a soak update
         if (r.status === 200 && !r.malformed) {
           ensureSoak(c.db);
           c.db.run(
@@ -1172,6 +1189,10 @@ export class ControlCore {
         hop: p?.hop ?? (async () => ({ status: 404, ms: 0 })),
         files: () => filesProbe(this.c.bucket, this.c.inst, this.c.now),
         filesView: () => this.ledger?.filesView() ?? null,
+        filesReconcile: async () => {
+          const r = await this.filesReconcile();
+          return r ? { open: !r.done } : null;
+        },
         sandbox: p?.sandbox ?? (async () => null),
         env: p?.env ?? { access: null, gateway: "" },
       },
@@ -1179,6 +1200,17 @@ export class ControlCore {
     );
     // Channel adoption (ctl/panel-adopt.ts): the Setup tab row.
     return { ...panel, channels: { ...panel.channels, adopt: adoptView(this.c) } } as Panel;
+  }
+
+  /** Files reconcile (ctl/files-reconcile.ts): one bounded step; one at a time per isolate. null: no ledger. */
+  async filesReconcile(maxPages?: number): Promise<ReconcileOut | null> {
+    const ledger = this.ledger;
+    if (!ledger) return null;
+    if (!this.reconciling)
+      this.reconciling = filesReconcileStep(this.c, ledger, maxPages ? { maxPages } : {}).finally(() => {
+        this.reconciling = null;
+      });
+    return this.reconciling;
   }
 
   /**
@@ -1189,6 +1221,16 @@ export class ControlCore {
     const c = this.c;
     if (!this.ledger) return { status: 503, body: { error: "no-ledger" } };
     if (r.method === "GET" && !r.sub[0]) return { status: 200, body: this.ledger.filesView() };
+    // 1.2.4 `ochost caps recount`: count f/<inst>/ in R2 again (up to RECONCILE_OP_PAGES pages; `more` = call again).
+    if (r.method === "POST" && r.sub[0] === "reconcile") {
+      const out = await this.filesReconcile(RECONCILE_OP_PAGES);
+      if (!out) return { status: 503, body: { error: "no-ledger" } };
+      if (out.error) return { status: 502, body: { ok: false, ...out } };
+      return {
+        status: 200,
+        body: { ok: true, ...out, more: !out.done, files: this.ledger.filesView(), last: reconcileLast(c) },
+      };
+    }
     if (r.method !== "POST" || r.sub[0] !== "purge") return { status: 404, body: { error: "not found" } };
     let deleted = 0;
     for (let i = 0; i < 10; i++) {
@@ -1631,6 +1673,8 @@ export class ControlCore {
     if (r.sub[0] === "ack" && r.method === "POST") return alertAck(c, r.body.code);
     // The console saves the sink here: the Worker cannot set its own secret.
     if (r.sub[0] === "sink" && r.method === "POST") return setAlertSink(c, r.body.url);
+    if (r.sub[0] === "close" && r.method === "POST")
+      return closeAlert(c, r.body.class, typeof r.body.by === "string" ? r.body.by.slice(0, 20) : "cli");
     if (r.sub[0] === "resolve" && r.method === "POST" && typeof r.body.class === "string") {
       resolveAlert(c, r.body.class);
       return { status: 200, body: { ok: true } };

@@ -52,13 +52,18 @@ export interface ImportRequest {
   result?: unknown;
 }
 
-/** Same rule as the file_store tool (image/plugins/ochost-storage/tool.mjs KEY_RE), so the agent can read it. */
-const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+/**
+ * Same rule as the file_store tool (image/plugins/ochost-storage/tool.mjs), so the agent can read it: no control
+ * character or backslash, no empty, `.` or `..` segment. Spaces and Unicode are fine (1.2.5).
+ */
+const badChar = (s: string) =>
+  s.includes("\\") || [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
 export const keyOk = (p: unknown): p is string =>
   typeof p === "string" &&
+  p.length > 0 &&
   p.length <= 480 &&
-  KEY_RE.test(p) &&
-  p.split("/").every((s) => s !== "." && s !== "..");
+  !badChar(p) &&
+  p.split("/").every((s) => s !== "" && s !== "." && s !== "..");
 /** A workspace path in `overwrite`: relative, no `.`/`..` segment, no NUL or newline. */
 export const relOk = (p: unknown): p is string =>
   typeof p === "string" &&

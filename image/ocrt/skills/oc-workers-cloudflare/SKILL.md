@@ -12,11 +12,20 @@ You run in a container on Cloudflare. Everything below goes through the capabili
 | Browse, click, screenshot | `browser` tool, profile `cf` | CDP at `ws://15.0.0.3/browser/devtools`. Session ends when you disconnect. |
 | Read a page | `web_fetch` | Rendered by a Cloudflare browser. Works on JS pages. |
 | Search the web | `web_search` | Provider `cloudflare-web-search` through the gate. |
-| Keep a file | `file_store` | Durable files on R2, outside snapshots and backups. save, read, list, delete. Names never overwrite. |
+| Keep a file | `file_store` | Durable files on R2, outside snapshots and backups. save, update, read, list, delete. See "Files" below. |
 | Memory search | `memory_search` | Embeddings `@cf/baai/bge-m3`. |
 | Speech out, speech in | `tts`, media understanding | Workers AI voices and Whisper. |
 | Images | `image_generate` | Workers AI. |
 | Cloudflare questions | MCP server `cloudflare-docs` | Search the official docs. Do not guess from memory. |
+
+## Files
+
+- `save` makes a new file. It fails with `exists: true` if the name is in use.
+- To change a file: `read` it (the result has `etag`), then `update` with the same name, the new content and that `etag`.
+- The owner can change these files from outside, for example a folder synced from a laptop. If `update` returns `conflict: true`, nothing was written: `read` again, make your change on the new text, `update` with the new `etag`. Do not overwrite the owner's change.
+- `etag: "*"` replaces any version. Use it only for a file that only you write.
+- Total size and size per file have caps. A refusal names the setting; tell the owner.
+- Names may hold spaces and Unicode (`my notes/plan 2026.md`).
 
 ## Limits
 

@@ -1,9 +1,11 @@
-// ochost alerts [list]|setup|test|ack <code> (docs/10-cli-spec.md §1.2; not part of init [chg]).
+// ochost alerts [list]|setup|test|ack <code>|close <class> (docs/10-cli-spec.md §1.2; not part of init [chg]).
 // setup --channel ntfy|webhook|none [--url]: ntfy gets a random topic; secrets ALERT_URL (and ALERT_TOKEN for a
 //   webhook with a token) through wrangler; then a test alert with a 6-char code; the owner confirms it with
 //   `ochost alerts ack <code>`. State in .oc-host/alerts.json (no secret values).
-// gap W4: POST /ops/alerts/ack. The Worker's test alert does not carry the code yet, so ack falls back to the
-//   local record when the route answers 404.
+// ack asks the Worker (POST /ops/alerts/ack): the Control DO holds the test alert and its code. The local record
+//   only helps when the Worker has no ack route (404, an old deploy). 1.2.5: the CLI no longer refuses from local
+//   state alone (a test sent from the console, or from another laptop, has no local record).
+// close <class>: POST /ops/alerts/close, closes one open alert (a stale hello-flood of an old gen).
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -67,7 +69,8 @@ export async function alerts(ctx: OpsCtx): Promise<number> {
   if (sub === "setup") return setup(ctx);
   if (sub === "test") return test(ctx);
   if (sub === "ack") return ack(ctx);
-  throw usage(`unknown alerts command ${sub}`, "use ochost alerts list|setup|test|ack <code>");
+  if (sub === "close") return close(ctx);
+  throw usage(`unknown alerts command ${sub}`, "use ochost alerts list|setup|test|ack <code>|close <class>");
 }
 
 async function list(ctx: OpsCtx): Promise<number> {
@@ -80,8 +83,10 @@ async function list(ctx: OpsCtx): Promise<number> {
     ctx.out.result({ ok: true, channel: rec?.channel ?? "none", acked: !!rec?.ackedAt, ...b });
     return EXIT.ok;
   }
+  // "none" (the default) is alerts off: a normal state, not a warning. Alerts are still recorded and listed here.
+  const off = !rec || rec.channel === "none";
   ctx.out.line(
-    `channel: ${rec?.channel ?? "none"}${rec?.channel && rec.channel !== "none" ? (rec.ackedAt ? " (test confirmed)" : " (test not confirmed)") : ""} · outbox ${b.outbox ?? 0}`,
+    `channel: ${rec?.channel ?? "none"}${off ? " (alerts off; ochost alerts setup turns them on)" : rec.ackedAt ? " (test confirmed)" : " (test not confirmed)"} · outbox ${b.outbox ?? 0}`,
   );
   if (!rows.length) ctx.out.line("no alerts");
   else
@@ -98,7 +103,6 @@ async function list(ctx: OpsCtx): Promise<number> {
         ]),
       ),
     );
-  if (!rec || rec.channel === "none") ctx.out.warn("alerts: not set up — fix: ochost alerts setup");
   return EXIT.ok;
 }
 
@@ -207,7 +211,7 @@ async function setup(ctx: OpsCtx): Promise<number> {
 async function test(ctx: OpsCtx): Promise<number> {
   const ops = opsClient(ctx);
   const rec = readAlertsRecord(ctx.dir);
-  if (!rec || rec.channel === "none") throw new CliError("alerts are not set up", "run ochost alerts setup");
+  if (!rec || rec.channel === "none") throw new CliError("alerts are off", "run ochost alerts setup");
   const next = await sendTest(ctx, ops.install, rec);
   if (ctx.out.json) ctx.out.result({ ok: true, sentAt: next.sentAt });
   else ctx.out.line(`test alert sent; ochost alerts ack ${next.code} when it arrives`);
@@ -218,15 +222,52 @@ async function ack(ctx: OpsCtx): Promise<number> {
   const code = ctx.args.positionals[1];
   if (!code) throw usage("alerts ack needs the code", "ochost alerts ack <code from the test alert>");
   const rec = readAlertsRecord(ctx.dir);
-  if (!rec?.code) throw new CliError("no test alert is waiting", "run ochost alerts test");
-  if (code.toLowerCase() !== rec.code)
-    throw new CliError("the code does not match the last test alert", "copy it again, or ochost alerts test");
   const ops = opsClient(ctx);
-  const r = await ops.call("POST", "/ops/alerts/ack", { code }, { allow: [200, 404] });
-  writeAlertsRecord(ctx.dir, { ...rec, ackedAt: ctx.now() });
-  if (r.status === 404)
+  // The Control DO decides: it holds the waiting test alert and its code.
+  const r = await ops.call("POST", "/ops/alerts/ack", { code }, { allow: [200, 404, 409] });
+  if (r.status === 409) {
+    const why = (r.body as { error?: string } | null)?.error;
+    if (why === "code-mismatch")
+      throw new CliError(
+        "the code does not match the last test alert",
+        "copy it again, or ochost alerts test",
+      );
+    throw new CliError("no test alert is waiting", "run ochost alerts test");
+  }
+  if (r.status === 404) {
+    // An old Worker without the route: fall back to the local record.
+    if (!rec?.code) throw new CliError("no test alert is waiting", "run ochost alerts test");
+    if (code.toLowerCase() !== rec.code)
+      throw new CliError(
+        "the code does not match the last test alert",
+        "copy it again, or ochost alerts test",
+      );
     ctx.out.warn("the Worker has no /ops/alerts/ack — fix: ochost deploy; the ack is kept here only");
+  }
+  if (rec) writeAlertsRecord(ctx.dir, { ...rec, ackedAt: ctx.now() });
   if (ctx.out.json) ctx.out.result({ ok: true, worker: r.status === 200 });
   else ctx.out.line("alerts confirmed");
+  return EXIT.ok;
+}
+
+/** `ochost alerts close <class>`: close one open alert (POST /ops/alerts/close). */
+async function close(ctx: OpsCtx): Promise<number> {
+  const cls = ctx.args.positionals[1];
+  if (!cls || !/^[A-Za-z0-9._:-]{1,64}$/.test(cls))
+    throw usage(
+      "alerts close needs the alert class",
+      "ochost alerts close <class> (ochost alerts list shows them)",
+    );
+  const ops = opsClient(ctx);
+  const r = await ops.call("POST", "/ops/alerts/close", { class: cls, by: "cli" }, { allow: [200, 404] });
+  if (r.status === 404) {
+    const notOpen = (r.body as { error?: string } | null)?.error === "not-open";
+    throw new CliError(
+      notOpen ? `no open alert ${cls}` : "the Worker has no /ops/alerts/close",
+      notOpen ? "ochost alerts list shows the open ones" : "ochost deploy",
+    );
+  }
+  if (ctx.out.json) ctx.out.result({ ok: true, class: cls });
+  else ctx.out.line(`closed alert ${cls}`);
   return EXIT.ok;
 }

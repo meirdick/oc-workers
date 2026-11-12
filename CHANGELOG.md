@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.6
+
+- Wake while you type (Telegram inline mode): when you type `@your_bot` and a space in a message box, an asleep install starts to wake before you send. Turn inline mode on once in @BotFather (`/setinline`). Only your Telegram user id and paired senders can wake it this way; the query is not stored and the assistant does not see it. See "Wake while you type" in How it works.
+- Faster first reply after a wake: the supervisor stops Litestream while the gateway opens the agent database, and starts it again when the gateway is ready. Before, the two waited on each other's database lock. `ochost logs --source ocsup` now shows `readyMs` and `lsHold` in the `startupz` line.
+- Both need the new Worker and image: `ochost deploy`, then `ochost restart`.
+
+## 1.2.5
+
+- File names: `file_store` and the import take spaces and Unicode (no control character, backslash, empty, `.` or `..` segment). SigV4 paths are RFC 3986 encoded per segment on both sides; tests sign names with spaces, Unicode, `+`, `#` and `%`.
+- Alerts: `ochost alerts ack <code>` asks the Worker (`POST /ops/alerts/ack`) and no longer refuses from the local record; a test sent from the console or another laptop can be confirmed. The local record is only used when the Worker has no ack route.
+- Alerts: new `ochost alerts close <class>` (owner op `POST /ops/alerts/close`) closes one open alert, for example a stale `hello-flood` of an old gen; 404 when it is not open. The open alerts on the Alerts and log tab have a **Close** button (form POST, works without JavaScript). Each close is ring event `alert close` with the class and who closed it.
+- Needs the new image (plugin, skill text): `ochost deploy`, then `ochost restart`.
+
+## 1.2.4
+
+- File storage: the `file_store` tool has a new action `update` (name, content or path, `etag`). It replaces a file only if its ETag is still the one from the agent's last read or save (S3 `If-Match`). `read` and `save` return `etag`. On a change from outside (an owner sync straight to R2) the gate answers 412 and the tool returns `conflict: true`, `currentEtag` and the step: read again, redo the change, update with the new etag. A missing file is 404 ("use save"). `etag: "*"` replaces any version. `save` and the storage provider's `putObject` stay create-only (`If-None-Match: *`). The gate takes `If-Match` on a PUT under `f/<inst>/` (`*` or one ETag; with `If-None-Match` it is 400) and passes the ETag to R2 `onlyIf`, so a change between its check and the write is also 412. The agent skill `oc-workers-cloudflare` says how to change a file. Needs the new image: `ochost deploy`, then `ochost restart`.
+- File storage: files written to `f/<inst>/` outside the gate (for example rclone with an R2 token) now count. The Control DO lists the prefix with the R2 binding and fixes table `files_obj` (add, resize, remove), so `files.capGb`, `ochost caps` and the doctor row match R2. It runs from the alarm while the install is awake, at most every 30 minutes (timer `filesReconcileMs`), at each `ochost doctor`, and from new owner op `POST /ops/files/reconcile` (`ochost caps recount`). One step lists at most 5 pages of 1000 (20 for the op); a longer pass keeps its cursor and goes on at the next step. Removal waits for the end of a full pass; a gate write during the pass stays. A pass older than 6 h, or a list error with a cursor, starts again. Crossing 80 % or 100 % alerts like a gate write.
+- Alerts off is now a normal state, not a fault. With `alerts.channel` `none` (the default; `ochost init` does not ask about alerts, `--alerts` still opts in), the Control DO no longer opens the `alerts-none` alert and closes one that is open, `ochost doctor` shows `alerts PASS off`, `ochost alerts list` prints no warning, and the Setup tab of the owner console shows the alert channel as off with no warning dot and no to-do count. Alerts are still recorded and listed in `ochost alerts list`, `ochost status` and the Alerts and log tab. The init summary ends with `ochost alerts setup  alerts are off (the default); this turns them on`. A configured channel that fails keeps its warnings (sink failed, test not confirmed).
+
 ## 1.2.3
 
 - Fix: The `hello-flood` alert no longer fires on a normal install after about 50 minutes awake. The container's replica proxy proves the replica gate again before an upload when its last proof is over 5 s old, and Litestream uploads about every 15 s, so a normal hour had about 240 hellos. The proxy and ocsup now send a hello MAC that proves the boot secret, and only hellos without it count toward the alert. This needs the new image: run `ochost deploy`, then `ochost restart`. An older image still works; its hellos count as before.

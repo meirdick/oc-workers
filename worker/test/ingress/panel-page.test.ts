@@ -184,7 +184,7 @@ beforeEach(() => {
   resetPointerCache();
 });
 
-const ACTS = ["ack", "raise", "archive", "drill", "approve", "sandbox", "alerts", "model"];
+const ACTS = ["ack", "close", "raise", "archive", "drill", "approve", "sandbox", "alerts", "model"];
 const opsCalls = (calls: Call[]) => calls.filter((c) => c.m === "ops").map((c) => c.a[0]);
 
 describe("owner panel page", () => {
@@ -193,7 +193,7 @@ describe("owner panel page", () => {
     const html = await (await go(e, "/", { headers: nav })).text();
     expect(html).toContain('action="/_ochost/login"');
     expect(html).not.toMatch(
-      /oc-demo|Connected|Budgets|Backups|Acknowledge|Approve|Doctor|Actions|Projected month/,
+      /oc-demo|Connected|Budgets|Backups|Acknowledge|Close<|Approve|Doctor|Actions|Projected month/,
     );
     for (const a of ACTS) {
       const r = await go(e, `/_ochost/panel/${a}`, {
@@ -267,7 +267,7 @@ describe("owner panel page", () => {
     // Buttons (panel forms) only in Setup and Alerts.
     const forms = (h: string) => [...h.matchAll(/action="\/_ochost\/panel\/(\w+)"/g)].map((m) => m[1]);
     expect(forms(tabs.setup ?? "")).toEqual(["approve", "raise", "archive", "drill"]);
-    expect(forms(tabs.log ?? "")).toEqual(["ack"]);
+    expect(forms(tabs.log ?? "")).toEqual(["close"]);
     expect(forms(tabs.overview ?? "")).toEqual([]);
     // Old tab names still land on their content.
     for (const [o, n] of [
@@ -374,7 +374,7 @@ describe("Setup controls: sandbox, alerts, model", () => {
     const setup = await tab("setup");
     expect(forms(setup)).toEqual(["approve", "alerts", "sandbox", "model", "raise", "archive", "drill"]);
     expect(forms(await tab("overview"))).toEqual([]);
-    expect(forms(await tab("log"))).toEqual(["ack"]);
+    expect(forms(await tab("log"))).toEqual(["close"]);
     // Sandbox: a select with the saved value chosen, Apply, and the pending note.
     expect(setup).toContain(
       '<select name="value" aria-label="Sandbox"><option value="off">off</option><option value="on" selected>on</option><option value="all">all</option></select><button type="submit">Apply</button>',
@@ -396,6 +396,32 @@ describe("Setup controls: sandbox, alerts, model", () => {
     const setup = await (await go(e, "/?tab=setup", { cookie: await login(e), headers: nav })).text();
     expect(setup).toContain("ochost model set &lt;id&gt;");
     expect(forms(setup)).not.toContain("model");
+  });
+
+  it("alerts off (the default): a grey dot and neutral text, not a to-do; no count on the Setup tab for it", async () => {
+    const OFF: Panel = {
+      ...PANEL,
+      connected: PANEL.connected.map((r) =>
+        r.name === "alerts sink"
+          ? { name: "alerts sink", result: "PASS", detail: "off", fix: "ochost alerts setup (opt-in)" }
+          : r,
+      ),
+    };
+    const setupOf = async (panel: Panel) => {
+      resetSessionCache();
+      resetPointerCache();
+      const { e } = mkEnv({ panel });
+      return (await go(e, "/?tab=setup", { cookie: await login(e), headers: nav })).text();
+    };
+    const todo = (h: string) => Number(/(\d+)<span class="vh"> to do<\/span>/.exec(h)?.[1] ?? 0);
+    const off = await setupOf(OFF);
+    expect(off).toMatch(
+      /<td class="nm">Alert channel<\/td><td class="w"><span class="st"><span class="dot " aria-hidden="true"><\/span><span>Off \(opt-in\); alerts show in Alerts and log only<\/span>/,
+    );
+    expect(off).toContain("<code>ochost alerts setup</code>");
+    const before = todo(await setupOf(PANEL));
+    expect(before).toBeGreaterThan(0);
+    expect(todo(off)).toBe(before - 1);
   });
 
   it("each form posts to its op and comes back to Setup with a notice", async () => {
@@ -482,17 +508,26 @@ describe("panel buttons: owner cookie, same origin, one /ops action each", () =>
     expect(opsCalls(calls)).toEqual([]);
   });
 
-  it("Acknowledge: POST alerts/resolve {class}; a bad class is refused before any call", async () => {
+  it("Close: POST alerts/close {class, by}; the old ack button does the same; a bad class makes no call", async () => {
     const { e, calls } = mkEnv();
     const c = await login(e);
-    const r = await post(e, c, "ack", "class=doctor-failed");
-    expect([r.status, r.headers.get("location")]).toEqual([303, "/?n=acked&tab=log"]);
+    const r = await post(e, c, "close", "class=doctor-failed");
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/?n=closed&tab=log"]);
+    const old = await post(e, c, "ack", "class=hello-flood");
+    expect(old.headers.get("location")).toBe("/?n=closed&tab=log");
     expect(opsCalls(calls)).toMatchObject([
-      { action: "alerts", method: "POST", sub: ["resolve"], body: { class: "doctor-failed" }, role: "owner" },
+      {
+        action: "alerts",
+        method: "POST",
+        sub: ["close"],
+        body: { class: "doctor-failed", by: "console" },
+        role: "owner",
+      },
+      { action: "alerts", method: "POST", sub: ["close"], body: { class: "hello-flood" } },
     ]);
-    const bad = await post(e, c, "ack", "class=a%20b%3Cx");
+    const bad = await post(e, c, "close", "class=a%20b%3Cx");
     expect(bad.headers.get("location")).toMatch(/^\/\?n=panel-failed/);
-    expect(opsCalls(calls)).toHaveLength(1);
+    expect(opsCalls(calls)).toHaveLength(2);
   });
 
   it("Raise: reads the limit, doubles it, POST caps {verb: 2x}; a zero limit goes to the default", async () => {

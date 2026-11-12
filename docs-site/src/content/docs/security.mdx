@@ -103,11 +103,11 @@ ochost auth access --off                     # remove the domain, then the app
 
 ## Alerts
 
-`ochost alerts setup` sets where alerts go: `ntfy`, `webhook` or `none`. The default is `none`, and a WARN line tells you when alerts are not set up. The alert sink (where alerts are sent) is experimental.
+`ochost alerts setup` sets where alerts go: `ntfy`, `webhook` or `none`. The default is `none`: alerts to your phone are off. This is a normal state, not a fault: `ochost doctor` shows `alerts PASS off`, and the owner console shows no warning for it. Alerts are still recorded; `ochost alerts list`, `ochost status` and the Alerts and log tab show them. The alert sink (where alerts are sent) is experimental.
 
-- Each day the install sends a `heartbeat` alert, whatever the minimum severity. If no sink is set, it opens the `alerts-none` alert instead.
+- Each day the install sends a `heartbeat` alert, whatever the minimum severity. If no sink is set, it sends nothing. An `alerts-none` alert from an older version is closed.
 - The `deadman-silent` alert opens when the external dead-man check has not posted for 2 hours. While it stays open, it is sent once a day, whatever the minimum severity.
-- `ochost doctor` fails when the sink never confirmed a delivery, when its last delivery failed, or when the dead-man check is silent.
+- When a sink is set, `ochost doctor` fails when the sink never confirmed a delivery, when its last delivery failed, or when the dead-man check is silent.
 - `ochost status` shows the sink state (last success, last failure, last heartbeat) and the dead-man state.
 
 ## Next

@@ -127,7 +127,7 @@ Config and secret changes apply when the gateway starts, which is at the next wa
 | `auth sessions` | `--revoke <id>`, `--revoke-all` | List or end owner sessions. |
 | `auth access` | `--domain <host>`, `--idp-hint <id>`, `--email <e>`, `--token-file <file>`, `--workers-dev ops\|webhooks`, `--team <t>`, `--aud <a>`, `--off` | Put the install behind Cloudflare Access on a custom domain. No flags: status. `--domain` and `--off` restart a running install, so the gateway takes the new origin. See [Security](/security/#cloudflare-access). |
 | `alerts list` | | List alerts. |
-| `alerts setup` | `--channel ntfy\|webhook\|none`, `--url <https URL>`, `--token-file <file>` | Choose where alerts go. |
+| `alerts setup` | `--channel ntfy\|webhook\|none`, `--url <https URL>`, `--token-file <file>` | Choose where alerts go. `none` (the default) turns alerts to your phone off; `doctor` then shows `alerts PASS off`. |
 | `alerts test` | | Send a test alert. |
 | `alerts ack <code>` | | Confirm that the test alert arrived. |
 | `ci setup` | `--repo owner/name`, `--force` | Opt in to a GitHub dead-man check and a `CI_TOKEN`. |

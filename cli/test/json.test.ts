@@ -31,6 +31,7 @@ const CALLS: [string, string[]][] = [
   ["alerts", ["list"]],
   ["alerts", ["test"]],
   ["alerts", ["ack", "abc"]],
+  ["alerts", ["close", "hello-flood"]],
   ["alerts", ["setup", "--channel", "none"]],
   ["doctor", []],
   ["destroy", ["--dry-run"]],

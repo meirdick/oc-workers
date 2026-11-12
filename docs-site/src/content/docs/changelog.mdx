@@ -5,6 +5,43 @@ sidebar:
   order: 15
 ---
 
+## 1.2.6
+
+New:
+
+- Wake while you type (Telegram): type `@your_bot` and a space in a message box, and an asleep install starts to wake before you send. Turn inline mode on once in @BotFather with `/setinline`. Only your Telegram user id and paired senders can wake it this way. See [Wake while you type](/how-it-works/#wake-while-you-type).
+
+Changes:
+
+- Faster first reply after a wake. The backup process (Litestream) stops while the assistant opens its database, and starts again when the assistant is ready.
+- `ochost logs --source ocsup` shows `readyMs` and `lsHold` in the `startupz` line.
+- Needs the new Worker and image: `ochost deploy`, then `ochost restart`.
+
+## 1.2.5
+
+New:
+
+- `ochost alerts close <class>` closes one open alert, for example a stale `hello-flood`. The open alerts in the console have a **Close** button.
+
+Changes:
+
+- File names in file storage may hold spaces and Unicode.
+
+Fixes:
+
+- `ochost alerts ack <code>` asks the Worker. Before, it refused with "no test alert is waiting" when the test was sent from the console or another laptop.
+
+## 1.2.4
+
+New:
+
+- The agent can change a file in file storage. The `file_store` tool has a new action `update`: name, new content (or a workspace path) and the `etag` from the last read or save of that file. `read` and `save` now return the `etag`. If the file changed since that read (for example a folder you sync to R2), update writes nothing and returns `conflict: true` with the current `etag`; the agent reads it again and makes its change on the new text. `etag: "*"` replaces any version. `save` still never overwrites; on a used name it says to update. This needs the new image: run `ochost deploy`, then `ochost restart`.
+- Files written to `f/<inst>/` outside the gate now count toward `files.capGb`. The Worker lists the prefix in R2 and fixes its count (new, changed size, deleted): every 30 minutes while the install is awake, at each `ochost doctor`, and with the new command `ochost caps recount`. One run lists at most 5,000 objects (20,000 for each `recount` call); a larger prefix continues at the next run. Crossing 80 % or 100 % sends `storage-cap-80` or `storage-cap-100`.
+
+Changes:
+
+- Alerts off is now a normal state, not a fault. With `alerts.channel` `none` (the default; `ochost init` does not ask about alerts, `--alerts` still opts in), the Control DO no longer opens the `alerts-none` alert and closes one that is open, `ochost doctor` shows `alerts PASS off`, `ochost alerts list` prints no warning, and the Setup tab of the owner console shows the alert channel as off with no warning dot and no to-do count. Alerts are still recorded and listed in `ochost alerts list`, `ochost status` and the Alerts and log tab. The init summary ends with `ochost alerts setup  alerts are off (the default); this turns them on`. A configured channel that fails keeps its warnings (sink failed, test not confirmed).
+
 ## 1.2.3
 
 Fixes:

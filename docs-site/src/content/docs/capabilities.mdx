@@ -60,10 +60,11 @@ The owner console shows each budget on the Overview tab. See [How it works](/how
 
 The agent saves files to the storage location `r2`, which puts them in your R2 bucket under the prefix `f/<inst>/` (`<inst>` is your install id). The files stay when the container stops, sleeps or restarts. They are not in snapshots or archives (see [State and backups](/state-and-backups/)).
 
-- A plugin in the image (`ochost-storage`) adds the storage provider `ochost-r2` and the agent tool `file_store` (save, read, list, delete).
+- A plugin in the image (`ochost-storage`) adds the storage provider `ochost-r2` and the agent tool `file_store` (save, update, read, list, delete).
 - The plugin talks S3 to the replica gate at `15.0.0.2`, the part of your Worker that also stores the database backup. It goes through a loopback relay in the container (`127.0.0.1:18792`) and signs each request with the key of the current boot, the same key Litestream uses for the database. The gate accepts that key only for this boot's database path (`r/<inst>/g<gen>/`) and `f/<inst>/`. The key is not in the OpenClaw config.
 - The gate allows PUT, GET, HEAD, DELETE and list. It refuses multipart uploads, so one file is at most 100 MB.
-- A save never overwrites a file. Save to a new name.
+- A save never overwrites a file. To change a file, the agent reads it, then calls update with the `etag` from the read. If the file changed in between, update writes nothing and returns `conflict: true`; the agent reads it again and makes its change on the new text. `etag: "*"` replaces any version. The OpenClaw storage provider (`putObject`) stays create-only.
+- You can also write `f/<inst>/` straight to R2 with your own R2 token, for example a folder synced with rclone. The gate does not see those writes, so the Worker counts the prefix again from an R2 list: every 30 minutes while the install is awake, at each `ochost doctor`, and with `ochost caps recount`. Until then, `ochost caps` and the cap can be behind. One count lists at most 5,000 objects per alarm or doctor run (20,000 per `recount` call); a larger prefix continues at the next run.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -73,10 +74,13 @@ The agent saves files to the storage location `r2`, which puts them in your R2 b
 ```sh
 ochost caps                          # the files line shows bytes used and the cap
 ochost caps set storage 20           # raise the cap to 20 GB (same as config set files.capGb 20)
+ochost caps recount                  # count f/<inst>/ in R2 again (files written outside the gate)
 openclaw storage test r2             # in the container: write, read and delete a check object
 ```
 
 `ochost doctor` has a `file storage` row, which writes, reads and deletes a 1-byte object under `f/<inst>/`. `ochost destroy --delete-data` deletes `f/<inst>/` before it deletes the bucket. Without `--delete-data`, the files stay.
+
+File names may hold spaces and Unicode, for example `my notes/plan 2026.md`.
 
 ## Sandbox
 

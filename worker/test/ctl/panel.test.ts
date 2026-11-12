@@ -113,6 +113,35 @@ describe("ownerPanel rows", () => {
     expect(p.warns).toBeGreaterThan(0);
   });
 
+  it("alerts off (no sink, the default): checks PASS off, sink row PASS off with an opt-in fix; no warning", async () => {
+    const { w, panel } = await setup();
+    w.ctx.secrets.alertUrl = undefined;
+    alert(w.ctx, "alerts-none", "warn", "no alert sink"); // left open by an older version
+    const p = await panel();
+    expect(by(p.checks, "alerts")).toMatchObject({ result: "PASS", detail: "off" });
+    expect(by(p.connected, "alerts sink")).toMatchObject({
+      result: "PASS",
+      detail: "off",
+      fix: "ochost alerts setup (opt-in)",
+    });
+    // An open alert still shows while alerts are off.
+    alert(w.ctx, "replica-lag", "warn", "lag");
+    expect(by((await panel()).checks, "alerts")).toMatchObject({
+      result: "WARN",
+      detail: "off; open: replica-lag",
+    });
+  });
+
+  it("a configured sink that never took an alert still FAILs; test not confirmed still WARNs", async () => {
+    const { w, panel } = await setup();
+    w.ctx.db.delMeta("alertSinkOkAt");
+    expect(by((await panel()).checks, "alerts")).toMatchObject({ result: "FAIL" });
+    expect(by((await panel()).connected, "alerts sink")).toMatchObject({
+      result: "WARN",
+      detail: "ntfy, configured, test not acked",
+    });
+  });
+
   it("channel telegram: accepted messages without a reply after 5 min make the row WARN with the count", async () => {
     const { w, panel } = await setup();
     for (const k of [1, 2]) {
@@ -138,14 +167,40 @@ describe("ownerPanel rows", () => {
     const { w, panel } = await setup({
       doc: doc({ storage: { locations: { r2: { provider: "ochost-r2", settings: { prefix: "f/oc-x" } } } } }),
     });
-    // 4.25 GB of the default 5 GB, counted by the ledger.
-    (w.core as any).ledger.run("INSERT INTO files_obj (key, bytes, at) VALUES ('f/oc-x/a', 4250000000, 1)");
+    // 4.25 GB of the default 5 GB, in R2 but never seen by the gate (an owner sync): the doctor's reconcile step
+    // counts it. R2 list is faked: the fake bucket keeps real bytes.
+    const list = w.r2.list.bind(w.r2);
+    w.r2.list = (async (o: R2ListOptions) =>
+      o.prefix === "f/t1/"
+        ? { objects: [{ key: "f/t1/a", size: 4.25e9 }], truncated: false, delimitedPrefixes: [] }
+        : list(o)) as never;
     const p = await panel({ fresh: true });
     expect(p.files).toEqual({ prefix: "f/oc-x/", used: 4.25e9, limit: 5e9 });
     expect(by(p.connected, "file storage")).toMatchObject({
       result: "WARN",
       fix: "ochost caps set storage 10",
     });
+    // without fresh (the owner page) no reconcile runs: the R2 object is gone, the count stays
+    w.r2.list = list;
+    expect((await panel()).files).toMatchObject({ used: 4.25e9 });
+    // the next doctor counts again
+    w.advance(1000);
+    expect((await panel({ fresh: true })).files).toMatchObject({ used: 0 });
+  });
+
+  it("file storage: a doctor reconcile that is not complete says so", async () => {
+    const { w, panel } = await setup({
+      doc: doc({ storage: { locations: { r2: { provider: "ochost-r2", settings: { prefix: "f/t1" } } } } }),
+    });
+    w.r2.list = (async () => ({
+      objects: [{ key: "f/t1/a", size: 1 }],
+      truncated: true,
+      cursor: "c1",
+      delimitedPrefixes: [],
+    })) as never;
+    expect(by((await panel({ fresh: true })).connected, "file storage").detail).toMatch(
+      /R2 count not complete/,
+    );
   });
 
   it("colours and fix lines: wrong webhook FAIL, hop 400 gateway FAIL, 429 WARN, high alert FAIL, replica WARN, old archive FAIL", async () => {

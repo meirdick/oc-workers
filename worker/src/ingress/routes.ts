@@ -157,8 +157,8 @@ export async function handleOchost(req: Request, env: IngressEnv, deps: IngressD
       return new Response(null, { status: 413 });
     const form = new URLSearchParams((await req.text()).slice(0, MAX_FORM));
     const r = deps.ops ? await panelAct(act, form, deps.ops) : { code: "panel-failed", why: "no ops" };
-    // Back to the tab the button sits on: Acknowledge on Alerts and log, the rest on Setup.
-    const tab = act === "ack" ? "log" : "setup";
+    // Back to the tab the button sits on: Close on Alerts and log, the rest on Setup.
+    const tab = act === "ack" || act === "close" ? "log" : "setup";
     return seeOther(`/?n=${r.code}${r.why ? `&why=${encodeURIComponent(r.why)}` : ""}&tab=${tab}`);
   }
   if (path === "/_ochost/wake-status") {

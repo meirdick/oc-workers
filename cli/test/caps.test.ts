@@ -231,6 +231,43 @@ describe("ochost caps", () => {
     expect((await run("caps", ["set", "storage", "2.5", "--dir", dir])).code).not.toBe(0);
   });
 
+  it("recount posts /ops/files/reconcile until the Worker says no more, then shows the sums and the usage", async () => {
+    let n = 0;
+    f.routes.unshift((r) => {
+      if (r.path !== "/ops/files/reconcile") return undefined;
+      n++;
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          more: n < 2,
+          objects: 1000,
+          added: n === 1 ? 3 : 0,
+          resized: 1,
+          removed: n === 2 ? 2 : 0,
+          files: { used: 2.5e9, limit: 5e9, objects: 2000, objectMax: 100e6, pct: 0.5 },
+        },
+      };
+    });
+    const r = await run("caps", ["recount", "--dir", dir]);
+    expect(r.code).toBe(0);
+    expect(f.calls("POST", "/ops/files/reconcile")).toHaveLength(2);
+    expect(r.out).toMatch(/objects\s+2000 listed\n/);
+    expect(r.out).toMatch(/changes\s+3 added, 2 resized, 2 removed/);
+    expect(r.out).toMatch(/files\s+2\.50GB of 5\.00GB \(50%\)/);
+  });
+
+  it("recount: an R2 error from the Worker is a failure with the fix", async () => {
+    f.routes.unshift((r) =>
+      r.path === "/ops/files/reconcile"
+        ? { status: 502, body: { ok: false, more: false, objects: 0, error: "R2 list failed" } }
+        : undefined,
+    );
+    const r = await run("caps", ["recount", "--dir", dir]);
+    expect(r.code).not.toBe(0);
+    expect(r.err + r.out).toMatch(/R2 list failed.*ochost caps recount again/s);
+  });
+
   it("set rejects an unknown verb or a bad number before any request", async () => {
     expect((await run("caps", ["set", "money", "5", "--dir", dir])).code).not.toBe(0);
     expect((await run("caps", ["set", "browser", "-5", "--dir", dir])).code).not.toBe(0);

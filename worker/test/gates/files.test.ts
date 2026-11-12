@@ -141,6 +141,50 @@ describe("files key space: ops", () => {
     expect(w.r2.objs.get(k("once"))?.data).toEqual(te.encode("bb"));
   });
 
+  it("If-Match (file_store update): the read ETag replaces; a change from outside is 412 and keeps it; * needs the object; If-None-Match with If-Match is 400", async () => {
+    const w = await bound();
+    expect((await put(w, k("doc.md"), "v1", { "if-none-match": "*" })).status).toBe(200);
+    const g = await w.s3("GET", path(k("doc.md")), { host: FILES_HOST });
+    const etag = g.headers.get("etag") as string;
+    expect(etag).toMatch(/^"[0-9a-f]+"$/);
+    const u = await put(w, k("doc.md"), "v2", { "if-match": etag });
+    expect(u.status).toBe(200);
+    const etag2 = u.headers.get("etag") as string;
+    expect(etag2).not.toBe(etag);
+    // the owner's sync writes straight to R2
+    await w.r2.put(k("doc.md"), "v2-laptop");
+    const c = await put(w, k("doc.md"), "v3", { "if-match": etag2 });
+    expect([c.status, await xmlCode(c)]).toEqual([412, "PreconditionFailed"]);
+    expect(w.r2.objs.get(k("doc.md"))?.data).toEqual(te.encode("v2-laptop"));
+    // a bare ETag (no quotes) works too
+    const bare = (await w.s3("HEAD", path(k("doc.md")), { host: FILES_HOST })).headers.get("etag") as string;
+    expect((await put(w, k("doc.md"), "v4", { "if-match": bare.replace(/"/g, "") })).status).toBe(200);
+    expect((await put(w, k("doc.md"), "v5", { "if-match": "*" })).status).toBe(200);
+    expect(w.r2.objs.get(k("doc.md"))?.data).toEqual(te.encode("v5"));
+    const nf = await put(w, k("nope.md"), "x", { "if-match": "*" });
+    expect([nf.status, await xmlCode(nf)]).toEqual([404, "NoSuchKey"]);
+    expect(w.r2.objs.has(k("nope.md"))).toBe(false);
+    const both = await put(w, k("doc.md"), "x", { "if-match": "*", "if-none-match": "*" });
+    expect([both.status, await xmlCode(both)]).toEqual([400, "InvalidArgument"]);
+    // an overwrite counts the new size only
+    expect(w.ledger.filesView()).toMatchObject({ used: 2, objects: 1 });
+  });
+
+  it("If-Match race: R2 refuses the put when the object changed after the gate's check (412)", async () => {
+    const w = await bound();
+    expect((await put(w, k("r.md"), "v1")).status).toBe(200);
+    const etag = (await w.s3("HEAD", path(k("r.md")), { host: FILES_HOST })).headers.get("etag") as string;
+    const head = w.r2.head.bind(w.r2);
+    w.r2.head = async (key: string) => {
+      const o = await head(key);
+      await w.r2.put(k("r.md"), "changed between head and put");
+      return o;
+    };
+    const r = await put(w, k("r.md"), "v2", { "if-match": etag });
+    expect([r.status, await xmlCode(r)]).toEqual([412, "PreconditionFailed"]);
+    expect(new TextDecoder().decode(w.r2.objs.get(k("r.md"))?.data)).toBe("changed between head and put");
+  });
+
   it("multipart is refused with 501; a batch delete (replica rule) deletes no file", async () => {
     const w = await bound();
     expect((await put(w, k("x"), "keep")).status).toBe(200);

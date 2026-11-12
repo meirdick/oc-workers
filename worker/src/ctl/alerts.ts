@@ -65,6 +65,7 @@ export function setAlertSink(
     if (!ok) return { status: 400, body: { error: "url must be an https URL of 500 characters or less" } };
   }
   c.db.setMeta("alertSinkUrl", u);
+  if (!u) resolveAlert(c, ALERTS_NONE); // off is a normal state, not a fault
   ring(c, "alert", "sink-set", { source: u ? "console" : "off", kind: u ? sinkKind(u) : null });
   return { status: 200, body: { ok: true, sink: sinkInfo(c) } };
 }
@@ -155,6 +156,24 @@ export function alert(c: Ctx, cls: string, severity: Severity, detail = ""): boo
 /** Close an alert (resolved in /ops/status; the next alert of the class reopens it). */
 export function resolveAlert(c: Ctx, cls: string): void {
   c.db.run("UPDATE alerts SET open = 0 WHERE class = ?", cls);
+}
+
+/**
+ * POST /ops/alerts/close {class} (`ochost alerts close`, the console's Close): close one open alert, such as a stale
+ * hello-flood of an old gen. 404 when no open alert has that class. The ring keeps who closed what.
+ */
+export function closeAlert(
+  c: Ctx,
+  cls: unknown,
+  by: string,
+): { status: number; body: Record<string, unknown> } {
+  const k = typeof cls === "string" ? cls.trim() : "";
+  if (!/^[A-Za-z0-9._:-]{1,64}$/.test(k)) return { status: 400, body: { error: "bad-class" } };
+  const row = c.db.one<{ class: string }>("SELECT class FROM alerts WHERE class = ? AND open = 1", k);
+  if (!row) return { status: 404, body: { error: "not-open", class: k } };
+  resolveAlert(c, k);
+  ring(c, "alert", "close", { class: k, by });
+  return { status: 200, body: { ok: true, class: k } };
 }
 
 export function listAlerts(c: Ctx): AlertRow[] {
@@ -343,16 +362,17 @@ export const DEADMAN = "deadman-silent";
 /** An open `deadman-silent` is sent again after this, not every alert dedupe window. */
 export const DEADMAN_RESEND_MS = 24 * 3_600_000;
 
+/** Before 1.2.4 the daily job opened this class when no sink was set. Now "no sink" is "alerts off": a normal state. */
+export const ALERTS_NONE = "alerts-none";
+
 /**
  * Daily job (Z2.9): with a sink, send the heartbeat (the owner sees one a day; its absence means the install or
- * the alert path is down). Without a sink, keep `alerts-none` open: nothing reaches the owner.
+ * the alert path is down). Without a sink, alerts are off (the default, opt-in): no alert, and an `alerts-none`
+ * left open by an older version is closed. Alerts are still recorded and listed.
  */
 export function dailyHeartbeat(c: Ctx): "sent" | "no-sink" {
-  if (!sinkUrl(c)) {
-    alert(c, "alerts-none", "warn", "no alert sink: faults reach no one. Fix: ochost alerts setup");
-    return "no-sink";
-  }
-  resolveAlert(c, "alerts-none");
+  resolveAlert(c, ALERTS_NONE);
+  if (!sinkUrl(c)) return "no-sink";
   alert(
     c,
     HEARTBEAT,

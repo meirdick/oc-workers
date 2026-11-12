@@ -18,6 +18,7 @@ import { HeadTap, LTX_HEADER, type LtxCheck, parseLtxHeader } from "./ltx";
 import {
   completeXml,
   deleteResult,
+  etagBare,
   etagQ,
   initiateXml,
   listXml,
@@ -386,6 +387,8 @@ function putLength(h: Record<string, string>, mode: Mode): number {
  * The files key space of the ReplicaGate. Same key and signature as the replica, its own rule (filesAccess):
  * prefix f/<inst>/ for every gen, Put, Get, Head, Delete and ListObjectsV2 only, the caps in the Control DO
  * (filesPre), usage recorded after R2 (filesPost). No replica counters, no LTX record, no delete cover check.
+ * PUT: If-None-Match: * creates only (storage contract); If-Match replaces one version (file_store update); no
+ * header replaces any version.
  */
 async function handleFiles(
   req: Request,
@@ -433,8 +436,19 @@ async function handleFiles(
       // OpenClaw's storage contract: never overwrite. guess: R2 takes If-None-Match: * as Headers in onlyIf; the
       // head first answers 412 in the common case either way (a race between two writers of one key remains).
       const createOnly = h["if-none-match"] === "*";
+      // file_store update (1.2.4): If-Match with the ETag from a read replaces only that version, so a change from
+      // outside the gate (an owner sync to R2) is not lost. `*` = any version. Absent key → 404, other ETag → 412.
+      const ifMatch = h["if-match"] === undefined ? null : etagBare(h["if-match"]);
+      if (createOnly && ifMatch !== null)
+        return s3Error(400, "InvalidArgument", "If-Match and If-None-Match together", res);
       if (createOnly && (await b.head(key)))
         return s3Error(412, "PreconditionFailed", "object exists (If-None-Match: *)", res);
+      if (ifMatch !== null) {
+        const cur = await b.head(key);
+        if (!cur) return s3Error(404, "NoSuchKey", "object does not exist (If-Match)", res);
+        if (ifMatch !== "*" && ifMatch !== cur.etag)
+          return s3Error(412, "PreconditionFailed", "object changed (If-Match)", res);
+      }
       const body = await readBody(req, h, mode);
       if (body === "mismatch")
         return s3Error(400, "XAmzContentSHA256Mismatch", "payload hash does not match", res);
@@ -443,9 +457,19 @@ async function handleFiles(
       const o = await b.put(
         key,
         body.value,
-        createOnly ? { onlyIf: new Headers({ "if-none-match": "*" }) } : undefined,
+        createOnly
+          ? { onlyIf: new Headers({ "if-none-match": "*" }) }
+          : ifMatch && ifMatch !== "*"
+            ? { onlyIf: { etagMatches: ifMatch } }
+            : undefined,
       );
-      if (!o) return s3Error(412, "PreconditionFailed", "object exists (If-None-Match: *)", res);
+      if (!o)
+        return s3Error(
+          412,
+          "PreconditionFailed",
+          createOnly ? "object exists (If-None-Match: *)" : "object changed (If-Match)",
+          res,
+        );
       await d.ctl.filesPost({ op, key, status: 200, bytes: body.bytes }).catch(() => undefined);
       return new Response(null, { status: 200, headers: { etag: etagQ(o.etag) } });
     }

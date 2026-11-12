@@ -81,6 +81,7 @@ A sleep takes a snapshot of the container disk, and a wake starts the container 
 | Event | Wakes? |
 |---|---|
 | A Telegram message from a paired sender | Yes. The Worker stores and acknowledges it first, then the container starts and receives it. |
+| You type `@your_bot` in any Telegram message box (inline mode) | Yes, before you send. See [Wake while you type](#wake-while-you-type). |
 | A verified Slack (HTTP mode) or Twilio SMS event | Yes. Same path as Telegram. There is no wake list for these yet. Twilio delivery receipts do not wake. |
 | A cron alarm (OpenClaw cron jobs and the proactive check) | Yes. The Control DO sets a wake alarm before the next job. |
 | You open the Control UI (`/chat`) with the owner cookie | Yes. You see a waking page until the container runs. |
@@ -89,6 +90,18 @@ A sleep takes a snapshot of the container disk, and a wake starts the container 
 | An `ochost` command that needs the container, such as `wake` or `backup create` | Yes. |
 | Daily maintenance | Yes, if there was no wake in 24 hours or a held message is 20 hours old. |
 
+## Wake while you type
+
+Telegram does not tell a bot that you opened the chat or started to type. Inline mode is the one case where it does: when you type `@your_bot` and a space in a message box, Telegram sends the bot an inline query for each key.
+
+Set it up once: in @BotFather send `/setinline`, select your bot, and give any placeholder text. Then run `ochost channels add telegram` again, or wait for the next start of the install, so the webhook asks for inline queries.
+
+To use it: type `@your_bot` and a space in the bot chat. If the install sleeps, it starts to wake and Telegram shows "Waking up. Send your message in the bot chat." Delete the text and write your message as usual. The reply comes sooner because the wake started before you sent.
+
+- Only your Telegram user id (`--telegram-owner`) and paired senders can wake the install this way. Other users get no answer and do not wake it.
+- The query is not stored and the assistant does not see it. It does not count as activity.
+- The bot shows no inline results.
+
 ## What does not wake it
 
 | Event | Result |
@@ -96,6 +109,7 @@ A sleep takes a snapshot of the container disk, and a wake starts the container 
 | An anonymous request, a wrong path or a wrong webhook secret | 404 or 401. No wake. |
 | You open the owner console at `/` | No. It shows the state and cached checks. |
 | A Telegram message from an unknown sender | Stored and acknowledged. Held until the next wake. No wake. |
+| An inline query from an unknown sender | Dropped. No answer, no wake. |
 | A Control UI tab that was closed for idle | The tab shows "offline". Its reconnect does not wake the install. Reload the page to clear it. |
 
 ## Cold reply time

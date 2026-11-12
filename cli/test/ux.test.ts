@@ -121,6 +121,14 @@ describe("summary block", () => {
     ]);
   });
 
+  it("alerts off (the default): the last next command says so and how to turn them on; set: no such line", () => {
+    expect(summaryLines({ ...base, alerts: "none" }).join("\n")).toMatch(
+      /ochost alerts setup\s+alerts are off \(the default\); this turns them on$/,
+    );
+    for (const alerts of ["ntfy", "webhook"])
+      expect(nextCommands({ ...base, alerts }).map((n) => n.cmd)).not.toContain("ochost alerts setup");
+  });
+
   it("--skip-ai: no model, the next command is ai-gateway setup", () => {
     const i = { ...base, model: undefined, gateway: undefined };
     expect(summaryLines(i).join("\n")).toMatch(/Model\s+none \(--skip-ai\)/);

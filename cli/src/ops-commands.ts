@@ -119,13 +119,13 @@ export const OPS_COMMANDS: Record<string, OpsCommand> = {
   alerts: {
     flags: alertsFlags,
     run: alerts,
-    usage: "alerts list | setup [--channel ntfy|webhook|none] [--url u] | test | ack <code>",
+    usage: "alerts list | setup [--channel ntfy|webhook|none] [--url u] | test | ack <code> | close <class>",
     does: "alert channel",
   },
   caps: {
     flags: capsFlags,
     run: caps,
-    usage: "caps | set <browser|neurons|requests|websearch|exec|sandbox> <n>",
+    usage: "caps | set <browser|neurons|requests|websearch|exec|sandbox|storage> <n> | recount",
     does: "daily budgets for the agent's Cloudflare tools",
   },
   sandbox: {

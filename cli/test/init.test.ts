@@ -517,6 +517,7 @@ describe("runInit end to end (fake wrangler + fake fetch)", () => {
     expect(ct.mode & 0o777).toBe(0o600);
     const cfg = await readFile(join(dir, "oc-host.jsonc"), "utf8");
     expect(cfg).toContain('"bucket": "oc-m5-test"');
+    expect(cfg).toMatch(/"alerts": \{ "channel": "none"/); // alerts off by default; no question asked
     const wr = await readFile(join(dir, ".oc-host", "wrangler.jsonc"), "utf8");
     expect(wr).toContain('"bucket_name": "oc-m5-test"');
     expect(wr).toContain('"OC_TEST": "0"');
@@ -581,6 +582,11 @@ describe("runInit end to end (fake wrangler + fake fetch)", () => {
       cost: { lightUsd: [7, 14], lightHighUsd: 25, alwaysOnUsd: [50, 69] },
     });
     expect(doc.nextCommands[0].cmd).toMatch(/channels add telegram/);
+    // Alerts are off by default (alerts.channel "none"): the last next command says how to turn them on.
+    expect(doc.nextCommands.at(-1)).toMatchObject({
+      cmd: expect.stringMatching(/alerts setup/),
+      why: "alerts are off (the default); this turns them on",
+    });
     const events = err2
       .join("")
       .trim()

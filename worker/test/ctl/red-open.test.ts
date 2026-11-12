@@ -1,5 +1,6 @@
 // Open red-team items a Telegram install hits (docs/research/red-team-reconciliation.md §8): Control DO side.
 import { describe, expect, it } from "vitest";
+import { alert, setAlertSink } from "../../src/ctl/alerts";
 import { DEDUPE_ROWS, REPLAY_WINDOW_MS } from "../../src/ctl/driver";
 import { planGc } from "../../src/ctl/gc";
 import { bootComplete, tg, type World, world } from "./world";
@@ -182,7 +183,7 @@ describe("N7/Z0.m12: a gen is verified by a restore probe, once, and gen GC anch
 });
 
 describe("Z2.9/Z2.11: the dead-man is never silent", () => {
-  it("daily heartbeat with a sink (sent past minSeverity high); no sink → alerts-none open", async () => {
+  it("daily heartbeat with a sink (sent past minSeverity high); no sink → alerts off, no alerts-none", async () => {
     const w = world({ settings: { alerts: { minSeverity: "high", dedupeMinutes: 60 } } as never });
     w.install();
     await w.core.dailyIfDue(true);
@@ -197,7 +198,23 @@ describe("Z2.9/Z2.11: the dead-man is never silent", () => {
     const n = world({ alertUrl: null });
     n.install();
     await n.core.dailyIfDue(true);
-    expect(n.db.one<{ open: number }>("SELECT open FROM alerts WHERE class = 'alerts-none'")?.open).toBe(1);
+    expect(n.db.one("SELECT open FROM alerts WHERE class = 'alerts-none'")).toBeNull();
+    expect(n.db.one("SELECT open FROM alerts WHERE class = 'heartbeat'")).toBeNull();
+  });
+
+  it("alerts off: an alerts-none left open by an older version is closed; alerts are still recorded", async () => {
+    const n = world({ alertUrl: null });
+    n.install();
+    alert(n.ctx, "alerts-none", "warn", "no alert sink");
+    await n.core.dailyIfDue(true);
+    expect(n.db.one<{ open: number }>("SELECT open FROM alerts WHERE class = 'alerts-none'")?.open).toBe(0);
+    await n.api.alert({ class: "gate-down", severity: "high" });
+    expect(await n.api.flushAlerts()).toEqual({ sent: 0, failed: 0 });
+    expect(n.db.one<{ open: number }>("SELECT open FROM alerts WHERE class = 'gate-down'")?.open).toBe(1);
+    // The console's Off button closes it too.
+    alert(n.ctx, "alerts-none", "warn", "no alert sink");
+    setAlertSink(n.ctx, "");
+    expect(n.db.one<{ open: number }>("SELECT open FROM alerts WHERE class = 'alerts-none'")?.open).toBe(0);
   });
 
   it("a sink that refuses shows failing; deadman-silent 2 h after the last CI post", async () => {

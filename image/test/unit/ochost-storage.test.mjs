@@ -1,7 +1,9 @@
 // docs/11 §8: the ochost-storage plugin (backend.mjs, tool.mjs) and ocsup's files.mjs against a mock S3 endpoint
 // that checks SigV4 with the harness verifier (fakes/gate-core.mjs), keeps objects in memory, honours
-// If-None-Match: * and pages ListObjectsV2. One test goes through the real loopback forwarder (cap-proxy.mjs).
+// If-None-Match: * and If-Match (404 when absent, 412 on another etag, like the gate) and pages ListObjectsV2.
+// One test goes through the real loopback forwarder (cap-proxy.mjs).
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -36,7 +38,14 @@ function mockS3() {
       const u = new URL(req.url, "http://x");
       const segs = u.pathname.split("/").slice(1).map(decodeURIComponent);
       const key = segs.slice(1).join("/");
-      log.push({ m: req.method, key, sig: v.ok, inm: req.headers["if-none-match"] ?? null });
+      log.push({
+        m: req.method,
+        key,
+        sig: v.ok,
+        inm: req.headers["if-none-match"] ?? null,
+        im: req.headers["if-match"] ?? null,
+      });
+      const etagOf = (k) => createHash("md5").update(objs.get(k)).digest("hex");
       const err = (s, code) => {
         res.writeHead(s, { "content-type": "application/xml" });
         res.end(`<Error><Code>${code}</Code><Message>${code} msg</Message></Error>`);
@@ -63,21 +72,23 @@ function mockS3() {
       if (req.method === "PUT") {
         if (key === `${PREFIX}/big`) return err(403, "StorageCapExceeded");
         if (req.headers["if-none-match"] === "*" && objs.has(key)) return err(412, "PreconditionFailed");
+        const im = req.headers["if-match"];
+        if (im !== undefined && !objs.has(key)) return err(404, "NoSuchKey");
+        if (im !== undefined && im !== "*" && im.replace(/"/g, "") !== etagOf(key))
+          return err(412, "PreconditionFailed");
         objs.set(key, body);
-        res.writeHead(200, { etag: '"e"' });
+        res.writeHead(200, { etag: `"${etagOf(key)}"` });
         return res.end();
       }
       const o = objs.get(key);
+      const meta = () => ({ etag: `"${etagOf(key)}"`, "last-modified": new Date(0).toUTCString() });
       if (req.method === "HEAD") {
-        res.writeHead(
-          o ? 200 : 404,
-          o ? { "content-length": o.length, "last-modified": new Date(0).toUTCString() } : {},
-        );
+        res.writeHead(o ? 200 : 404, o ? { "content-length": o.length, ...meta() } : {});
         return res.end();
       }
       if (req.method === "GET") {
         if (!o) return err(404, "NoSuchKey");
-        res.writeHead(200);
+        res.writeHead(200, meta());
         return res.end(o);
       }
       if (req.method === "DELETE") {
@@ -134,7 +145,13 @@ describe("ochost-storage backend against a mock S3 gate", () => {
       "f/ab12cd/a/3",
       "f/ab12cd/b/1",
     ]);
-    assert.deepEqual(await b.statObject("a/2"), { key: "a/2", sizeBytes: 5, modifiedAt: 0 });
+    const md5 = (s) => createHash("md5").update(s).digest("hex");
+    assert.deepEqual(await b.statObject("a/2"), {
+      key: "a/2",
+      sizeBytes: 5,
+      modifiedAt: 0,
+      etag: md5("v-a/2"),
+    });
     assert.equal(await b.statObject("nope"), undefined);
     assert.equal(Buffer.concat(await collect(await b.getObject("a/3"))).toString(), "v-a/3");
     assert.equal(await b.getObject("nope"), undefined);
@@ -153,6 +170,89 @@ describe("ochost-storage backend against a mock S3 gate", () => {
     await b.putObject("once", once("1"), {});
     await assert.rejects(b.putObject("once", once("2"), {}), /already exists/);
     assert.equal(m.objs.get("f/ab12cd/once").toString(), "1");
+  });
+
+  it("replaceObject: If-Match with the etag replaces; another etag is 'conflict', a missing key 'not-found'; putObject sends no If-Match", async () => {
+    const b = createBackend(settings, { readKey: () => KEY });
+    const c = await b.createObject("doc.md", once("v1"), {});
+    assert.match(c.etag, /^[0-9a-f]{32}$/);
+    const r = await b.readObject("doc.md");
+    assert.equal(r.etag, c.etag);
+    assert.equal(r.modifiedAt, 0);
+    assert.equal(Buffer.concat(await collect(r.body)).toString(), "v1");
+    const u = await b.replaceObject("doc.md", once("v2"), { ifMatch: c.etag });
+    assert.equal(u.sizeBytes, 2);
+    assert.notEqual(u.etag, c.etag);
+    assert.equal(m.log.at(-1).im, `"${c.etag}"`);
+    await assert.rejects(
+      b.replaceObject("doc.md", once("v3"), { ifMatch: c.etag }),
+      (e) => e.code === "conflict",
+    );
+    assert.equal(m.objs.get("f/ab12cd/doc.md").toString(), "v2");
+    await assert.rejects(
+      b.replaceObject("gone.md", once("x"), { ifMatch: "*" }),
+      (e) => e.code === "not-found",
+    );
+    await b.replaceObject("doc.md", once("v4"), { ifMatch: "*" });
+    assert.equal(m.log.at(-1).im, "*");
+    assert.equal(m.objs.get("f/ab12cd/doc.md").toString(), "v4");
+    await assert.rejects(b.replaceObject("doc.md", once("v5"), {}), /ifMatch/);
+    assert.ok(m.log.filter((x) => x.m === "PUT" && x.inm === "*").every((x) => x.im === null));
+  });
+
+  it("file_store update: save, read for the etag, update; a change from outside is a conflict with the current etag; save of a used name says to update", async () => {
+    const cfg = {
+      storage: { locations: { r2: { provider: "ochost-r2", settings, encryption: "none" } } },
+      plugins: { entries: { "ochost-storage": { config: { location: "r2" } } } },
+    };
+    const backend = createBackend(settings, { readKey: () => KEY });
+    const run = (a) => runFileStore(a, { cfg, workspaceDir: ws, backend });
+    const s = await run({ action: "save", name: "synced/todo.md", content: "- a" });
+    assert.equal(s.ok, true);
+    const again = await run({ action: "save", name: "synced/todo.md", content: "- b" });
+    assert.deepEqual([again.ok, again.exists], [false, true]);
+    assert.match(again.error, /read it, then update with the etag/);
+    const r = await run({ action: "read", name: "synced/todo.md" });
+    assert.equal(r.etag, s.etag);
+    assert.equal(r.modifiedAt, new Date(0).toISOString());
+    const u = await run({ action: "update", name: "synced/todo.md", content: "- a\n- b", etag: r.etag });
+    assert.equal(u.ok, true);
+    assert.equal(u.sizeBytes, 7);
+    // the laptop sync writes straight to R2 (not through the gate)
+    m.objs.set("f/ab12cd/synced/todo.md", Buffer.from("- a\n- c"));
+    const c = await run({ action: "update", name: "synced/todo.md", content: "- a\n- b\n- d", etag: u.etag });
+    assert.equal(c.ok, false);
+    assert.equal(c.conflict, true);
+    assert.equal(c.currentEtag, createHash("md5").update("- a\n- c").digest("hex"));
+    assert.match(c.error, /Nothing was written\. Read it again/);
+    assert.equal(m.objs.get("f/ab12cd/synced/todo.md").toString(), "- a\n- c");
+    const r2 = await run({ action: "read", name: "synced/todo.md" });
+    assert.equal(r2.etag, c.currentEtag);
+    const u2 = await run({
+      action: "update",
+      name: "synced/todo.md",
+      content: "- a\n- c\n- d",
+      etag: r2.etag,
+    });
+    assert.equal(u2.ok, true);
+    fs.writeFileSync(path.join(ws, "todo.md"), "from path");
+    assert.equal(
+      (await run({ action: "update", name: "synced/todo.md", path: "todo.md", etag: "*" })).ok,
+      true,
+    );
+    assert.equal(m.objs.get("f/ab12cd/synced/todo.md").toString(), "from path");
+    await assert.rejects(
+      run({ action: "update", name: "synced/todo.md", content: "x" }),
+      /update needs etag/,
+    );
+    await assert.rejects(
+      run({ action: "update", name: "synced/todo.md", etag: "*" }),
+      /update needs content or path/,
+    );
+    assert.match(
+      (await run({ action: "update", name: "nope.md", content: "x", etag: "*" })).error,
+      /use save/,
+    );
   });
 
   it("a cap refusal names the setting to raise; a wrong key is a clear error; a declared size must match", async () => {
@@ -192,6 +292,7 @@ describe("ochost-storage backend against a mock S3 gate", () => {
       location: "r2",
       name: "notes/today.md",
       sizeBytes: 5,
+      etag: createHash("md5").update("hello").digest("hex"),
     });
     fs.writeFileSync(path.join(ws, "img.bin"), Buffer.from([1, 2, 3]));
     assert.equal((await run({ action: "save", name: "notes/img.bin", path: "img.bin" })).sizeBytes, 3);
@@ -258,5 +359,55 @@ describe("ocsup side: files forwarder and location marker", () => {
       await ensureFilesMarker({}, "ab12cd", { head: async () => 404, put: async () => 412 }),
       "raced",
     );
+  });
+});
+
+describe("file names with spaces, Unicode, + # % (1.2.5)", () => {
+  let m;
+  let settings;
+  before(async () => {
+    m = mockS3();
+    const port = await listen(m.srv);
+    settings = { endpoint: `http://127.0.0.1:${port}`, bucket: BUCKET, prefix: PREFIX };
+  });
+  after(() => m.srv.close());
+
+  it("save, read, list and update keep the exact name; every request is signed right (RFC 3986 per segment)", async () => {
+    const cfg = {
+      storage: { locations: { r2: { provider: "ochost-r2", settings, encryption: "none" } } },
+      plugins: { entries: { "ochost-storage": { config: { location: "r2" } } } },
+    };
+    const backend = createBackend(settings, { readKey: () => KEY });
+    const run = (a) => runFileStore(a, { cfg, backend });
+    const names = [
+      "my notes/plan 2026.md",
+      "naïve café/résumé.txt",
+      "a+b/c+d.md",
+      "hash/#1 item.md",
+      "pct/100% done.md",
+      "mix/ü ö+#%(x)!'*.md",
+      "日本語/メモ.md",
+    ];
+    for (const n of names) {
+      const s = await run({ action: "save", name: n, content: `body of ${n}` });
+      assert.equal(s.ok, true, n);
+      assert.ok(m.objs.has(`${PREFIX}/${n}`), n);
+      const r = await run({ action: "read", name: n });
+      assert.equal(r.content, `body of ${n}`, n);
+      const u = await run({ action: "update", name: n, content: "v2", etag: r.etag });
+      assert.equal(u.ok, true, n);
+    }
+    const all = (await run({ action: "list" })).files.map((f) => f.name).sort();
+    assert.deepEqual(all, [...names].sort());
+    assert.deepEqual(
+      (await run({ action: "list", prefix: "my notes/" })).files.map((f) => f.name),
+      ["my notes/plan 2026.md"],
+    );
+    assert.ok(
+      m.log.every((x) => x.sig),
+      "every request verified",
+    );
+    for (const bad of ["a//b.md", "a/./b.md", "a\\b.md", "a/\u0001.md", "x/../y"])
+      await assert.rejects(run({ action: "save", name: bad, content: "1" }), /segments/, bad);
   });
 });

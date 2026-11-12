@@ -347,6 +347,19 @@ export interface PutIn {
 }
 export type PutOut =
   | {
+      /** Inline query or chosen result (docs/14 "Inline wake"): never stored, never sent to the gateway. */
+      status: 200;
+      inline: true;
+      /** The query to answer; null when the sender may not wake the install (no answer goes out). */
+      queryId: string | null;
+      wake: boolean;
+      /** Set by the Control DO: no gateway can answer now (asleep, starting). */
+      cold?: boolean;
+      malformed?: false;
+      typing?: undefined;
+      progress?: undefined;
+    }
+  | {
       status: 200;
       id: string;
       state: InboxState;
@@ -359,6 +372,42 @@ export type PutOut =
   | { status: 200; malformed: true; wake: false; typing?: undefined; progress?: undefined }
   | { status: 503 | 413; wake: false; error: string; typing?: undefined; progress?: undefined };
 
+/**
+ * Inline update (docs/14 "Inline wake"). `inline_query` → its id and sender; `chosen_inline_result` → queryId
+ * null. null = the update is not an inline one.
+ */
+export function parseInline(body: string): { queryId: string | null; fromId: string | null } | null {
+  if (!body.includes("inline")) return null;
+  let u: any;
+  try {
+    u = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!u || typeof u !== "object") return null;
+  const q = u.inline_query;
+  if (q && typeof q === "object") {
+    const from = q.from?.id;
+    return {
+      queryId: typeof q.id === "string" && q.id ? q.id : null,
+      fromId: Number.isInteger(from) ? String(from) : null,
+    };
+  }
+  if (u.chosen_inline_result && typeof u.chosen_inline_result === "object")
+    return { queryId: null, fromId: null };
+  return null;
+}
+
+/**
+ * Who may wake the install with an inline query. Stricter than `wakes`: any Telegram user can type the bot's
+ * name in any chat, so with no owner id and no allowlist nobody can.
+ */
+export function inlineWakes(c: Ctx, fromId: string | null): boolean {
+  if (fromId === null) return false;
+  if (fromId === c.db.meta("ownerTelegramId")) return true;
+  return wakeList(c)?.users.has(fromId) ?? false;
+}
+
 /** ctl.inboxPut (§12.1 steps 2-5): one storage write; redelivery is a no-op. */
 export function inboxPut(c: Ctx, p: PutIn): PutOut {
   if (p.body.length > BODY_MAX) return { status: 413, wake: false, error: "too-large" };
@@ -368,6 +417,15 @@ export function inboxPut(c: Ctx, p: PutIn): PutOut {
   if (!t) {
     ring(c, "inbox", "webhook-malformed", { bytes: p.body.length });
     return { status: 200, malformed: true, wake: false };
+  }
+  // Inline wake: the owner types `@bot` in a message box; Telegram sends the query while they type. It wakes an
+  // asleep install and is dropped: no row, no delivery, no activity.
+  const inl = p.meta ? null : parseInline(p.body);
+  if (inl) {
+    const allowed = inl.queryId !== null && inlineWakes(c, inl.fromId);
+    const wake = allowed && p.asleep;
+    if (wake) ring(c, "inbox", "inline-wake", { from: inl.fromId });
+    return { status: 200, inline: true, queryId: allowed ? inl.queryId : null, wake };
   }
   const route = p.route ?? ROUTE_TG;
   const account = p.account ?? ACCOUNT_DEFAULT;

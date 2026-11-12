@@ -23,6 +23,8 @@ import { oomFor } from "./oom.mjs";
 
 export const BACKOFF_S = [1, 2, 5, 10, 30];
 export const FINAL_EXIT_MS = 10_000;
+/** Longest admission hold: the gateway did not reach /startupz in this time (docs/13). */
+export const ADMIT_HOLD_CAP_MS = 120_000;
 /** A restarted Litestream counts as up (fault clock stops) only after this long without an exit. */
 export const UP_OK_MS = 10_000;
 
@@ -64,6 +66,7 @@ export class Litestream extends EventEmitter {
     this.lastExit = null;
     this.run = null; // {pid, startedAt, unclean:false, diskFull:false, oomBefore}
     this.timer = null;
+    this.held = false; // admission hold: stopped on purpose until release()
   }
 
   pid() {
@@ -323,8 +326,30 @@ export class Litestream extends EventEmitter {
     return this.#spawn("resume");
   }
 
+  /**
+   * Admission hold (docs/13 "Wake database wait"): stop with a final sync and stay down until release().
+   * Litestream keeps a read lock on the WAL, so each checkpoint the gateway runs while it admits the
+   * agent database waits out its 5 s busy timeout. Not a fault: the lag clock is held for capMs.
+   */
+  async hold(why, capMs = ADMIT_HOLD_CAP_MS) {
+    this.lag.hold(capMs + PLANNED_HOLD_MS, `hold:${why}`);
+    const r = await this.stopFinal(`hold:${why}`);
+    this.held = true;
+    return r;
+  }
+
+  /** End of the hold: same gen, same meta dir. No-op when not held; a set change may have started it. */
+  release(why) {
+    if (!this.held) return null;
+    this.held = false;
+    this.stopped = false;
+    this.lag.hold(PLANNED_HOLD_MS, "hold-release");
+    return this.child ? this.child.pid : this.#spawn(`hold-release:${why}`);
+  }
+
   /** Kill without a final sync (self-fence). */
   async kill() {
+    this.held = false;
     this.stopped = true;
     clearTimeout(this.timer);
     if (this.child) await this.#signalWait("SIGKILL", 5000);

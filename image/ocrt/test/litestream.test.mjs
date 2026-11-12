@@ -43,6 +43,26 @@ const until = async (f, ms = 3000) => {
 };
 
 describe("litestream supervisor", () => {
+  it("admission hold: final stop, no respawn, release starts it again once (docs/13)", async () => {
+    const { ls, argvs } = mk("normal");
+    const starts = [];
+    ls.on("start", (e) => starts.push(e.why));
+    await ls.apply(DBS);
+    await new Promise((r) => setTimeout(r, 150));
+    const r = await ls.hold("admit");
+    assert.equal(r.clean, true);
+    assert.equal(ls.pid(), 0);
+    assert.equal(ls.downForMs(), 0); // planned: no fault clock
+    assert.ok(ls.lag.held());
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(argvs.length, 1); // stayed down
+    assert.ok(ls.release("startupz") > 0);
+    assert.equal(ls.release("cap"), null); // second release is a no-op
+    assert.deepEqual(starts, ["apply", "hold-release:startupz"]);
+    assert.equal(argvs.length, 2);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal((await ls.stopFinal()).clean, true);
+  });
   it("writes the config and starts replicate; final stop is clean", async () => {
     const { ls, dir, argvs } = mk("normal");
     await ls.apply(DBS);

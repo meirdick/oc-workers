@@ -7,7 +7,8 @@ const PLUGIN_ID = "ochost-storage";
 const DEFAULT_LOCATION = "r2";
 /** Text the tool returns inline; larger reads go to a workspace file (`to`). */
 const READ_INLINE_MAX = 200_000;
-const KEY_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+/** No control characters or backslash; segments not empty, "." or "..". Spaces, Unicode, + # % are fine (1.2.5). */
+const badChar = (s) => s.includes("\\") || [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
 const MARKER = "openclaw-storage.json";
 
 /** The location the tool uses: plugin config `location`, settings of storage.locations.<it>. */
@@ -21,8 +22,8 @@ export function locationOf(cfg) {
 
 function checkKey(key) {
   const k = String(key ?? "").trim();
-  if (!k || Buffer.byteLength(k) > 512 || !KEY_RE.test(k) || k.split("/").some((s) => s === "." || s === ".."))
-    throw new Error("name must be /-separated segments of letters, digits, '.', '_' or '-' (max 512 bytes), such as notes/2026-11-06.md");
+  if (!k || Buffer.byteLength(k) > 512 || badChar(k) || k.split("/").some((s) => s === "" || s === "." || s === ".."))
+    throw new Error("name must be /-separated segments without control characters or backslash, no empty, '.' or '..' segment (max 512 bytes), such as notes/2026 plan.md");
   if (k === MARKER) throw new Error(`${MARKER} is reserved`);
   return k;
 }
@@ -41,36 +42,75 @@ export async function runFileStore(args, o) {
   const loc = locationOf(o.cfg);
   const b = o.backend ?? createBackend(loc.settings);
   const signal = o.signal;
+  const bodyOf = async () => {
+    let bytes;
+    if (typeof args.content === "string") bytes = Buffer.from(args.content, "utf8");
+    else if (typeof args.path === "string") bytes = await fs.readFile(inWorkspace(o.workspaceDir, args.path));
+    else throw new Error(`${action} needs content or path`);
+    return { bytes, iter: (async function* () { yield new Uint8Array(bytes); })() };
+  };
   try {
     if (action === "save") {
       const key = checkKey(args.name);
-      let bytes;
-      if (typeof args.content === "string") bytes = Buffer.from(args.content, "utf8");
-      else if (typeof args.path === "string") bytes = await fs.readFile(inWorkspace(o.workspaceDir, args.path));
-      else throw new Error("save needs content or path");
-      const r = await b.putObject(key, (async function* () { yield new Uint8Array(bytes); })(), { sizeBytes: bytes.length, signal });
-      return { ok: true, action, location: loc.name, name: key, sizeBytes: r.sizeBytes };
+      const { bytes, iter } = await bodyOf();
+      let r;
+      try {
+        r = await b.createObject(key, iter, { sizeBytes: bytes.length, signal });
+      } catch (e) {
+        if (e?.code !== "exists") throw e;
+        return { ok: false, action, location: loc.name, name: key, exists: true, error: `${key} exists. To change it: read it, then update with the etag from the read.` };
+      }
+      return { ok: true, action, location: loc.name, name: key, sizeBytes: r.sizeBytes, ...(r.etag ? { etag: r.etag } : {}) };
+    }
+    if (action === "update") {
+      const key = checkKey(args.name);
+      const etag = typeof args.etag === "string" ? args.etag.trim() : "";
+      if (!etag) throw new Error('update needs etag: the etag from your last read or save of this file, or "*" to replace any version');
+      const { bytes, iter } = await bodyOf();
+      try {
+        const r = await b.replaceObject(key, iter, { sizeBytes: bytes.length, ifMatch: etag, signal });
+        return { ok: true, action, location: loc.name, name: key, sizeBytes: r.sizeBytes, ...(r.etag ? { etag: r.etag } : {}) };
+      } catch (e) {
+        if (e?.code === "not-found")
+          return { ok: false, action, location: loc.name, name: key, error: "not found; use save to create it" };
+        if (e?.code !== "conflict") throw e;
+        const now = await b.statObject(key, { signal }).catch(() => undefined);
+        return {
+          ok: false,
+          action,
+          location: loc.name,
+          name: key,
+          conflict: true,
+          ...(now?.etag ? { currentEtag: now.etag } : {}),
+          ...(Number.isFinite(now?.modifiedAt) ? { modifiedAt: new Date(now.modifiedAt).toISOString() } : {}),
+          error: `${key} changed since your read (someone else wrote it). Nothing was written. Read it again, make your change on the new text, then update with the new etag.`,
+        };
+      }
     }
     if (action === "read") {
       const key = checkKey(args.name);
-      const body = await b.getObject(key, { signal });
-      if (!body) return { ok: false, action, location: loc.name, name: key, error: "not found" };
+      const got = await b.readObject(key, { signal });
+      if (!got) return { ok: false, action, location: loc.name, name: key, error: "not found" };
       const chunks = [];
-      for await (const c of body) chunks.push(Buffer.from(c));
+      for await (const c of got.body) chunks.push(Buffer.from(c));
       const buf = Buffer.concat(chunks);
+      const meta = {
+        ...(got.etag ? { etag: got.etag } : {}),
+        ...(Number.isFinite(got.modifiedAt) ? { modifiedAt: new Date(got.modifiedAt).toISOString() } : {}),
+      };
       if (typeof args.to === "string") {
         const dst = inWorkspace(o.workspaceDir, args.to);
         await fs.mkdir(path.dirname(dst), { recursive: true });
         await fs.writeFile(dst, buf);
-        return { ok: true, action, location: loc.name, name: key, sizeBytes: buf.length, to: args.to };
+        return { ok: true, action, location: loc.name, name: key, sizeBytes: buf.length, ...meta, to: args.to };
       }
       if (buf.length > READ_INLINE_MAX)
-        return { ok: false, action, name: key, sizeBytes: buf.length, error: `above ${READ_INLINE_MAX} bytes; pass to: <workspace path>` };
-      return { ok: true, action, location: loc.name, name: key, sizeBytes: buf.length, content: buf.toString("utf8") };
+        return { ok: false, action, name: key, sizeBytes: buf.length, ...meta, error: `above ${READ_INLINE_MAX} bytes; pass to: <workspace path>` };
+      return { ok: true, action, location: loc.name, name: key, sizeBytes: buf.length, ...meta, content: buf.toString("utf8") };
     }
     if (action === "list") {
       const prefix = args.prefix ? String(args.prefix) : "";
-      if (prefix && !/^[A-Za-z0-9._\/-]+$/.test(prefix)) throw new Error("prefix has characters names cannot have");
+      if (prefix && badChar(prefix)) throw new Error("prefix has characters names cannot have");
       const files = [];
       for await (const x of b.listObjects(prefix, { signal })) {
         if (x.key === MARKER || x.key.startsWith(".")) continue;
@@ -84,7 +124,7 @@ export async function runFileStore(args, o) {
       await b.deleteObject(key, { signal });
       return { ok: true, action, location: loc.name, name: key };
     }
-    throw new Error("action must be save, read, list or delete");
+    throw new Error("action must be save, update, read, list or delete");
   } finally {
     if (!o.backend) await b.close?.();
   }

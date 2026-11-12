@@ -253,6 +253,7 @@ export function stateWord(state: string): "running" | "asleep" | "starting" | "s
 
 const NOTICES: Record<string, string> = {
   acked: "Alert acknowledged",
+  closed: "Alert closed",
   raised: "Daily limit doubled",
   archive: "Archive requested. The install wakes to take it",
   "drill-ok": "Restore drill passed",
@@ -654,12 +655,14 @@ function setupRows(p: Panel): SetupRow[] {
     todo: !!otherBad,
   });
   const al = find("alerts sink");
+  // Off is the default (opt-in): a grey dot, not a to-do. Alerts still show in Alerts and log.
+  const alOff = al?.detail === "off";
   if (al)
     rows.push({
       group: "ch",
       name: "Alert channel",
-      state: al.detail,
-      result: al.result,
+      state: alOff ? "Off (opt-in); alerts show in Alerts and log only" : al.detail,
+      result: alOff ? null : al.result,
       ...(p.toggles
         ? {
             button: ctl(
@@ -925,17 +928,17 @@ function activityHtml(p: Panel, kind: string | null): string {
   );
 }
 
-/** One open alert: border and badge, detail, the fix line, the Doctor tail, Acknowledge. */
+/** One open alert: border and badge, detail, the fix line, the Doctor tail, Close. */
 function openAlert(p: Panel, a: Panel["alerts"]["open"][number]): string {
   const [c, t] = sev(a.severity);
   return `<div class="ex ${c}" id="a-${esc(a.class)}"><div class="exh"><span class="bdg">${esc(t)}</span><span class="nm">${esc(a.class)}</span><span class="t">${ago(p.now, a.at)}${a.count > 1 ? `, ${a.count} times` : ""}</span></div>${
     a.detail ? `<p>${esc(a.detail)}</p>` : ""
   }<p class="fixl">Do this: <code>${esc(a.fix)}</code></p>${
     a.class === "doctor-failed" && p.alerts.doctorTail ? `<pre>${esc(p.alerts.doctorTail)}</pre>` : ""
-  }${post("ack", { class: a.class }, "Acknowledge")}</div>`;
+  }${post("close", { class: a.class }, "Close")}</div>`;
 }
 
-/** Alerts and log: open alerts (Acknowledge), the activity log, then the closed alerts. */
+/** Alerts and log: open alerts (Close), the activity log, then the closed alerts. */
 function logTab(p: Panel, kind: string | null): string {
   const open = p.alerts.open;
   const closed = p.alerts.closed ?? [];

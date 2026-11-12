@@ -43,7 +43,7 @@ Check [Requirements](/requirements/). You need:
     - Telegram: paste the bot token from @BotFather (see [Add Telegram](#add-telegram)).
     - Cloudflare Access: a hostname on your zone, such as `oc.example.com`.
 
-    Alerts to your phone are optional; `ochost alerts setup` adds them later.
+    Alerts to your phone are off by default, and `init` does not ask about them. `ochost alerts setup` turns them on later, or pass `--alerts` to `init`.
 
     For a script or a rerun, the same answers work as flags: `ochost init --telegram-owner <id> --telegram-token-file <file> --sandbox on --alerts ntfy --access-domain oc.example.com`.
   </Step>

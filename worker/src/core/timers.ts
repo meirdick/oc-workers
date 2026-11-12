@@ -76,6 +76,8 @@ export interface Timers {
   alertDedupeMs: number;
   /** Control DO R2 probe while the Runtime DO is awake (§11.5). */
   r2ProbeMs: number;
+  /** Files reconcile (ctl/files-reconcile.ts): one R2 list pass of f/<inst>/ at most this often while awake. */
+  filesReconcileMs: number;
   /** Driver retry steps (§12.3): 1, 2, 5, 10 s, then driverRetryCapMs after ingress-ready. */
   driverRetry1Ms: number;
   driverRetry2Ms: number;
@@ -162,6 +164,7 @@ export const DEFAULT_TIMERS: Readonly<Timers> = Object.freeze({
   epochCacheMs: 30 * S,
   alertDedupeMs: 1 * H,
   r2ProbeMs: 60 * S,
+  filesReconcileMs: 30 * MIN,
   driverRetry1Ms: 1 * S,
   driverRetry2Ms: 2 * S,
   driverRetry3Ms: 5 * S,
@@ -239,6 +242,7 @@ export const TEST_TIMERS: Readonly<Timers> = Object.freeze({
   epochCacheMs: 1 * S,
   alertDedupeMs: 1 * H,
   r2ProbeMs: 1 * S,
+  filesReconcileMs: 30 * S,
   driverRetry1Ms: 10,
   driverRetry2Ms: 20,
   driverRetry3Ms: 50,

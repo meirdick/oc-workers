@@ -22,6 +22,12 @@ export function s3Error(status: number, code: string, message: string, resource 
 }
 
 export const etagQ = (e: string) => (e.startsWith('"') ? e : `"${e}"`);
+/** An If-Match value as R2 keeps the ETag: no W/, no quotes. `*` stays `*`. */
+export const etagBare = (e: string) =>
+  e
+    .trim()
+    .replace(/^W\//, "")
+    .replace(/^"(.*)"$/, "$1");
 export const unq = (e: string) => e.replace(/^"|"$/g, "");
 
 export function parseParts(xml: string): { partNumber: number; etag: string }[] {

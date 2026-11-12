@@ -13,7 +13,7 @@ import type { Panel } from "./ctl/panel";
 import { firstText } from "./ctl/progress";
 import { testTelegramFetch } from "./ctl/test-telegram";
 import { sendTyping, tgCall } from "./ctl/typing";
-import { handleWebhook, isWebhook } from "./ctl/webhook";
+import { handleWebhook, inlineAnswer, isWebhook } from "./ctl/webhook";
 import { capGateForOwner } from "./gates/entry";
 import { accessGate } from "./ingress/access";
 import { handleOchost, handleOpsAuth, handleProxied, handleRoot, type IngressDeps } from "./ingress/routes";
@@ -190,6 +190,10 @@ function webhook(req: Request, env: Env, ctx: ExecutionContext): Promise<Respons
       await ctl.progressSent(chat, msg);
     },
     typing: (chat) => sendTyping(f, env.OC_SECRET_OC_TELEGRAM_BOT_TOKEN ?? "", chat),
+    answerInline: async (id, cold) => {
+      const token = env.OC_SECRET_OC_TELEGRAM_BOT_TOKEN ?? "";
+      if (token) await tgCall(f, token, "answerInlineQuery", inlineAnswer(id, cold));
+    },
     waitUntil: (p) => ctx.waitUntil(p),
   });
 }

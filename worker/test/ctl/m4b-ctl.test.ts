@@ -110,6 +110,43 @@ describe("L3: accepted rows with no reply are replayed with a fresh update_id af
     expect(ids3.filter((i) => i > REPLY_ID_STEP)).toEqual([102 + REPLY_ID_STEP]); // same fresh key, deduped
   });
 
+  it("TelegramGate adds inline_query to the gateway's setWebhook list (docs/14 inline wake)", async () => {
+    const sent: { ct: string; body: string }[] = [];
+    const f = (async (r: Request) => {
+      sent.push({ ct: r.headers.get("content-type") ?? "", body: await r.text() });
+      return new Response('{"ok":true}');
+    }) as unknown as typeof fetch;
+    const sink = { outbound: () => undefined };
+    const json = (m: string, body: unknown) =>
+      new Request(`https://api.telegram.org/bot123:abc/${m}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const go = (r: Request) => handleTelegramGate(r, sink, () => undefined, f);
+    await go(json("setWebhook", { url: "https://x/h", allowed_updates: ["message", "callback_query"] }));
+    await go(json("setWebhook", { url: "https://x/h", allowed_updates: ["message", "inline_query"] }));
+    await go(json("setWebhook", { url: "https://x/h" })); // no list: Telegram's default has inline_query
+    await go(json("sendMessage", { chat_id: 7, allowed_updates: ["message"] })); // other methods: unchanged
+    await go(
+      new Request("https://api.telegram.org/bot123:abc/setWebhook", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ url: "https://x/h", allowed_updates: '["message"]' }).toString(),
+      }),
+    );
+    expect(JSON.parse(sent[0]?.body ?? "")).toEqual({
+      url: "https://x/h",
+      allowed_updates: ["message", "callback_query", "inline_query"],
+    });
+    expect(JSON.parse(sent[1]?.body ?? "").allowed_updates).toEqual(["message", "inline_query"]);
+    expect(JSON.parse(sent[2]?.body ?? "")).toEqual({ url: "https://x/h" });
+    expect(JSON.parse(sent[3]?.body ?? "").allowed_updates).toEqual(["message"]);
+    const form = new URLSearchParams(sent[4]?.body ?? "");
+    expect(JSON.parse(form.get("allowed_updates") ?? "")).toEqual(["message", "inline_query"]);
+    expect(form.get("url")).toBe("https://x/h");
+  });
+
   it("TelegramGate passes the call through and notes 2xx send* calls only", async () => {
     const seen: [unknown, string][] = [];
     const calls: string[] = [];

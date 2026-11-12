@@ -92,6 +92,8 @@ export const GATE_COLUMNS: readonly [string, string, string][] = [
   ["inbox", "replays", "INTEGER NOT NULL DEFAULT 0"],
   // S0.10: 1 = sender/group not on the wake list: never wakes, never activity, never blocks the sleep gate.
   ["inbox", "quiet", "INTEGER NOT NULL DEFAULT 0"],
+  // 1.2.4 files reconcile: start time of the R2 list pass that last saw this object (ctl/files-reconcile.ts).
+  ["files_obj", "seen", "INTEGER"],
 ];
 
 const GiB = 1024 ** 3;
@@ -480,13 +482,75 @@ export class GateLedger {
           );
         else if (a.op === "DeleteObject") this.run("DELETE FROM files_obj WHERE key = ?", a.key);
       }
-      const after = this.filesView();
-      const line = `files ${after.used}/${after.limit} bytes (${Math.round(after.pct * 100)}%)`;
-      if (before.pct < 1 && after.pct >= 1)
-        this.alert("storage-cap-100", "high", `${line}; writes are refused`);
-      else if (before.pct < FILES_ALERT_AT && after.pct >= FILES_ALERT_AT)
-        this.alert("storage-cap-80", "warn", line);
-      return after;
+      return this.filesAlertCross(before);
+    });
+  }
+  /** The change since `before` that crosses 80 % or 100 % alerts. Returns the view now. */
+  private filesAlertCross(before: FilesView): FilesView {
+    const after = this.filesView();
+    const line = `files ${after.used}/${after.limit} bytes (${Math.round(after.pct * 100)}%)`;
+    if (before.pct < 1 && after.pct >= 1)
+      this.alert("storage-cap-100", "high", `${line}; writes are refused`);
+    else if (before.pct < FILES_ALERT_AT && after.pct >= FILES_ALERT_AT)
+      this.alert("storage-cap-80", "warn", line);
+    return after;
+  }
+  /**
+   * Files reconcile (1.2.4, ctl/files-reconcile.ts): one page of an R2 list of f/<inst>/. Adds objects the gate
+   * never saw (written straight to R2, such as an owner sync) and fixes sizes; marks each row seen by pass `pass`
+   * (the pass start). A row written at or after `listAt` keeps its size: the gate wrote it after the list began.
+   */
+  filesReconcilePage(
+    pass: number,
+    listAt: number,
+    objs: readonly { key: string; bytes: number }[],
+  ): { added: number; resized: number } {
+    return this.tx(() => {
+      const before = this.filesView();
+      let added = 0;
+      let resized = 0;
+      for (const o of objs) {
+        const row = this.one<{ bytes: number; at: number }>(
+          "SELECT bytes, at FROM files_obj WHERE key = ?",
+          o.key,
+        );
+        if (!row) {
+          this.run(
+            "INSERT INTO files_obj (key, bytes, at, seen) VALUES (?, ?, ?, ?)",
+            o.key,
+            o.bytes,
+            listAt,
+            pass,
+          );
+          added++;
+        } else if (row.at < listAt && Number(row.bytes) !== o.bytes) {
+          this.run(
+            "UPDATE files_obj SET bytes = ?, at = ?, seen = ? WHERE key = ?",
+            o.bytes,
+            listAt,
+            pass,
+            o.key,
+          );
+          resized++;
+        } else this.run("UPDATE files_obj SET seen = ? WHERE key = ?", pass, o.key);
+      }
+      this.filesAlertCross(before);
+      return { added, resized };
+    });
+  }
+  /**
+   * End of a full reconcile pass: drop rows that pass `pass` did not see and that are older than the pass (deleted
+   * straight from R2). Rows the gate wrote during the pass stay.
+   */
+  filesReconcileEnd(pass: number): { removed: number; view: FilesView } {
+    return this.tx(() => {
+      const before = this.filesView();
+      const gone = "(seen IS NULL OR seen < ?) AND at < ?";
+      const removed = Number(
+        this.one<{ n: number }>(`SELECT COUNT(*) AS n FROM files_obj WHERE ${gone}`, pass, pass)?.n ?? 0,
+      );
+      if (removed) this.run(`DELETE FROM files_obj WHERE ${gone}`, pass, pass);
+      return { removed, view: this.filesAlertCross(before) };
     });
   }
   /** `ochost destroy --delete-data` (POST /ops/files/purge): the objects are gone from R2. */

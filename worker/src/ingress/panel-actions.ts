@@ -12,6 +12,7 @@ export type PanelOps = (r: {
 
 export const PANEL_ACTS = [
   "ack",
+  "close",
   "raise",
   "archive",
   "drill",
@@ -44,11 +45,18 @@ export async function panelAct(
 ): Promise<{ code: string; why?: string }> {
   const bad = (why: unknown) => ({ code: "panel-failed", why: clean(why) });
   try {
-    if (act === "ack") {
+    if (act === "ack" || act === "close") {
+      // Close (1.2.5): the same op as `ochost alerts close <class>`; it logs a ring event. `ack` is the old name.
       const cls = form.get("class") ?? "";
       if (!/^[A-Za-z0-9._:-]{1,64}$/.test(cls)) return bad("bad alert class");
-      const r = await ops({ action: "alerts", method: "POST", sub: ["resolve"], body: { class: cls } });
-      return r.status === 200 ? { code: "acked" } : bad(`alerts ${r.status}`);
+      const r = await ops({
+        action: "alerts",
+        method: "POST",
+        sub: ["close"],
+        body: { class: cls, by: "console" },
+      });
+      if (r.status === 404) return { code: "closed", why: "it was already closed" };
+      return r.status === 200 ? { code: "closed" } : bad(`alerts ${r.status}`);
     }
     if (act === "raise") {
       const verb = form.get("verb") ?? "";

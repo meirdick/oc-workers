@@ -71,7 +71,10 @@ describe("import policy", () => {
 
   it("keys follow the file_store rule; overwrite paths stay relative", () => {
     expect(keyOk("records/app/2024/report_2024.pdf")).toBe(true);
-    for (const k of ["a b.pdf", "/a", "a//b", "a/../b", "./a", ""]) expect([k, keyOk(k)]).toEqual([k, false]);
+    expect(keyOk("my docs/a b+c #1 100%.pdf")).toBe(true);
+    expect(keyOk("café/résumé.pdf")).toBe(true);
+    for (const k of ["/a", "a//b", "a/../b", "./a", "", "a\\b", "a\nb", "a/"])
+      expect([k, keyOk(k)]).toEqual([k, false]);
     expect(relOk("projects/My File.md")).toBe(true);
     for (const k of ["/a", "a/../b", "a//b", "a\nb"]) expect([k, relOk(k)]).toEqual([k, false]);
   });
@@ -193,7 +196,7 @@ describe.skipIf(!sut.ok)(`owner routes ${sut.why}`, () => {
     expect((await put(`/ops/import/file?key=records/a.pdf&sha256=${sha("PDF")}`, "PDF")).status).toBe(409);
     expect((await put(`/ops/import/file?key=records/b.pdf&sha256=${sha("x")}`, "y")).status).toBe(400);
     expect(w.r2.objs.has(`f/${WINST}/records/b.pdf`)).toBe(false);
-    expect((await put(`/ops/import/file?key=records/a b.pdf&sha256=${sha("x")}`, "x")).status).toBe(400);
+    expect((await put(`/ops/import/file?key=records/../b.pdf&sha256=${sha("x")}`, "x")).status).toBe(400);
     const l = await w.fetch("/ops/import/files?prefix=records/");
     expect(await l.json()).toEqual({
       objects: [{ key: "records/a.pdf", size: 3, sha256: sha("pdf") }],

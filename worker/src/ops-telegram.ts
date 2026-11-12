@@ -2,7 +2,7 @@
 // webhook itself, so the webhook secret and its secret path (`/_ochost/hook/telegram/<seg>`, ingress/telegram.ts)
 // never leave it. Answers carry the URL with the segment redacted.
 //   POST {allowedUpdates?, dropPending?, config?}: setWebhook(url = hookUrl(origin, secret), secret_token,
-//        allowed_updates = message types only), then getWebhookInfo. config (default true): the newest config
+//        allowed_updates = message types and inline_query), then getWebhookInfo. config (default true): the newest config
 //        version gets the same URL in channels.telegram.webhookUrl, so the gateway's own setWebhook at boot
 //        keeps it (W2 accepts it).
 //   GET: getWebhookInfo, and whether the URL is this install's secret path, the legacy path, or other.
@@ -13,7 +13,8 @@ import { HOOK_PREFIX, hookUrl } from "./ingress/telegram";
 
 export const TELEGRAM_API = "https://api.telegram.org";
 /** Message updates only (no member, reaction, poll or query updates): fewer wakes for updates nobody reads. */
-export const MESSAGE_UPDATES = ["message", "edited_message"];
+/** `inline_query` is the inline wake (docs/14): the Worker takes it, the gateway never sees it. */
+export const MESSAGE_UPDATES = ["message", "edited_message", "inline_query"];
 const LEGACY = "/telegram-webhook";
 
 type Res = { status: number; body: Record<string, unknown> };

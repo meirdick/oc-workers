@@ -16,7 +16,19 @@ export const MAX_OBJECT_BYTES = 100_000_000;
 const TIMEOUT_MS = 120_000;
 const SEG = /^[A-Za-z0-9._-]+$/;
 
-class OchostStorageError extends Error {}
+/** code: "exists" (create of a used name), "conflict" (If-Match failed), "not-found" (update of a missing name). */
+export class OchostStorageError extends Error {
+  constructor(message, code) {
+    super(message);
+    if (code) this.code = code;
+  }
+}
+/** An S3 ETag without quotes or W/. */
+const bareEtag = (s) =>
+  String(s ?? "")
+    .trim()
+    .replace(/^W\//, "")
+    .replace(/^"(.*)"$/, "$1");
 
 const sha256hex = (s) => createHash("sha256").update(s).digest("hex");
 const hmac = (k, s) => createHmac("sha256", k).update(s).digest();
@@ -75,6 +87,11 @@ export function validateSettings(s) {
 export const describeTarget = (s) =>
   validateSettings(s) ? undefined : `r2://${s.bucket}/${s.prefix} (oc-host gate)`;
 
+/** A fetch body as the contract's async iterable of Uint8Array. */
+async function* chunksOf(stream) {
+  for await (const c of stream) yield c instanceof Uint8Array ? c : new Uint8Array(c);
+}
+
 const xmlAll = (xml, tag) => [...xml.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map((m) => m[1]);
 const unesc = (s) =>
   s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
@@ -84,7 +101,10 @@ async function failure(res, op) {
   const t = await res.text().catch(() => "");
   const code = xmlAll(t, "Code")[0];
   const msg = xmlAll(t, "Message")[0];
-  if (res.status === 412) return new OchostStorageError("Object already exists; use a new name.");
+  if (op === "update" && res.status === 412)
+    return new OchostStorageError("Object changed since the etag you sent.", "conflict");
+  if (op === "update" && res.status === 404) return new OchostStorageError("Object does not exist.", "not-found");
+  if (res.status === 412) return new OchostStorageError("Object already exists; use a new name.", "exists");
   if (code === "StorageCapExceeded" || code === "EntityTooLarge")
     return new OchostStorageError(`R2 ${op} refused: ${unesc(msg ?? code)}. The owner can raise it with \`ochost config set ${code === "EntityTooLarge" ? "files.maxObjectMb" : "files.capGb"} <n>\`.`);
   if (res.status === 409 && code === "Stale")
@@ -135,57 +155,87 @@ export function createBackend(settings, o = {}) {
       token = next === undefined ? undefined : unesc(next);
     } while (token);
   }
+  /** One PUT of the whole body with one condition header. Returns {sizeBytes, etag}. */
+  async function upload(key, body, opts, cond, op) {
+    opts.signal?.throwIfAborted();
+    if (opts.sizeBytes !== undefined && opts.sizeBytes > MAX_OBJECT_BYTES)
+      throw new OchostStorageError(`Object is above ${MAX_OBJECT_BYTES} bytes; split it.`);
+    const chunks = [];
+    let n = 0;
+    for await (const c of body) {
+      opts.signal?.throwIfAborted();
+      n += c.byteLength;
+      if (n > MAX_OBJECT_BYTES) throw new OchostStorageError(`Object is above ${MAX_OBJECT_BYTES} bytes; split it.`);
+      chunks.push(Buffer.from(c.buffer, c.byteOffset, c.byteLength));
+    }
+    if (opts.sizeBytes !== undefined && opts.sizeBytes !== n)
+      throw new OchostStorageError("Object does not match its declared size.");
+    const r = await call("PUT", objUrl(key), {
+      headers: { "content-length": String(n), ...cond },
+      body: Buffer.concat(chunks, n),
+      signal: opts.signal,
+    });
+    if (!r.ok) throw await failure(r, op);
+    await r.arrayBuffer().catch(() => undefined);
+    const etag = bareEtag(r.headers.get("etag"));
+    return { sizeBytes: n, ...(etag ? { etag } : {}) };
+  }
+  async function fetchObject(key, signal) {
+    const r = await call("GET", objUrl(key), { signal });
+    if (r.status === 404) {
+      await r.arrayBuffer().catch(() => undefined);
+      return undefined;
+    }
+    if (!r.ok || !r.body) throw await failure(r, "download");
+    return r;
+  }
   return {
     displayTarget: describeTarget(settings),
     async probe(opts) {
       for await (const _ of pages("", opts?.signal)) break;
       return {};
     },
+    /** Storage contract: never overwrite. If-None-Match: * → the gate answers 412 on an existing key. */
     async putObject(key, body, opts = {}) {
-      opts.signal?.throwIfAborted();
-      if (opts.sizeBytes !== undefined && opts.sizeBytes > MAX_OBJECT_BYTES)
-        throw new OchostStorageError(`Object is above ${MAX_OBJECT_BYTES} bytes; split it.`);
-      const chunks = [];
-      let n = 0;
-      for await (const c of body) {
-        opts.signal?.throwIfAborted();
-        n += c.byteLength;
-        if (n > MAX_OBJECT_BYTES) throw new OchostStorageError(`Object is above ${MAX_OBJECT_BYTES} bytes; split it.`);
-        chunks.push(Buffer.from(c.buffer, c.byteOffset, c.byteLength));
-      }
-      if (opts.sizeBytes !== undefined && opts.sizeBytes !== n)
-        throw new OchostStorageError("Object does not match its declared size.");
-      // Never overwrite (storage contract): If-None-Match: * → the gate answers 412 on an existing key.
-      const r = await call("PUT", objUrl(key), {
-        headers: { "content-length": String(n), "if-none-match": "*" },
-        body: Buffer.concat(chunks, n),
-        signal: opts.signal,
-      });
-      if (!r.ok) throw await failure(r, "upload");
-      await r.arrayBuffer().catch(() => undefined);
-      return { sizeBytes: n };
+      return { sizeBytes: (await upload(key, body, opts, { "if-none-match": "*" }, "upload")).sizeBytes };
+    },
+    /** putObject that also returns the new ETag (file_store save). */
+    async createObject(key, body, opts = {}) {
+      return upload(key, body, opts, { "if-none-match": "*" }, "upload");
+    },
+    /**
+     * Not in the storage contract; only file_store update calls it. Replace an existing object. opts.ifMatch: the
+     * ETag from an earlier read or save, or "*" for any version. Gate 412 → error code "conflict" (the object
+     * changed), 404 → "not-found". Returns {sizeBytes, etag}.
+     */
+    async replaceObject(key, body, opts = {}) {
+      const tag = opts.ifMatch === "*" ? "*" : bareEtag(opts.ifMatch);
+      if (!tag) throw new OchostStorageError("replaceObject needs ifMatch: an ETag or *.");
+      return upload(key, body, opts, { "if-match": tag === "*" ? "*" : `"${tag}"` }, "update");
     },
     async getObject(key, opts) {
-      const r = await call("GET", objUrl(key), { signal: opts?.signal });
-      if (r.status === 404) {
-        await r.arrayBuffer().catch(() => undefined);
-        return undefined;
-      }
-      if (!r.ok || !r.body) throw await failure(r, "download");
-      const stream = r.body;
-      return (async function* () {
-        for await (const c of stream) yield c instanceof Uint8Array ? c : new Uint8Array(c);
-      })();
+      const r = await fetchObject(key, opts?.signal);
+      return r ? chunksOf(r.body) : undefined;
+    },
+    /** getObject plus ETag and last-modified (file_store read). undefined when absent. */
+    async readObject(key, opts) {
+      const r = await fetchObject(key, opts?.signal);
+      if (!r) return undefined;
+      const lm = r.headers.get("last-modified");
+      const etag = bareEtag(r.headers.get("etag"));
+      return { body: chunksOf(r.body), ...(etag ? { etag } : {}), ...(lm ? { modifiedAt: Date.parse(lm) } : {}) };
     },
     async statObject(key, opts) {
       const r = await call("HEAD", objUrl(key), { signal: opts?.signal });
       if (r.status === 404) return undefined;
       if (!r.ok) throw new OchostStorageError(`R2 stat failed (${r.status}).`);
       const lm = r.headers.get("last-modified");
+      const etag = bareEtag(r.headers.get("etag"));
       return {
         key,
         sizeBytes: Number(r.headers.get("content-length") ?? 0),
         ...(lm ? { modifiedAt: Date.parse(lm) } : {}),
+        ...(etag ? { etag } : {}),
       };
     },
     async *listObjects(prefix, opts) {

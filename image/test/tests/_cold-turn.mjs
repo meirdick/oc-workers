@@ -1,6 +1,7 @@
 // Probe (not in `all`): time from /startupz to the first and second Telegram reply on a fresh boot.
 // Webhook update goes in at /startupz like the Control DO driver, retried until the gateway answers 200.
 // Env: OCM1_FROM_SNAP=1 (wake from the previous run's rootfs), OCM1_RUNS (default 3), OCM1_WARM (0|1 -> OCRT_WARMUP in the box), OCM1_WARM_MODE (OCRT_WARMUP_MODE).
+// OCM1_CPUS, OCM1_MEM: box size (default 2, 6g), for an instance size A/B.
 // OCM1_DOC=<file.json>: the OpenClaw doc that init renders (cli renderOpenclawDoc), with provider cfgw pointed at the mock LLM:
 // the real plugin, browser, memory and mcp config instead of the bare anthropic one (docs/13 "Regression").
 // Reply = sendMessage seen by the fake Telegram. Mock LLM answers at once, so this is gateway overhead.
@@ -78,6 +79,8 @@ export default {
         plan: { configVer: 1 },
         env,
         ...(snap ? { image: snap } : {}),
+        ...(process.env.OCM1_CPUS ? { cpus: Number(process.env.OCM1_CPUS) } : {}),
+        ...(process.env.OCM1_MEM ? { memory: process.env.OCM1_MEM } : {}),
       });
       const seq0 = (await t.records({})).at(-1)?.seq ?? 0;
       await b.start();

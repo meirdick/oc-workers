@@ -260,6 +260,23 @@ describe("W4 /ops/alerts test, ack and sink formats", () => {
     expect(w.ctx.secrets.alertUrl).toBe("https://hooks.slack.com/services/T0/B0/new");
   });
 
+  it("close <class>: closes one open alert and logs it; not open → 404; bad class → 400 (1.2.5)", async () => {
+    const w = world();
+    w.db.run(
+      "INSERT INTO alerts (class, severity, open, last_sent_at, count, last_detail) VALUES ('hello-flood', 'warn', 1, ?, 3, 'gen 4')",
+      w.clock.t,
+    );
+    const r = await call(w, "POST", "ops/alerts/close", { class: "hello-flood", by: "cli" });
+    expect(r.status).toBe(200);
+    expect(w.db.one<{ open: number }>("SELECT open FROM alerts WHERE class = 'hello-flood'")?.open).toBe(0);
+    const ring = w.db.one<{ detail: string }>(
+      "SELECT detail FROM ring WHERE src = 'alert' AND kind = 'close'",
+    );
+    expect(JSON.parse(ring?.detail ?? "{}")).toEqual({ class: "hello-flood", by: "cli" });
+    expect((await call(w, "POST", "ops/alerts/close", { class: "hello-flood" })).status).toBe(404);
+    expect((await call(w, "POST", "ops/alerts/close", { class: "a b<" })).status).toBe(400);
+  });
+
   it("ack without a test → 409 no-test", async () => {
     const w = world();
     const r = await call(w, "POST", "ops/alerts/ack", { code: "abcdef" });
@@ -361,7 +378,7 @@ describe("W8 /ops/telegram/webhook", () => {
         drop_pending_updates: false,
       },
     });
-    expect(MESSAGE_UPDATES).toEqual(["message", "edited_message"]);
+    expect(MESSAGE_UPDATES).toEqual(["message", "edited_message", "inline_query"]);
     expect(r.body).toMatchObject({
       ok: true,
       url: `${ORIGIN}/_ochost/hook/telegram/[redacted]`,
