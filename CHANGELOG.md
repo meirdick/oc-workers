@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.8
+
+- The Litestream pause at boot from 1.2.6 is removed. The backup starts before the gateway again, as in 1.2.5. Reason: in one case the backup copy of a boot did not pass its restore check.
+- The first reply after a wake is about 10 s slower than in 1.2.6.
+- `ochost logs --source ocsup`: `readyMs` stays in the `startupz` line; `lsHold` is gone.
+- Needs the new image: `ochost deploy`, then `ochost restart`.
+
 ## 1.2.7
 
 - The OpenClaw heartbeat works again in sleep mode. Before, oc-workers turned it off (`heartbeat.every: "0m"`) and nothing ran in its place. Now `sleep.proactive` (default `2h@08-22`) sets the heartbeat's interval and active hours, and the install wakes for each heartbeat inside the hours and sleeps again about 2 minutes later. `off` turns the recurring heartbeat off; `openclaw` leaves it to your OpenClaw config.
@@ -20,7 +27,7 @@
 ## 1.2.6
 
 - Wake while you type (Telegram inline mode): when you type `@your_bot` and a space in a message box, an asleep install starts to wake before you send. Turn inline mode on once in @BotFather (`/setinline`). Only your Telegram user id and paired senders can wake it this way; the query is not stored and the assistant does not see it. See "Wake while you type" in How it works.
-- Faster first reply after a wake: the supervisor stops Litestream while the gateway opens the agent database, and starts it again when the gateway is ready. Before, the two waited on each other's database lock. `ochost logs --source ocsup` now shows `readyMs` and `lsHold` in the `startupz` line.
+- (Removed in 1.2.8.) Faster first reply after a wake: the supervisor stops Litestream while the gateway opens the agent database, and starts it again when the gateway is ready. Before, the two waited on each other's database lock. `ochost logs --source ocsup` now shows `readyMs` and `lsHold` in the `startupz` line.
 - Both need the new Worker and image: `ochost deploy`, then `ochost restart`.
 
 ## 1.2.5

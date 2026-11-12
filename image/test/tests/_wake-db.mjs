@@ -3,8 +3,7 @@
 // marker plan, one turn; repeat. Prints per wake: /startupz, the gateway's own `ready` line, the agent
 // database lines (clean-close receipt, admission) and the first turn.
 // Env: OCM1_RUNS (wakes, default 3), OCM1_CPUS, OCM1_MEM, OCM1_FILL_MB (random rows in the agent DB before
-// the first sleep, default 0: the full-file check grows with the file), OCM1_LS_HOLD=0 (OCRT_LS_ADMIT_HOLD=0 in the box: no admission hold),
-// OCM1_LS_STOP_HOLD=0 (no hold around the gateway stop of a sleep).
+// the first sleep, default 0: the full-file check grows with the file).
 import { sleepOp, sleepSnapshot, waitL0 } from "../harness/flows.mjs";
 import { probeCount, restoreRows, writeRows } from "../harness/sqlite.mjs";
 import { tgDoc } from "../harness/telegram.mjs";
@@ -38,7 +37,7 @@ function gwLines(box) {
   const evs = box.events();
   const g0 = Date.parse(evs.find((e) => e.ev === "gateway-start")?.ts ?? evs[0]?.ts ?? 0);
   return evs
-    .filter((e) => /^ls-hold/.test(e.ev) || (e.ev === "gw" && WANT.test(e.line || "")))
+    .filter((e) => e.ev === "gw" && WANT.test(e.line || ""))
     .map((e) => [Date.parse(e.ts) - g0, String(e.line ?? e.ev).replace(/^\S+T\S+ /, "").slice(0, 160)]);
 }
 
@@ -67,8 +66,6 @@ export default {
       ...(process.env.OCM1_MEM ? { memory: process.env.OCM1_MEM } : {}),
     };
     const env = { OC_ANTHROPIC_KEY: "sk-ant-m1-cold-0000" };
-    if (process.env.OCM1_LS_HOLD) env.OCRT_LS_ADMIT_HOLD = process.env.OCM1_LS_HOLD;
-    if (process.env.OCM1_LS_STOP_HOLD) env.OCRT_LS_STOP_HOLD = process.env.OCM1_LS_STOP_HOLD;
     await t.ctl("/_ctl/config", {
       ver: 1,
       doc: {

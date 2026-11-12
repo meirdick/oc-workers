@@ -48,11 +48,6 @@ export class LagTracker {
       this.holdWhy = why;
     }
   }
-  /** Set the hold end, also to an earlier time: the end of an admission hold (Litestream.release). */
-  holdSet(ms, why) {
-    this.holdUntil = this.now() + ms;
-    this.holdWhy = why;
-  }
   held() {
     return this.now() < this.holdUntil;
   }

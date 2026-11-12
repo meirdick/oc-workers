@@ -5,6 +5,14 @@ sidebar:
   order: 15
 ---
 
+## 1.2.8
+
+Changes:
+
+- The pause of the backup process (Litestream) at boot, added in 1.2.6, is removed. The backup starts before the assistant again. In one case the backup copy of a boot did not pass its restore check.
+- The first reply after a wake takes about 10 seconds longer than in 1.2.6.
+- Needs the new image: `ochost deploy`, then `ochost restart`.
+
 ## 1.2.7
 
 New:
@@ -37,8 +45,8 @@ New:
 
 Changes:
 
-- Faster first reply after a wake. The backup process (Litestream) stops while the assistant opens its database, and starts again when the assistant is ready.
-- `ochost logs --source ocsup` shows `readyMs` and `lsHold` in the `startupz` line.
+- Removed in 1.2.8: a faster first reply after a wake, by stopping the backup process (Litestream) while the assistant opens its database.
+- `ochost logs --source ocsup` shows `readyMs` in the `startupz` line.
 - Needs the new Worker and image: `ochost deploy`, then `ochost restart`.
 
 ## 1.2.5

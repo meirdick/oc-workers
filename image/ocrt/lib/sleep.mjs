@@ -232,18 +232,7 @@ export function createSleepOps(deps) {
   }
 
   async function stopGateway() {
-    // Clean close (docs/13 "Wake database wait"): Litestream keeps a read lock on the WAL, so each checkpoint
-    // of the gateway's close waits out its 5 s busy timeout (20 s stop) and leaves no clean-close receipt.
-    // Litestream stays down for the stop and starts again after it; the flush phase then replicates the
-    // close writes (lag 0) before the final stop, so the marker rule does not change.
-    const hold = deps.holdAtStop && deps.replica.hold ? await deps.replica.hold("sleep-stop") : null;
-    if (hold) deps.log?.("ls-hold", { why: "sleep-stop", clean: hold.clean, ms: hold.ms, reason: hold.reason });
-    let s;
-    try {
-      s = await deps.gateway.stop({ capMs: STOP_GW_CAP_MS, why: "sleep" });
-    } finally {
-      if (hold) deps.replica.release("sleep-stop");
-    }
+    const s = await deps.gateway.stop({ capMs: STOP_GW_CAP_MS, why: "sleep" });
     cur.gwStopped = true;
     if (!s.clean) {
       setState("failed");

@@ -43,26 +43,6 @@ const until = async (f, ms = 3000) => {
 };
 
 describe("litestream supervisor", () => {
-  it("admission hold: final stop, no respawn, release starts it again once (docs/13)", async () => {
-    const { ls, argvs } = mk("normal");
-    const starts = [];
-    ls.on("start", (e) => starts.push(e.why));
-    await ls.apply(DBS);
-    await new Promise((r) => setTimeout(r, 150));
-    const r = await ls.hold("admit");
-    assert.equal(r.clean, true);
-    assert.equal(ls.pid(), 0);
-    assert.equal(ls.downForMs(), 0); // planned: no fault clock
-    assert.ok(ls.lag.held());
-    await new Promise((r) => setTimeout(r, 100));
-    assert.equal(argvs.length, 1); // stayed down
-    assert.ok(ls.release("startupz") > 0);
-    assert.equal(ls.release("cap"), null); // second release is a no-op
-    assert.deepEqual(starts, ["apply", "hold-release:startupz"]);
-    assert.equal(argvs.length, 2);
-    await new Promise((r) => setTimeout(r, 150));
-    assert.equal((await ls.stopFinal()).clean, true);
-  });
   it("writes the config and starts replicate; final stop is clean", async () => {
     const { ls, dir, argvs } = mk("normal");
     await ls.apply(DBS);
@@ -192,23 +172,6 @@ describe("litestream oom class", () => {
     process.kill(ls.pid(), "SIGKILL");
     await until(() => ex.length === 1);
     assert.equal(ex[0], "replica-oom");
-    await ls.stopFinal();
-  });
-});
-
-describe("admission hold and the lag clock", () => {
-  it("release ends the long hold: 30 s after the release the lag rule applies again", async () => {
-    let now = 1_000_000;
-    const { ls } = mk("normal", { now: () => now });
-    await ls.apply(DBS);
-    await new Promise((r) => setTimeout(r, 150));
-    await ls.hold("admit");
-    now += 25_000; // the gateway reached /startupz
-    ls.release("startupz");
-    assert.ok(ls.lag.held());
-    now += 31_000;
-    assert.equal(ls.lag.held(), false); // not held for the rest of the 120 s cap
-    await new Promise((r) => setTimeout(r, 150));
     await ls.stopFinal();
   });
 });
