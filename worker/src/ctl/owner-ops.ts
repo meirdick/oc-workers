@@ -7,6 +7,7 @@
 //    a fake that keeps its state in meta.
 import { sha256Hex } from "../core/ids";
 import type { RtState } from "../core/types";
+import { alert, resolveAlert } from "./alerts";
 import { configPropose, newestConfig } from "./config";
 import { type Ctx, ring } from "./ctx";
 import { getWakeAllow, putWakeAllow, ROUTE_TG } from "./inbox";
@@ -198,6 +199,111 @@ export interface PairingDeps {
   wake(): Promise<unknown>;
 }
 
+/** A Telegram user id: numeric and not a chat (group ids are negative). */
+const isUserId = (x: string) => ID.test(x) && !x.startsWith("-");
+
+/**
+ * True when the OpenClaw config names a command owner (`commands.ownerAllowFrom`). A list of only "*" names
+ * nobody (OpenClaw: a wildcard does not identify an owner), so it counts as none.
+ */
+export function hasCommandOwner(doc: unknown): boolean {
+  const o = (doc as { commands?: { ownerAllowFrom?: unknown } } | null)?.commands?.ownerAllowFrom;
+  return Array.isArray(o) && o.some((x) => typeof x === "string" && x.trim() !== "" && x.trim() !== "*");
+}
+
+/**
+ * The sender OpenClaw's own approval would make the command owner (oc:docs/cli/pairing.md "first owner"): the
+ * Telegram id given at init (`ownerTelegramId`), else the ONE user id in channels.telegram.allowFrom. null = no
+ * approved sender yet. "ambiguous" = more than one user id and no init id: the order of allowFrom is not proof
+ * of who came first (a config change from the gateway can reorder it), so no owner is picked.
+ */
+export function firstOwnerEntry(doc: unknown, ownerTelegramId: string | null): string | null | "ambiguous" {
+  if (ownerTelegramId && isUserId(ownerTelegramId)) return `telegram:${ownerTelegramId}`;
+  const allow = (doc as { channels?: { telegram?: { allowFrom?: unknown } } } | null)?.channels?.telegram
+    ?.allowFrom;
+  const ids = [...new Set((Array.isArray(allow) ? allow : []).map(norm).filter(isUserId))];
+  if (ids.length > 1) return "ambiguous";
+  return ids.length ? `telegram:${ids[0]}` : null;
+}
+
+/**
+ * First-owner rule. OpenClaw records the first approved sender as the command owner; oc-host approves through a
+ * config version and not through `openclaw pairing approve`, so it writes the entry itself. The owner is where the
+ * heartbeat reports, and who may run owner-only commands and approve dangerous actions. A config that already
+ * names an owner is not changed. Mutates `doc`; returns true when it wrote the entry.
+ */
+export function setFirstOwner(doc: Record<string, any>, entry: string | null): boolean {
+  if (!entry || entry === "ambiguous" || hasCommandOwner(doc)) return false;
+  const commands =
+    doc.commands && typeof doc.commands === "object" && !Array.isArray(doc.commands) ? doc.commands : {};
+  doc.commands = { ...commands, ownerAllowFrom: [entry] };
+  return true;
+}
+
+const OWNER_UNSET_FIX =
+  "more than one approved Telegram sender and no owner: name the owner with ochost init --telegram-owner <your id>";
+
+/**
+ * Installs approved before the first-owner rule: once, at a prod boot, the newest usable config (not held, not
+ * bad) gets the owner entry as a new owner version. No approved sender yet → nothing, and the next boot looks
+ * again. More than one sender and no init id → alert `owner-unset`, no pick. Returns the new version.
+ */
+export async function ownerBackfill(c: Ctx): Promise<number | null> {
+  if (c.db.meta("ownerBackfillAt")) return null;
+  const newest = c.db.one<{ ver: number; doc: string }>(
+    "SELECT ver, doc FROM config WHERE status IN ('good', 'candidate') ORDER BY ver DESC LIMIT 1",
+  );
+  if (!newest) return null;
+  const doc = pj<Record<string, any>>(newest.doc, {});
+  if (hasCommandOwner(doc)) {
+    c.db.setMeta("ownerBackfillAt", c.now());
+    return null;
+  }
+  const entry = firstOwnerEntry(doc, c.db.meta("ownerTelegramId"));
+  if (entry === "ambiguous") {
+    alert(c, "owner-unset", "warn", OWNER_UNSET_FIX);
+    return null;
+  }
+  const next = structuredClone(doc);
+  if (!setFirstOwner(next, entry)) return null;
+  const p = await configPropose(c, { source: "owner", doc: next, baseVer: newest.ver });
+  if (p.status !== 200) {
+    ring(c, "pairing", "owner-backfill-failed", { status: p.status, error: p.body.error ?? null });
+    return null;
+  }
+  c.db.setMeta("ownerBackfillAt", c.now());
+  ring(c, "pairing", "owner-backfill", { ver: p.body.ver, owner: next.commands.ownerAllowFrom[0] });
+  return Number(p.body.ver);
+}
+
+/**
+ * The owner names their Telegram id (init --telegram-owner, POST /ops/pairing/owner): that id is the command
+ * owner on Telegram from now on. Other channels' entries stay. Returns the new config version, or null when the
+ * config already says so or there is no config yet (the first approval or the backfill writes it then).
+ */
+export async function ownerDeclared(c: Ctx, id: string): Promise<number | null> {
+  const newest = newestConfig(c);
+  if (!newest) return null;
+  const doc = pj<Record<string, any>>(newest.doc, {});
+  const cur = Array.isArray(doc?.commands?.ownerAllowFrom) ? (doc.commands.ownerAllowFrom as unknown[]) : [];
+  const keep = cur.map(String).filter((x) => x.trim() !== "*" && !/^telegram:/i.test(x.trim()));
+  const want = [`telegram:${id}`, ...keep];
+  if (JSON.stringify(cur) === JSON.stringify(want)) return null;
+  const next = structuredClone(doc);
+  const commands =
+    next.commands && typeof next.commands === "object" && !Array.isArray(next.commands) ? next.commands : {};
+  next.commands = { ...commands, ownerAllowFrom: want };
+  const p = await configPropose(c, { source: "owner", doc: next, baseVer: newest.ver });
+  if (p.status !== 200) {
+    ring(c, "pairing", "owner-declare-failed", { status: p.status, error: p.body.error ?? null });
+    return null;
+  }
+  c.db.setMeta("ownerBackfillAt", c.now());
+  resolveAlert(c, "owner-unset");
+  ring(c, "pairing", "owner-declared", { ver: p.body.ver, was: cur.map(String) });
+  return Number(p.body.ver);
+}
+
 export async function opsPairing(
   c: Ctx,
   r: { method: string; sub: string[]; query: Record<string, string>; body: Record<string, unknown> },
@@ -219,7 +325,8 @@ export async function opsPairing(
       return { status: 400, body: { error: "id must be a numeric Telegram user id" } };
     c.db.setMeta("ownerTelegramId", id);
     ring(c, "pairing", "owner", { id });
-    return { status: 200, body: { ok: true, owner: id, approved: knownIds(c).has(id) } };
+    const configVer = await ownerDeclared(c, id);
+    return { status: 200, body: { ok: true, owner: id, approved: knownIds(c).has(id), configVer } };
   }
   if (r.method !== "POST" || (r.sub[0] !== "approve" && r.sub[0] !== "allow"))
     return { status: 404, body: { error: "not found" } };
@@ -243,8 +350,14 @@ export async function opsPairing(
   if (!allow.map(norm).includes(id)) allow.push(id);
   t.allowFrom = allow;
   if (r.body.dmPolicy === "allowlist" || r.body.dmPolicy === "pairing") t.dmPolicy = r.body.dmPolicy;
+  // The first approved sender is the command owner, as with OpenClaw's own approval (setFirstOwner). The entry
+  // comes from the senders approved before this one; a chat id (a group) is never an owner.
+  const before = firstOwnerEntry(doc, c.db.meta("ownerTelegramId"));
+  const ownerSet = setFirstOwner(next, before ?? (isUserId(id) ? `telegram:${id}` : null));
+  if (before === "ambiguous" && !hasCommandOwner(next)) alert(c, "owner-unset", "warn", OWNER_UNSET_FIX);
   const prop = await configPropose(c, { source: "owner", doc: next, baseVer: newest.ver });
   if (prop.status !== 200) return prop;
+  if (ownerSet) c.db.setMeta("ownerBackfillAt", c.now());
   const ver = Number(prop.body.ver);
   // The wake allowlist is written after the config version, so it is fresh for allowFresh() (same ms is ok).
   const w = getWakeAllow(c);
@@ -279,6 +392,8 @@ export async function opsPairing(
       wakeAllow: users.length,
       released: held,
       applied,
+      owner: hasCommandOwner(next) ? (next.commands.ownerAllowFrom as unknown[]).map(String) : [],
+      ownerSet,
     },
   };
 }

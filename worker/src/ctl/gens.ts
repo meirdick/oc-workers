@@ -10,6 +10,7 @@ import { type Ctx, ring, STATE_DB, utcDay } from "./ctx";
 import { deferDigest } from "./digest";
 import { epochRow } from "./epochs";
 import { heldToPending } from "./inbox";
+import { ownerBackfill } from "./owner-ops";
 import { buildPlan, type FreshFacts } from "./plan";
 import { snapshotRestored, supersedeNewerThan } from "./snapshots";
 import { j, pj } from "./sql";
@@ -126,6 +127,9 @@ export async function beginBoot(c: Ctx, a: BeginBootArgs): Promise<BeginBootResu
   const prior = c.db.one<GenRow>("SELECT * FROM gens WHERE op_id = ?", a.opId);
   if (prior && !(a.replan && prior.state === "booting" && !prior.iid)) return resultOf(c, prior);
   const facts = c.db.metaNum("initialized", 0) === 1 ? null : await freshFacts(c);
+  // An install approved before the first-owner rule gets its command owner once (ctl/owner-ops.ts).
+  if (a.mode === "prod")
+    await ownerBackfill(c).catch((e) => ring(c, "pairing", "owner-backfill-error", String(e).slice(0, 200)));
   // Rebase (add §2.8, ctl/chain.ts): a prod L1 wake boots image + newest archive + gen, so the next sleep
   // snapshot is a new chain base.
   if (!a.rebase && rebaseDue(c, a)) {

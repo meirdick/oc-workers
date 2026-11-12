@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.2.7
+
+- The OpenClaw heartbeat works again in sleep mode. Before, oc-workers turned it off (`heartbeat.every: "0m"`) and nothing ran in its place. Now `sleep.proactive` (default `2h@08-22`) sets the heartbeat's interval and active hours, and the install wakes for each heartbeat inside the hours and sleeps again about 2 minutes later. `off` turns the recurring heartbeat off; `openclaw` leaves it to your OpenClaw config.
+- `agents.defaults.heartbeat.every` and `.activeHours` are now managed keys: the value from `sleep.proactive` replaces yours at each start. Use `sleep.proactive: "openclaw"` to set them by hand.
+- A message or the Control UI during a timer wake gives the normal idle time again, not the short 2 minute tail.
+- Cost: 8 heartbeats a day add about $2.50 a month at 4 vCPU (estimate). Set `sleep.proactive: "off"` to keep the old behaviour.
+- The first sender you approve is now the OpenClaw command owner (`commands.ownerAllowFrom`), as with OpenClaw's own pairing. The owner is where the heartbeat reports, and who may run owner-only commands and approve dangerous actions. Before, oc-workers only added the sender to the Telegram allow list. An install with an approved sender and no owner gets the entry once at its next start, as a new config version. A config that names an owner is not changed.
+- Hardening, from a security review of 1.2.6 and 1.2.7:
+  - The command owner can be set only by the owner (`ochost`, the console, a pairing approval). A config change that comes from inside the container keeps the stored owner and raises `config-sensitive`.
+  - With more than one approved Telegram sender and no owner id, oc-workers does not pick an owner. It raises `owner-unset`; name the owner with `ochost init --telegram-owner <id>`. Naming the owner later now changes the command owner too.
+  - A group chat id is never made the owner. A wildcard owner list counts as no owner.
+  - The Telegram gate adds `inline_query` only to a non-empty update list, and does not read a `setWebhook` body over 16 kB.
+  - The wake-time read has a fixed work limit, so many crafted job rows cannot make it time out.
+  - After the Litestream hold at boot ends, a lagging replica is detected after the normal 30 s again.
+- Fix: an archive no longer fails with `replica bad ... reopen ltx file ... file does not exist` when Litestream removes a compacted file while the archive checks the replica. The check now reads the replica again, up to 2 more times.
+- Needs the new Worker and image: `ochost deploy`, then `ochost restart`.
+
 ## 1.2.6
 
 - Wake while you type (Telegram inline mode): when you type `@your_bot` and a space in a message box, an asleep install starts to wake before you send. Turn inline mode on once in @BotFather (`/setinline`). Only your Telegram user id and paired senders can wake it this way; the query is not stored and the assistant does not see it. See "Wake while you type" in How it works.

@@ -5,6 +5,30 @@ sidebar:
   order: 15
 ---
 
+## 1.2.7
+
+New:
+
+- The OpenClaw heartbeat works in sleep mode. `sleep.proactive` (default `2h@08-22`) sets its interval and hours; the install wakes for each heartbeat inside the hours and sleeps again about 2 minutes later. See [The heartbeat](/how-it-works/#the-heartbeat). `off` turns it off.
+- The first sender you approve becomes the OpenClaw command owner. The heartbeat reports to the owner, and the owner may run owner-only commands and approve dangerous actions. An install that already has an approved sender gets the owner at its next start.
+
+Changes:
+
+- `agents.defaults.heartbeat.every` and `.activeHours` follow `sleep.proactive`. Use `sleep.proactive: "openclaw"` to set them by hand.
+- A message or the Control UI during a timer wake gives the normal idle time, not the short 2 minute tail.
+- Cost: 8 heartbeats a day add about $2.50 a month at 4 vCPU (estimate).
+
+Security:
+
+- Only the owner can set the command owner. A config change from inside the container keeps the stored owner and raises the `config-sensitive` alert.
+- With more than one approved Telegram sender and no owner id, no owner is picked. The `owner-unset` alert tells you to name the owner with `ochost init --telegram-owner <id>`.
+- A group chat is never made the owner.
+
+Fixes:
+
+- An archive no longer fails when Litestream removes a file while the archive checks the replica.
+- Needs the new Worker and image: `ochost deploy`, then `ochost restart`.
+
 ## 1.2.6
 
 New:

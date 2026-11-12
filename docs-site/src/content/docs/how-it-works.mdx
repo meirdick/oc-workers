@@ -68,7 +68,7 @@ The duty cycle is the default mode, `sleep.mode: auto`: the container sleeps whe
 | `sleep.uiIdleMinutes` | 15 | An open Control UI tab is closed after this long without user input. |
 | `sleep.uiMaxMinutes` | 60 | A tab is closed after this long without a chat message or a write (a change made from the UI). |
 | `sleep.maxAwakeHours` | 16 | Past this uptime, the install restarts when idle. |
-| `sleep.proactive` | `2h@08-22` | OpenClaw's proactive check runs every 2 hours from 08:00 to 22:00 local time. |
+| `sleep.proactive` | `2h@08-22` | The OpenClaw heartbeat runs every 2 hours from 08:00 to 22:00 local time, and the install wakes for it. |
 
 These keys are in `oc-host.jsonc`. Change one with `ochost config set <key> <value>`, and it applies at the next op, with no deploy.
 
@@ -83,12 +83,28 @@ A sleep takes a snapshot of the container disk, and a wake starts the container 
 | A Telegram message from a paired sender | Yes. The Worker stores and acknowledges it first, then the container starts and receives it. |
 | You type `@your_bot` in any Telegram message box (inline mode) | Yes, before you send. See [Wake while you type](#wake-while-you-type). |
 | A verified Slack (HTTP mode) or Twilio SMS event | Yes. Same path as Telegram. There is no wake list for these yet. Twilio delivery receipts do not wake. |
-| A cron alarm (OpenClaw cron jobs and the proactive check) | Yes. The Control DO sets a wake alarm before the next job. |
+| A cron alarm (OpenClaw automation jobs and the heartbeat) | Yes. The Control DO sets a wake alarm 2 minutes before the next job. |
 | You open the Control UI (`/chat`) with the owner cookie | Yes. You see a waking page until the container runs. |
 | You select **Wake now** in the owner console | Yes. |
 | You select **Archive now** in the owner console | Yes. The archive runs in the container. |
 | An `ochost` command that needs the container, such as `wake` or `backup create` | Yes. |
 | Daily maintenance | Yes, if there was no wake in 24 hours or a held message is 20 hours old. |
+
+## The heartbeat
+
+The OpenClaw heartbeat is a turn in the main session at a fixed interval. The assistant reads its checklist and writes to you only when something needs attention. OpenClaw's default is every 30 minutes, which would wake a sleeping install 48 times a day.
+
+oc-workers keeps the heartbeat and sets only its pace. `sleep.proactive` (default `2h@08-22`) is the interval and the hours:
+
+- The install wakes 2 minutes before a heartbeat, the heartbeat runs, and the install sleeps again about 2 minutes after the last activity. If you answer, the normal idle time applies.
+- A heartbeat outside the hours does not run and does not wake the install.
+- If another job is due within 10 minutes, the install stays up for it. If you are chatting when a heartbeat is due, it runs then and costs no wake.
+- A message never waits for a heartbeat: it wakes the install at once. Something the assistant must poll for (a mailbox, a feed) is seen at the next heartbeat, so the interval is the longest delay.
+- The heartbeat reports to the owner. The owner is the first sender you approve (or the Telegram user id you gave at init); oc-workers records it in OpenClaw as `commands.ownerAllowFrom`. Until a sender is approved there is nobody to report to, and OpenClaw skips the turn.
+
+Cost at 4 vCPU / 12 GiB, estimated: 8 heartbeats a day about $2.50 a month, hourly from 08 to 22 about $4.50, every 30 minutes all day about $14.
+
+For a task at a set time, ask the assistant to schedule it. OpenClaw automation jobs can run once (`--at "20m"`, or a date and time), on a cron expression, or at an interval, and the install wakes for each one.
 
 ## Wake while you type
 

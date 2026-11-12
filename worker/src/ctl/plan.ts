@@ -4,7 +4,7 @@ import { gatewayAuthManaged, uiOrigins } from "../ingress/gateway";
 import { configForBoot } from "./config";
 import { type Ctx, DAY } from "./ctx";
 import { latestTier } from "./records";
-import { wakeIgnore } from "./schedule";
+import { heartbeatManaged, wakeHours, wakeIgnore } from "./schedule";
 import { type ArchiveRow, CONSISTENT_KINDS, type MarkerRow, type SnapRow, ttlEnd } from "./snapshots";
 import { pj } from "./sql";
 
@@ -360,7 +360,8 @@ export function buildPlan(c: Ctx, a: BeginBootArgs, ep: EpochRow, facts: FreshFa
     trustedProxies,
     workspace,
     // M3 ingress: trusted-proxy keys that match the headers the Worker sets (ingress/headers.ts).
-    managed: gatewayAuthManaged({ ...origins, trustedProxies }),
+    // The heartbeat cadence and hours follow sleep.proactive (docs/04 "Heartbeat in duty-cycle").
+    managed: [...gatewayAuthManaged({ ...origins, trustedProxies }), ...heartbeatManaged(s)],
     // The Control UI origin: ocsup writes gateway.publicOrigin and controlUi.allowedOrigins from these.
     ...origins,
     runtime: {
@@ -372,6 +373,7 @@ export function buildPlan(c: Ctx, a: BeginBootArgs, ep: EpochRow, facts: FreshFa
       proactive: s.sleep.proactive,
     },
     wakeIgnore: wakeIgnore(s),
+    wakeHours: wakeHours(s),
     sandbox: s.sandbox === "on" || s.sandbox === "all",
     ...(s.sandbox === "all" ? { sandboxMode: "all" as const } : {}),
   };

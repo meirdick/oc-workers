@@ -34,7 +34,33 @@ export const SENSITIVE_PATHS = [
   "gateway.controlUi",
   "browser.executablePath",
   "tools.exec",
+  "commands.ownerAllowFrom",
 ];
+
+/** The OpenClaw command owner: heartbeat target, owner-only commands, approval of dangerous actions. */
+export const OWNER_KEY = "commands.ownerAllowFrom";
+
+/**
+ * Only the owner sets the command owner (ochost, the console, a pairing approval). A proposal from inside the
+ * container (the gateway's file: source ui or doctor) keeps the newest version's value: code that runs as uid
+ * 1000 can write openclaw.json, and must not make another sender the owner across a boot. Returns the doc to
+ * store and whether the key was put back.
+ */
+export function pinOwnerKey(doc: unknown, newestDoc: unknown): { doc: unknown; reset: boolean } {
+  const want = get(newestDoc, OWNER_KEY);
+  if (JSON.stringify(get(doc, OWNER_KEY) ?? null) === JSON.stringify(want ?? null))
+    return { doc, reset: false };
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { doc, reset: false };
+  const d = structuredClone(doc) as Record<string, any>;
+  const commands =
+    d.commands && typeof d.commands === "object" && !Array.isArray(d.commands) ? d.commands : {};
+  if (want === undefined) {
+    delete commands.ownerAllowFrom;
+    if (Object.keys(commands).length) d.commands = commands;
+    else delete d.commands;
+  } else d.commands = { ...commands, ownerAllowFrom: want };
+  return { doc: d, reset: true };
+}
 
 function get(o: unknown, path: string): unknown {
   let x: any = o;
@@ -139,6 +165,20 @@ export async function configPropose(
     if (hb.set) {
       p = { ...p, doc: hb.doc, sha: undefined };
       ring(c, "config", "heartbeat-default-off", {});
+    }
+  }
+  if (p.source !== "owner") {
+    const cur = newestConfig(c);
+    const pin = pinOwnerKey(p.doc, cur ? pj<unknown>(cur.doc, {}) : {});
+    if (pin.reset) {
+      p = { ...p, doc: pin.doc, sha: undefined };
+      ring(c, "config", "owner-key-kept", { source: p.source });
+      alert(
+        c,
+        "config-sensitive",
+        "warn",
+        `a ${p.source} config change of ${OWNER_KEY} was not taken; set the owner with ochost config set`,
+      );
     }
   }
   const bad = webhookViolation(p.doc, c.settings().publicOrigin, await managedHookPaths(c));

@@ -15,7 +15,7 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 
 process.on("SIGTERM", () => {});
-const [db, nowArg, ignoreArg] = process.argv.slice(2);
+const [db, nowArg, ignoreArg, hoursArg] = process.argv.slice(2);
 const now = Number(nowArg) || Date.now();
 // N11 (M4b): job classes left out of nextWakeAtMs (plan.wakeIgnore from the Control DO, JSON array).
 let ignore = [];
@@ -24,6 +24,50 @@ try {
   if (!Array.isArray(ignore)) ignore = [];
 } catch {
   ignore = [];
+}
+// Hours in which a class may wake the install (plan.wakeHours from the Control DO): {heartbeat: {from, to, tz}}.
+// OpenClaw skips a heartbeat tick outside heartbeat.activeHours, so a wake for it does no work.
+let hours = {};
+try {
+  hours = JSON.parse(hoursArg || "{}");
+  if (!hours || typeof hours !== "object" || Array.isArray(hours)) hours = {};
+} catch {
+  hours = {};
+}
+/** Hour 0-23 of ms in an IANA time zone (UTC when the zone is not known). One formatter per zone. */
+const fmts = new Map();
+function hourIn(ms, tz) {
+  let f = fmts.get(tz);
+  if (f === undefined) {
+    try {
+      f = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "numeric", hourCycle: "h23" });
+    } catch {
+      f = null;
+    }
+    fmts.set(tz, f);
+  }
+  return f ? Number.parseInt(f.format(ms), 10) % 24 : new Date(ms).getUTCHours();
+}
+/**
+ * First tick of an `every` job at or after `n` that is inside the window [from, to) of the zone. `n` is the next
+ * tick (past ticks are moved forward first). null: no window match, or not an `every` job. Steps are whole hours
+ * at most apart (a window is at least 1 h wide), and the walk ends after 49 h, so a job row with a tiny everyMs
+ * (rows are writable by uid 1000) costs the same as any other. TICK_BUDGET caps the work over all jobs.
+ */
+let TICK_BUDGET = 2000;
+function tickInHours(n, everyMs, w, nowMs) {
+  if (!Number.isFinite(n) || !(everyMs >= 1000)) return null;
+  let t = n;
+  if (t < nowMs) t += Math.ceil((nowMs - t) / everyMs) * everyMs;
+  const end = t + 49 * 3_600_000;
+  for (; t <= end && TICK_BUDGET > 0; TICK_BUDGET--) {
+    const h = hourIn(t, w.tz);
+    if (h >= w.from && h < w.to) return t;
+    // Jump to the first tick in the next hour: the hour cannot change sooner.
+    const nextHour = (Math.floor(t / 3_600_000) + 1) * 3_600_000;
+    t += Math.max(1, Math.ceil((nextHour - t) / everyMs)) * everyMs;
+  }
+  return null;
 }
 const PROACTIVE_PROMPT_HEAD = "Review your automation scratch checklist";
 /** heartbeat: id or name heartbeat*, or payload kind heartbeat. proactive: name "Proactive check" or its prompt. */
@@ -97,6 +141,7 @@ try {
   let nextWakeAtMs = null;
   const eventJobs = [];
   const ignored = [];
+  const moved = [];
   for (const j of jobs) {
     let job = {};
     let state = {};
@@ -113,8 +158,15 @@ try {
         ignored.push({ id: String(j.job_id).slice(0, 64), cls, nextRunAtMs: n || null });
       continue;
     }
-    if (Number.isFinite(n) && n > now - 60_000 && (nextWakeAtMs === null || n < nextWakeAtMs))
-      nextWakeAtMs = n;
+    let at = n;
+    const w = cls ? hours[cls] : null;
+    if (w && Number.isInteger(w.from) && Number.isInteger(w.to) && kind === "every") {
+      at = tickInHours(n, Number(job?.schedule?.everyMs), w, now);
+      if (at === null) continue;
+      if (at !== n && moved.length < 20) moved.push({ id: String(j.job_id).slice(0, 64), cls, from: n, to: at });
+    }
+    if (Number.isFinite(at) && at > now - 60_000 && (nextWakeAtMs === null || at < nextWakeAtMs))
+      nextWakeAtMs = at;
   }
   // Activity (B3). Timestamps may be ms, s or ISO text (guess: OpenClaw mixes them); toMs normalizes.
   const toMs = (v) => {
@@ -176,6 +228,7 @@ try {
     nextWakeAtMs,
     eventJobs,
     ignored,
+    moved,
     missing,
   });
 } catch (e) {

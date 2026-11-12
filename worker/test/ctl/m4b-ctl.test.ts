@@ -2,7 +2,13 @@
 // drill J (index rebuild from R2).
 import { describe, expect, it } from "vitest";
 import { REPLY_ID_STEP, REPLY_WAIT_MS } from "../../src/ctl/inbox";
-import { heartbeatDefault, wakeIgnore } from "../../src/ctl/schedule";
+import {
+  heartbeatDefault,
+  heartbeatManaged,
+  heartbeatSpec,
+  wakeHours,
+  wakeIgnore,
+} from "../../src/ctl/schedule";
 import { handleTelegram, TelegramState } from "../../src/gates/fakes";
 import { handleTelegramGate } from "../../src/gates/telegram";
 import { bootComplete, tg, type World, world } from "./world";
@@ -135,6 +141,17 @@ describe("L3: accepted rows with no reply are replayed with a fresh update_id af
         body: new URLSearchParams({ url: "https://x/h", allowed_updates: '["message"]' }).toString(),
       }),
     );
+    // Hardening: an empty list means Telegram's default types; a body over the cap is passed on unread; the method
+    // name is matched without case.
+    await go(json("setWebhook", { url: "https://x/h", allowed_updates: [] }));
+    await go(json("SETWEBHOOK", { url: "https://x/h", allowed_updates: ["message"] }));
+    await go(
+      json("setWebhook", { url: "https://x/h", allowed_updates: ["message"], pad: "x".repeat(20_000) }),
+    );
+    expect(JSON.parse(sent[5]?.body ?? "").allowed_updates).toEqual([]);
+    expect(JSON.parse(sent[6]?.body ?? "").allowed_updates).toEqual(["message", "inline_query"]);
+    expect(JSON.parse(sent[7]?.body ?? "").allowed_updates).toEqual(["message"]);
+    expect(JSON.parse(sent[7]?.body ?? "").pad).toHaveLength(20_000);
     expect(JSON.parse(sent[0]?.body ?? "")).toEqual({
       url: "https://x/h",
       allowed_updates: ["message", "callback_query", "inline_query"],
@@ -186,19 +203,59 @@ describe("N11: wake-source filter list and heartbeat default", () => {
       wakeOn,
     },
   });
-  it("heartbeat never wakes unless the owner keeps the OpenClaw cadence or lists it; proactive off → ignored", () => {
-    expect(wakeIgnore(S("2h@08-22"))).toEqual(["heartbeat"]);
+  it("heartbeat wakes at the interval of sleep.proactive; off or a cron expression → ignored", () => {
+    expect(wakeIgnore(S("2h@08-22"))).toEqual([]);
+    expect(wakeIgnore(S("30m"))).toEqual([]);
+    expect(wakeIgnore(S("0 9 * * *"))).toEqual(["heartbeat"]);
     expect(wakeIgnore(S("off"))).toEqual(["heartbeat", "proactive"]);
     expect(wakeIgnore(S("openclaw"))).toEqual([]);
     expect(wakeIgnore(S("2h@08-22", ["heartbeat"]))).toEqual([]);
     expect(wakeIgnore(S("off", ["proactive"]))).toEqual(["heartbeat"]);
   });
 
-  it("the boot plan carries the list; an owner config gets heartbeat.every 0m unless set", async () => {
+  it("heartbeatSpec, heartbeatManaged and wakeHours follow sleep.proactive (docs/04 heartbeat in duty-cycle)", () => {
+    expect(heartbeatSpec("2h@08-22")).toEqual({ every: "2h", from: 8, to: 22 });
+    expect(heartbeatSpec("30m")).toEqual({ every: "30m", from: null, to: null });
+    expect(heartbeatSpec("1h@00-24")).toEqual({ every: "1h", from: 0, to: 24 });
+    for (const bad of ["off", "openclaw", "0 9 * * *", "5h", "2h@22-08", "2h@08-08", "2h@08-25"])
+      expect(heartbeatSpec(bad)).toBeNull();
+    const T = (proactive: string, wakeOn: string[] = [], tz = "Europe/Berlin") => ({
+      ...S(proactive, wakeOn),
+      runtime: { tz },
+    });
+    expect(heartbeatManaged(T("2h@08-22"))).toEqual([
+      { path: "agents.defaults.heartbeat.every", value: "2h" },
+      {
+        path: "agents.defaults.heartbeat.activeHours",
+        value: { start: "08:00", end: "22:00", timezone: "Europe/Berlin" },
+      },
+    ]);
+    expect(heartbeatManaged(T("1h"))).toEqual([{ path: "agents.defaults.heartbeat.every", value: "1h" }]);
+    expect(heartbeatManaged(T("off"))).toEqual([{ path: "agents.defaults.heartbeat.every", value: "0m" }]);
+    expect(heartbeatManaged(T("openclaw"))).toEqual([]);
+    expect(heartbeatManaged(T("0 9 * * *"))).toEqual([]);
+    expect(heartbeatManaged(T("2h@08-22", ["heartbeat"]))).toEqual([]);
+    expect(wakeHours(T("2h@08-22"))).toEqual({ heartbeat: { from: 8, to: 22, tz: "Europe/Berlin" } });
+    expect(wakeHours(T("1h"))).toEqual({});
+    expect(wakeHours(T("off"))).toEqual({});
+    expect(wakeHours(T("2h@08-22", ["heartbeat"]))).toEqual({});
+  });
+
+  it("the boot plan carries the heartbeat keys and hours; an interval spec leaves the owner doc alone", async () => {
     const w = world();
     w.install();
     const r = await w.api.beginBoot({ epoch: 1, mode: "prod", opId: "op-n11", reason: "user" });
-    expect(r.plan.wakeIgnore).toEqual(["heartbeat"]);
+    expect(r.plan.wakeIgnore).toEqual([]);
+    expect(r.plan.wakeHours).toEqual({ heartbeat: { from: 8, to: 22, tz: "UTC" } });
+    const managed = Object.fromEntries((r.plan.managed ?? []).map((m) => [m.path, m.value]));
+    expect(managed["agents.defaults.heartbeat.every"]).toBe("2h");
+    expect(managed["agents.defaults.heartbeat.activeHours"]).toEqual({
+      start: "08:00",
+      end: "22:00",
+      timezone: "UTC",
+    });
+    expect(managed["gateway.auth.mode"]).toBe("trusted-proxy");
+    expect((r.plan.managed ?? []).length).toBeLessThanOrEqual(32);
     const out = await w.api.ops({
       action: "config",
       method: "POST",
@@ -211,11 +268,17 @@ describe("N11: wake-source filter list and heartbeat default", () => {
     const doc = JSON.parse(
       (w.db.one<{ doc: string }>("SELECT doc FROM config ORDER BY ver DESC LIMIT 1") as { doc: string }).doc,
     );
-    expect(doc.agents.defaults).toEqual({ model: { primary: "x" }, heartbeat: { every: "0m" } });
-    // Owner set it → kept; OpenClaw cadence → untouched.
+    expect(doc.agents.defaults).toEqual({ model: { primary: "x" } }); // the managed key sets the cadence
+    // A cron expression keeps the old rule: heartbeat off unless the owner set it.
+    expect(heartbeatDefault({}, S("0 9 * * *"))).toMatchObject({
+      set: true,
+      doc: { agents: { defaults: { heartbeat: { every: "0m" } } } },
+    });
     expect(
-      heartbeatDefault({ agents: { defaults: { heartbeat: { every: "1h" } } } }, S("2h@08-22")).set,
+      heartbeatDefault({ agents: { defaults: { heartbeat: { every: "1h" } } } }, S("0 9 * * *")).set,
     ).toBe(false);
+    expect(heartbeatDefault({}, S("2h@08-22")).set).toBe(false);
+    expect(heartbeatDefault({}, S("off")).set).toBe(false);
     expect(heartbeatDefault({}, S("openclaw")).set).toBe(false);
   });
 });

@@ -212,6 +212,48 @@ describe("ls-restore", () => {
       assert.match(fs.readFileSync(path.join(v, "litestream-verify.yml"), "utf8"), /r\/x\/g9\//);
     }
   });
+  it("verifyGen: an LTX file gone between list and read (L0 retention) is retried; still gone → bad", async () => {
+    const GONE =
+      'console.error("Error: decode database: decode header: decode header for input 16: reopen ltx file at offset 0: file does not exist");process.exit(1)';
+    const run = async (goneCalls) => {
+      const st = tmp();
+      const v = tmp();
+      mkdb(path.join(st, "state/openclaw.sqlite"), 7);
+      let calls = 0;
+      const logs = [];
+      const r = await verifyGen({
+        state: st,
+        varDir: v,
+        runDir: v,
+        inst: "x",
+        gen: 9,
+        dbs: ["state/openclaw.sqlite"],
+        s3: S3,
+        asRoot: true,
+        ocio,
+        ltxGoneWaitMs: 10,
+        log: (ev, x) => logs.push([ev, x.attempt]),
+        spawn: (c, a, so) =>
+          calls++ < goneCalls
+            ? spawn(process.execPath, ["-e", GONE], { stdio: ["ignore", "pipe", "pipe"] })
+            : fakeSpawn("ok")(c, a, so),
+      });
+      return { r, calls, logs };
+    };
+    const once = await run(1);
+    assert.equal(once.r.ok, true, JSON.stringify(once.r));
+    assert.equal(once.calls, 2);
+    assert.deepEqual(once.logs, [["verify-ltx-gone-retry", 1]]);
+    const twice = await run(2);
+    assert.equal(twice.r.ok, true);
+    assert.equal(twice.calls, 3);
+    const always = await run(99);
+    assert.equal(always.r.ok, false);
+    assert.equal(always.r.reason, "bad");
+    assert.equal(always.calls, 3); // first try + 2 retries
+    assert.match(always.r.why, /reopen ltx file/);
+  });
+
   it("N7/L5 verifyGen: two runs on one scratch dir at once both pass (one at a time)", async () => {
     const st = tmp();
     const v = tmp();

@@ -1445,6 +1445,9 @@ export class RuntimeCore {
         return { state: r.state, action: "flag" };
       case "running":
         this.store.del(K.wakeRequested);
+        // A message or the UI during a timer wake: the short cron tail no longer applies (normal idle).
+        if (["webhook", "ui", "cli"].includes(reason) && this.sleepRec().cronOnly)
+          this.patchSleep({ cronOnly: false });
         this.tr(27, "running", { lastActivityAt: now });
         return { state: r.state, action: "none" };
       case "starting":

@@ -310,7 +310,16 @@ export function proposalsAllowed(plan, overlay) {
 /**
  * Keys whose change gives alert `config-sensitive` (scope §1.1 row "Config versions"; no hold in v1).
  */
-export const SENSITIVE = ["models.providers", "channels", "hooks", "plugins", "gateway.auth", "tools", "mcp"];
+export const SENSITIVE = [
+  "models.providers",
+  "channels",
+  "hooks",
+  "plugins",
+  "gateway.auth",
+  "tools",
+  "mcp",
+  "commands",
+];
 
 /** Sensitive top paths that differ between two docs. */
 export function sensitiveChanges(a, b) {

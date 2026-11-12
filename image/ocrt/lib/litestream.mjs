@@ -343,7 +343,8 @@ export class Litestream extends EventEmitter {
     if (!this.held) return null;
     this.held = false;
     this.stopped = false;
-    this.lag.hold(PLANNED_HOLD_MS, "hold-release");
+    // The long hold of hold() ends here: a Litestream that runs but lags must be seen after the normal 30 s.
+    this.lag.holdSet(PLANNED_HOLD_MS, "hold-release");
     return this.child ? this.child.pid : this.#spawn(`hold-release:${why}`);
   }
 

@@ -885,6 +885,7 @@ export async function main() {
           path.join(C.state, "state", "openclaw.sqlite"),
           String(Date.now()),
           JSON.stringify(plan?.wakeIgnore ?? []),
+          JSON.stringify(plan?.wakeHours ?? {}),
         ],
         { cg: CG.io, timeoutMs: 20_000 },
       );
@@ -927,6 +928,7 @@ export async function main() {
           path.join(C.state, "state", "openclaw.sqlite"),
           String(Date.now()),
           JSON.stringify(plan?.wakeIgnore ?? []),
+          JSON.stringify(plan?.wakeHours ?? {}),
         ],
         { cg: CG.io, timeoutMs: 20_000 },
       );
@@ -1029,6 +1031,7 @@ export async function main() {
       const dbs = Array.isArray(r.args?.dbs) && r.args.dbs.length ? r.args.dbs.map(String) : ls?.dbs || [];
       if (!dbs.length) return { ok: false, error: "wrong-phase", detail: "no replicated DBs yet" };
       const v = await verifyGen({
+        log,
         state: C.state,
         varDir: C.varDir,
         runDir: C.runDir,
@@ -1818,6 +1821,7 @@ export async function main() {
         if (!t.json?.ok) return { ok: false, why: t.json?.why || `ocio exit ${t.code}` };
         if (ls?.dbs.length) {
           const v = await verifyGen({
+        log,
             state: C.state,
             varDir: C.varDir,
             runDir: C.runDir,

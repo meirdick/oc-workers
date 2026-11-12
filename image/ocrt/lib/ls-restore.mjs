@@ -227,6 +227,15 @@ let verifyChain = Promise.resolve();
 /** Restore output that proves the gen's replica set is missing or damaged. Anything else is infra (no verdict). */
 const RESTORE_BAD =
   /no matching backups|checksum|corrupt|malformed|invalid ltx|decode|bad magic|not a database/i;
+/**
+ * A restore of the live gen lists the replica, then reads each LTX file. Litestream's L0 retention deletes an L0
+ * file after it is compacted into L1, so a file from the list can be gone at the read ("reopen ltx file at
+ * offset 0: file does not exist"; live on oc-waketest 2026-11-12, the next archive passed). The gen is not
+ * damaged: list again. Still gone after LTX_GONE_RETRIES: the normal verdict applies.
+ */
+const LTX_GONE = /ltx file[^\n]*(does not exist|no such file)/i;
+export const LTX_GONE_RETRIES = 2;
+export const LTX_GONE_WAIT_MS = 1500;
 /** quick_check answers that say nothing about the restored DB (open or IO trouble on the probe). */
 const QC_INFRA = /locked|busy|ENOENT|no such file|unable to open|ENOSPC|disk is full|out of memory|EACCES/i;
 
@@ -258,7 +267,12 @@ async function verifyGenOnce(o) {
     for (const rel of o.dbs) {
       const outFile = o.into ? path.join(o.into, rel) : path.join(rv, `${dbId(rel)}.sqlite`);
       const args = ["restore", "-config", cfgPath, "-o", outFile, "-json", path.join(o.state, rel)];
-      const r = await lsRestoreRun(o.bin || BIN.litestream, args, o);
+      let r = await lsRestoreRun(o.bin || BIN.litestream, args, o);
+      for (let i = 0; i < LTX_GONE_RETRIES && r.code !== 0 && !r.signal && LTX_GONE.test(r.out); i++) {
+        o.log?.("verify-ltx-gone-retry", { rel, attempt: i + 1 });
+        await new Promise((ok) => setTimeout(ok, o.ltxGoneWaitMs ?? LTX_GONE_WAIT_MS));
+        r = await lsRestoreRun(o.bin || BIN.litestream, args, o);
+      }
       if (r.code !== 0) {
         // A 403, a deadline or a full disk on the probe must not mark a good gen bad (the boot would skip it).
         const infra = !!r.signal || !RESTORE_BAD.test(r.out);

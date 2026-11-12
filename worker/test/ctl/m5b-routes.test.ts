@@ -3,8 +3,14 @@
 // checks. Routes go through ops.ts (auth, route list) into the Control DO world.
 import { describe, expect, it } from "vitest";
 import { sinkKind } from "../../src/ctl/alerts";
-import { HOOK_PATH_RE, webhookViolation } from "../../src/ctl/config";
-import { pairCode } from "../../src/ctl/owner-ops";
+import { configPropose, HOOK_PATH_RE, pinOwnerKey, webhookViolation } from "../../src/ctl/config";
+import {
+  firstOwnerEntry,
+  hasCommandOwner,
+  ownerBackfill,
+  pairCode,
+  setFirstOwner,
+} from "../../src/ctl/owner-ops";
 import { webhookTransport } from "../../src/gates/ledger";
 import { hookPath, hookUrl } from "../../src/ingress/telegram";
 import { handleOps } from "../../src/ops";
@@ -156,12 +162,151 @@ describe("W1 /ops/pairing (owner Telegram id capture from the inbox)", () => {
     const doc = JSON.parse(w.db.one<{ doc: string }>("SELECT doc FROM config WHERE ver = 2")!.doc);
     expect(doc.channels.telegram.allowFrom).toEqual(["999", "4242"]);
     expect(doc.channels.telegram.dmPolicy).toBe("allowlist");
+    // First-owner rule: 999 was approved before, so it is the command owner, not the new sender.
+    expect(doc.commands).toEqual({ ownerAllowFrom: ["telegram:999"] });
+    expect(b).toMatchObject({ owner: ["telegram:999"], ownerSet: true });
     const allow = w.db.one<{ user_ids: string }>("SELECT user_ids FROM wake_allow WHERE id = 1");
     expect(JSON.parse(allow!.user_ids)).toEqual(["999", "4242"]);
     expect(w.rt(1).state).toBe("starting"); // ownerStop then ownerStart
     // Now known: the list is empty.
     expect(((await (await call(w, "GET", "ops/pairing?ch=telegram")).json()) as any).requests).toEqual([]);
     expect(w.db.one<{ kind: string }>("SELECT kind FROM ring WHERE src = 'pairing'")?.kind).toBe("approve");
+  });
+
+  it("first-owner rule: entry, existing owner kept, init id wins, backfill once at a prod boot", async () => {
+    // Pure parts.
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["*", "-100200", "4242"] } } }, null)).toBe(
+      "telegram:4242",
+    );
+    // More than one user id and no init id: the list order proves nothing, so no pick.
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["4242", "7"] } } }, null)).toBe("ambiguous");
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["4242", "7"] } } }, "7")).toBe("telegram:7");
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["-100200"] } } }, "-100200")).toBeNull();
+    expect(setFirstOwner({}, "ambiguous")).toBe(false);
+    // A wildcard names nobody.
+    expect(hasCommandOwner({ commands: { ownerAllowFrom: ["*"] } })).toBe(false);
+    const wild: Record<string, any> = { commands: { ownerAllowFrom: ["*"] } };
+    expect(setFirstOwner(wild, "telegram:1")).toBe(true);
+    expect(wild.commands.ownerAllowFrom).toEqual(["telegram:1"]);
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["4242"] } } }, "555")).toBe("telegram:555");
+    expect(firstOwnerEntry({ channels: { telegram: { allowFrom: ["*"] } } }, null)).toBeNull();
+    expect(firstOwnerEntry({}, null)).toBeNull();
+    const keep = { commands: { ownerAllowFrom: ["slack:U1"] } };
+    expect(setFirstOwner(keep, "telegram:1")).toBe(false);
+    expect(keep.commands.ownerAllowFrom).toEqual(["slack:U1"]);
+    const other: Record<string, any> = { commands: { native: true, ownerAllowFrom: [] } };
+    expect(setFirstOwner(other, "telegram:1")).toBe(true);
+    expect(other.commands).toEqual({ native: true, ownerAllowFrom: ["telegram:1"] });
+    expect(hasCommandOwner(other)).toBe(true);
+    expect(setFirstOwner({}, null)).toBe(false);
+
+    // Backfill: setup() has allowFrom ["999"] and no command owner.
+    const w = await setup("asleep");
+    const before = w.db.one<{ m: number }>("SELECT MAX(ver) AS m FROM config")!.m;
+    const ver = await ownerBackfill(w.ctx);
+    expect(ver).toBe(before + 1);
+    const doc = JSON.parse(w.db.one<{ doc: string }>("SELECT doc FROM config WHERE ver = ?", ver)!.doc);
+    expect(doc.commands.ownerAllowFrom).toEqual(["telegram:999"]);
+    expect(doc.channels.telegram.allowFrom).toEqual(["999"]);
+    expect(await ownerBackfill(w.ctx)).toBeNull(); // once
+    expect(w.db.one<{ m: number }>("SELECT MAX(ver) AS m FROM config")!.m).toBe(before + 1);
+    expect(w.db.one<{ kind: string }>("SELECT kind FROM ring WHERE kind = 'owner-backfill'")?.kind).toBe(
+      "owner-backfill",
+    );
+  });
+
+  it("hardening: no owner guess with two senders; a group id is never the owner; a later owner id is applied", async () => {
+    // Two approved senders, no init id: the backfill alerts and picks nobody.
+    const w = await setup("asleep");
+    const base = w.db.one<{ ver: number; doc: string }>(
+      "SELECT ver, doc FROM config ORDER BY ver DESC LIMIT 1",
+    )!;
+    const two = JSON.parse(base.doc);
+    two.channels.telegram.allowFrom = ["999", "4242"];
+    await configPropose(w.ctx, { source: "owner", doc: two });
+    const top = () => w.db.one<{ m: number }>("SELECT MAX(ver) AS m FROM config")!.m;
+    const v0 = top();
+    expect(await ownerBackfill(w.ctx)).toBeNull();
+    expect(top()).toBe(v0);
+    expect(w.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM alerts WHERE class = 'owner-unset'")!.n).toBe(
+      1,
+    );
+    // The owner names their id: it becomes the command owner.
+    const r = await call(w, "POST", "ops/pairing/owner", { id: "4242" });
+    const b = (await r.json()) as any;
+    expect(b.configVer).toBe(v0 + 1);
+    const doc = () =>
+      JSON.parse(w.db.one<{ doc: string }>("SELECT doc FROM config ORDER BY ver DESC LIMIT 1")!.doc);
+    expect(doc().commands.ownerAllowFrom).toEqual(["telegram:4242"]);
+    // Another id later replaces the Telegram entry and keeps other channels.
+    const d2 = doc();
+    d2.commands.ownerAllowFrom = ["telegram:4242", "slack:U1"];
+    await configPropose(w.ctx, { source: "owner", doc: d2 });
+    await call(w, "POST", "ops/pairing/owner", { id: "999" });
+    expect(doc().commands.ownerAllowFrom).toEqual(["telegram:999", "slack:U1"]);
+    // Same id again: no new version.
+    const v1 = top();
+    expect(
+      ((await (await call(w, "POST", "ops/pairing/owner", { id: "999" })).json()) as any).configVer,
+    ).toBeNull();
+    expect(top()).toBe(v1);
+
+    // No sender yet: approving a group id does not make the group the owner.
+    const g = await setup("asleep");
+    const gd = JSON.parse(g.db.one<{ doc: string }>("SELECT doc FROM config ORDER BY ver DESC LIMIT 1")!.doc);
+    gd.channels.telegram.allowFrom = [];
+    await configPropose(g.ctx, { source: "owner", doc: gd });
+    const ga = (await (
+      await call(g, "POST", "ops/pairing/approve", { id: "-100200", restart: false })
+    ).json()) as any;
+    expect(ga.ownerSet).toBe(false);
+    expect(ga.owner).toEqual([]);
+  });
+
+  it("hardening: a config change from the gateway cannot set or change the command owner", async () => {
+    expect(pinOwnerKey({ a: 1, commands: { ownerAllowFrom: ["telegram:666"] } }, {})).toEqual({
+      doc: { a: 1 },
+      reset: true,
+    });
+    expect(
+      pinOwnerKey(
+        { commands: { native: true, ownerAllowFrom: ["telegram:666"] } },
+        { commands: { ownerAllowFrom: ["telegram:1"] } },
+      ),
+    ).toEqual({ doc: { commands: { native: true, ownerAllowFrom: ["telegram:1"] } }, reset: true });
+    expect(
+      pinOwnerKey({ commands: { native: true } }, { commands: { ownerAllowFrom: ["telegram:1"] } }).doc,
+    ).toEqual({
+      commands: { native: true, ownerAllowFrom: ["telegram:1"] },
+    });
+    expect(pinOwnerKey({ x: 1 }, { y: 2 }).reset).toBe(false);
+
+    const w = await setup("asleep");
+    await ownerBackfill(w.ctx); // owner telegram:999
+    const cur = JSON.parse(
+      w.db.one<{ doc: string }>("SELECT doc FROM config ORDER BY ver DESC LIMIT 1")!.doc,
+    );
+    const evil = structuredClone(cur);
+    evil.commands.ownerAllowFrom = ["telegram:666"];
+    evil.agents = { ...(evil.agents ?? {}), marker: "from-ui" };
+    const p = await configPropose(w.ctx, { source: "ui", doc: evil });
+    expect(p.status).toBe(200);
+    const stored = JSON.parse(
+      w.db.one<{ doc: string }>("SELECT doc FROM config WHERE ver = ?", Number(p.body.ver))!.doc,
+    );
+    expect(stored.commands.ownerAllowFrom).toEqual(["telegram:999"]); // kept
+    expect(stored.agents.marker).toBe("from-ui"); // the rest of the change is taken
+    expect(
+      w.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM alerts WHERE class = 'config-sensitive'")!.n,
+    ).toBe(1);
+    // The owner can change it.
+    const mine = structuredClone(stored);
+    mine.commands.ownerAllowFrom = ["telegram:999", "slack:U1"];
+    const o = await configPropose(w.ctx, { source: "owner", doc: mine });
+    const after = JSON.parse(
+      w.db.one<{ doc: string }>("SELECT doc FROM config WHERE ver = ?", Number(o.body.ver))!.doc,
+    );
+    expect(after.commands.ownerAllowFrom).toEqual(["telegram:999", "slack:U1"]);
   });
 
   it("asleep: held updates of the approved sender go pending and the install wakes; others stay held", async () => {

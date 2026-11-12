@@ -324,6 +324,14 @@ export const BootPlan = obj(
     workspace: obj({ source: str({ enum: ["snapshot", "archive", "none"] }), acceptLoss: bool }, ["source"]),
     // Runtime guard settings (lib/maint.mjs, lib/proactive.mjs, lib/config.mjs). All optional.
     managed: arr(obj({ path: str({ max: 256 }), value: any }, ["path"]), { max: 32 }),
+    // Hours in which a cron job class may wake the install (ocio sleep-read): the heartbeat's active hours.
+    wakeHours: obj({
+      heartbeat: obj({ from: int({ min: 0, max: 23 }), to: int({ min: 1, max: 24 }), tz: str({ max: 64 }) }, [
+        "from",
+        "to",
+        "tz",
+      ]),
+    }),
     // docs/12: true → render the OpenClaw sandbox keys (backend ochost, SandboxGate 15.0.0.4).
     sandbox: bool,
     // Control UI origin: the custom domain when Access is on, else workers.dev; allowedOrigins = both.

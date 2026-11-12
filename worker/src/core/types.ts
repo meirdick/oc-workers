@@ -150,6 +150,8 @@ export interface BootPlan {
   };
   /** N11: cron job classes ocsup leaves out of nextWakeAtMs (ctl/schedule.ts wakeIgnore). */
   wakeIgnore?: string[];
+  /** Hours in which a job class may wake the install (ctl/schedule.ts wakeHours): heartbeat active hours. */
+  wakeHours?: { heartbeat?: { from: number; to: number; tz: string } };
   /** docs/12: true → ocsup renders the OpenClaw sandbox keys (backend ochost at SandboxGate). */
   sandbox?: boolean;
   /** OpenClaw sandbox mode: `non-main` (default: every channel chat, Telegram included; not the Control UI chat) or `all`. */

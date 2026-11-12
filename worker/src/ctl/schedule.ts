@@ -111,14 +111,74 @@ export const WAKE_CLASSES = ["heartbeat", "proactive"] as const;
 export function wakeIgnore(s: { sleep: Pick<Settings["sleep"], "proactive" | "wakeOn"> }): string[] {
   const on = new Set((s.sleep.wakeOn ?? []).map(String));
   const out: string[] = [];
-  if (s.sleep.proactive !== "openclaw" && !on.has("heartbeat")) out.push("heartbeat");
+  // An interval spec is the heartbeat's own cadence (heartbeatManaged): its ticks wake.
+  if (s.sleep.proactive !== "openclaw" && !on.has("heartbeat") && !heartbeatSpec(s.sleep.proactive))
+    out.push("heartbeat");
   if (s.sleep.proactive === "off" && !on.has("proactive")) out.push("proactive");
   return out;
 }
 
 /**
- * N11 / U2: the heartbeat default for a new owner config. Unless the owner keeps the OpenClaw cadence
- * (`sleep.proactive: "openclaw"`) or set the key, `agents.defaults.heartbeat.every` is "0m" (off).
+ * `sleep.proactive` as a heartbeat cadence (docs/04 "Heartbeat in duty-cycle"): "2h@08-22" → every 2 h between
+ * 08:00 and 22:00; "1h" → every hour, all day. null = not an interval (off, openclaw, a cron expression).
+ */
+export function heartbeatSpec(
+  proactive: string,
+): { every: string; from: number | null; to: number | null } | null {
+  const m = /^(30m|1h|2h|3h|4h|6h|12h)(?:@(\d{2})-(\d{2}))?$/.exec(proactive ?? "");
+  if (!m) return null;
+  const from = m[2] === undefined ? null : Number(m[2]);
+  const to = m[3] === undefined ? null : Number(m[3]);
+  if (from !== null && to !== null && (from > 23 || to > 24 || from >= to)) return null;
+  return { every: m[1] as string, from, to };
+}
+
+const hhmm = (h: number) => `${String(h).padStart(2, "0")}:00`;
+
+/**
+ * Managed OpenClaw keys for the heartbeat (plan.managed; they win over the owner version). The heartbeat is
+ * OpenClaw's own main-session automation; oc-host sets only its cadence and hours, so it does not wake the
+ * install every 30 min. Interval spec → `every` and, with hours, `activeHours` in the install time zone.
+ * "off" → "0m" (the recurring tick is off; event-driven heartbeat turns still run). "openclaw", a cron
+ * expression, or `sleep.wakeOn` with heartbeat → nothing: the owner version decides (heartbeatDefault).
+ */
+export function heartbeatManaged(s: {
+  sleep: Pick<Settings["sleep"], "proactive" | "wakeOn">;
+  runtime: Pick<Settings["runtime"], "tz">;
+}): { path: string; value: unknown }[] {
+  if ((s.sleep.wakeOn ?? []).includes("heartbeat")) return [];
+  if (s.sleep.proactive === "off") return [{ path: "agents.defaults.heartbeat.every", value: "0m" }];
+  const h = heartbeatSpec(s.sleep.proactive);
+  if (!h) return [];
+  const out: { path: string; value: unknown }[] = [
+    { path: "agents.defaults.heartbeat.every", value: h.every },
+  ];
+  if (h.from !== null && h.to !== null)
+    out.push({
+      path: "agents.defaults.heartbeat.activeHours",
+      value: { start: hhmm(h.from), end: hhmm(h.to), timezone: s.runtime.tz },
+    });
+  return out;
+}
+
+/**
+ * Hours in which a heartbeat tick may wake the install (plan.wakeHours). OpenClaw skips a tick outside
+ * `activeHours`, so a wake for it does no work: ocio sleep-read steps to the first tick inside the window.
+ */
+export function wakeHours(s: {
+  sleep: Pick<Settings["sleep"], "proactive" | "wakeOn">;
+  runtime: Pick<Settings["runtime"], "tz">;
+}): { heartbeat?: { from: number; to: number; tz: string } } {
+  if ((s.sleep.wakeOn ?? []).includes("heartbeat")) return {};
+  const h = heartbeatSpec(s.sleep.proactive);
+  return h && h.from !== null && h.to !== null
+    ? { heartbeat: { from: h.from, to: h.to, tz: s.runtime.tz } }
+    : {};
+}
+
+/**
+ * N11 / U2: the heartbeat default for a new owner config when `sleep.proactive` is a cron expression (the
+ * "Proactive check" job path). Unless the owner set the key, `agents.defaults.heartbeat.every` is "0m" (off).
  * guess: "0m" turns the OpenClaw heartbeat off (oc:docs/gateway/heartbeat.md); live check in M4b.
  */
 export function heartbeatDefault(
@@ -127,6 +187,8 @@ export function heartbeatDefault(
 ): { doc: unknown; set: boolean } {
   if (s.sleep.proactive === "openclaw" || (s.sleep.wakeOn ?? []).includes("heartbeat"))
     return { doc, set: false };
+  // An interval spec or "off": the managed key sets the cadence at each render (heartbeatManaged).
+  if (s.sleep.proactive === "off" || heartbeatSpec(s.sleep.proactive)) return { doc, set: false };
   if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { doc, set: false };
   const d = doc as Record<string, any>;
   const hb = d.agents?.defaults?.heartbeat;

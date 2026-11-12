@@ -195,3 +195,20 @@ describe("litestream oom class", () => {
     await ls.stopFinal();
   });
 });
+
+describe("admission hold and the lag clock", () => {
+  it("release ends the long hold: 30 s after the release the lag rule applies again", async () => {
+    let now = 1_000_000;
+    const { ls } = mk("normal", { now: () => now });
+    await ls.apply(DBS);
+    await new Promise((r) => setTimeout(r, 150));
+    await ls.hold("admit");
+    now += 25_000; // the gateway reached /startupz
+    ls.release("startupz");
+    assert.ok(ls.lag.held());
+    now += 31_000;
+    assert.equal(ls.lag.held(), false); // not held for the rest of the 120 s cap
+    await new Promise((r) => setTimeout(r, 150));
+    await ls.stopFinal();
+  });
+});

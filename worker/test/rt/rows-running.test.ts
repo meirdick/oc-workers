@@ -163,6 +163,24 @@ describe("running rows", () => {
     expect(w.core.store.stops(5).map((x) => x.cls)).toEqual(["planned"]);
   });
 
+  it("T-R27b a message or the UI during a timer wake ends the short cron tail; a cron or inbox wake does not", async () => {
+    const w = world();
+    awake(w);
+    await w.boot();
+    for (const [reason, kept] of [
+      ["cron", true],
+      ["inbox", true],
+      ["maint", true],
+      ["webhook", false],
+      ["ui", false],
+      ["cli", false],
+    ] as const) {
+      w.core.patchSleep({ cronOnly: true });
+      await w.core.requestWake(reason);
+      expect([reason, w.core.sleepRec().cronOnly]).toEqual([reason, kept]);
+    }
+  });
+
   it("T-R27 wake in running: clears wakeRequested, records activity", async () => {
     const w = world();
     awake(w);
